@@ -170,16 +170,25 @@ app.get('/api/health', async (req, res) => {
   const checks = {};
   let healthy = true;
 
-  try {
-    const start = Date.now();
-    await Promise.race([
-      pool.query('SELECT 1'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 3000)),
-    ]);
-    checks.db = { ok: true, latency_ms: Date.now() - start };
-  } catch (err) {
-    checks.db = { ok: false, error: err.message };
-    healthy = false;
+  // The DB check runs ONLY on an explicit deep probe (/api/health?deep=1). A recurring
+  // uptime/health probe must never query the DB, or it keeps Neon awake around the clock
+  // (the whole reason the prod/staging DBs weren't scaling to zero). For liveness use
+  // /api/health/live (never touches the DB) or plain /api/health; for a real DB check,
+  // hit /api/health?deep=1 on demand.
+  if (req.query.deep === '1' || req.query.deep === 'true') {
+    try {
+      const start = Date.now();
+      await Promise.race([
+        pool.query('SELECT 1'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 3000)),
+      ]);
+      checks.db = { ok: true, latency_ms: Date.now() - start };
+    } catch (err) {
+      checks.db = { ok: false, error: err.message };
+      healthy = false;
+    }
+  } else {
+    checks.db = { skipped: 'pass ?deep=1 to check the database' };
   }
 
   const mem = process.memoryUsage();
@@ -420,28 +429,40 @@ process.on('unhandledRejection', reason => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   logger.info({ port: PORT }, 'server listening');
-  const { startInactiveWorkerJob } = require('./jobs/inactiveWorkers');
-  startInactiveWorkerJob();
-  const { startExpireTrialsJob } = require('./jobs/expireTrials');
-  startExpireTrialsJob();
-  const { startEquipmentMaintenanceJob } = require('./jobs/equipmentMaintenance');
-  startEquipmentMaintenanceJob();
-  const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
-  startRentalReturnRemindersJob();
-  const { startSubDocExpiryJob } = require('./jobs/subDocExpiry'); // sub COI / license lapse alerts
-  startSubDocExpiryJob();
-  const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
-  startBidDueReminderJob();
-  const { startMediaRetentionJob } = require('./jobs/mediaRetention');
-  startMediaRetentionJob();
-  const { startScheduledReportsJob } = require('./jobs/scheduledReports');
-  startScheduledReportsJob();
-  const { startTranscriptionPollerJob } = require('./jobs/transcriptionPoller'); // AssemblyAI result sweep
-  startTranscriptionPollerJob();
-  const { startTakeoffOrphanSweepJob } = require('./jobs/takeoffOrphanSweep'); // presigned-upload leak cleanup (opt-in via R2_ORPHAN_SWEEP=1)
-  startTakeoffOrphanSweepJob();
-  const { startLiveSessionSweepJob } = require('./jobs/liveSessionSweep'); // end abandoned live sessions
-  startLiveSessionSweepJob();
-  const { startCron } = require('./cron');
-  startCron();
+
+  // Background jobs poll the database on a schedule (the transcription sweep every
+  // 20s, others every 15m/hourly/daily). On an always-on server that means the DB
+  // is queried around the clock, so Neon's compute never scales to zero — pure
+  // wasted compute on a non-production server that has no real reminders to send or
+  // recordings to transcribe. Set DISABLE_BACKGROUND_JOBS=true on staging/dev (which
+  // are kept warm only for fast page loads) so their Neon branch can suspend when
+  // idle. Default is ON, so production is unaffected with no config change.
+  if (process.env.DISABLE_BACKGROUND_JOBS === 'true') {
+    logger.info('background jobs disabled (DISABLE_BACKGROUND_JOBS=true) — DB left idle when unused');
+  } else {
+    const { startInactiveWorkerJob } = require('./jobs/inactiveWorkers');
+    startInactiveWorkerJob();
+    const { startExpireTrialsJob } = require('./jobs/expireTrials');
+    startExpireTrialsJob();
+    const { startEquipmentMaintenanceJob } = require('./jobs/equipmentMaintenance');
+    startEquipmentMaintenanceJob();
+    const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
+    startRentalReturnRemindersJob();
+    const { startSubDocExpiryJob } = require('./jobs/subDocExpiry'); // sub COI / license lapse alerts
+    startSubDocExpiryJob();
+    const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
+    startBidDueReminderJob();
+    const { startMediaRetentionJob } = require('./jobs/mediaRetention');
+    startMediaRetentionJob();
+    const { startScheduledReportsJob } = require('./jobs/scheduledReports');
+    startScheduledReportsJob();
+    const { startTranscriptionPollerJob } = require('./jobs/transcriptionPoller'); // AssemblyAI result sweep
+    startTranscriptionPollerJob();
+    const { startTakeoffOrphanSweepJob } = require('./jobs/takeoffOrphanSweep'); // presigned-upload leak cleanup (opt-in via R2_ORPHAN_SWEEP=1)
+    startTakeoffOrphanSweepJob();
+    const { startLiveSessionSweepJob } = require('./jobs/liveSessionSweep'); // end abandoned live sessions
+    startLiveSessionSweepJob();
+    const { startCron } = require('./cron');
+    startCron();
+  }
 });

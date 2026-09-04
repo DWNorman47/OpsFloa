@@ -6329,3 +6329,125 @@ tool-apps/pdftools/ and tool-apps/shared/).
 Result: install download ~2.0 MB -> ~0.62 MB gzip; stored ~6.6 MB -> ~2.0 MB; precache
 148 -> 129 entries, zero tool-app files. Tools still work + still cache offline on first use.
 Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter UX: don't-panic messaging + Cancel + live progress (2026-09-02)
+A user re-encoded a 45MB H.264 .mov to MP4/H.264 and it sat "Converting…" for an hour with
+a dead progress bar and no way out. In-browser re-encoding of a large clip genuinely can take
+well over an hour, and ffmpeg's progress event doesn't fire for every input. Hardened the tool:
+- Clear guidance: a standing tip to try "MP4 · fast (no re-encode)" first (iPhone/QuickTime
+  .mov is usually already H.264 → instant remux); a stronger ⚠ warning when a re-encode format
+  is picked for a >25MB file, stating it can take well over an hour and is NOT frozen.
+- During a re-encode: a persistent reassurance note ("Working — not stuck… leave the tab open
+  or Cancel and use fast"), a live elapsed-time counter on the button, and a progress bar that
+  now also derives % from ffmpeg's own Duration/time= log lines (works when the progress event
+  is silent).
+- Cancel button: terminates the ffmpeg worker mid-encode and resets (next run reloads a fresh
+  engine). Added -threads 0 to the H.264 encode.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter: make it actually finish — auto-remux, robust re-encode (2026-09-02)
+Re-encoding an already-H.264 45MB .mov to H.264 stalled indefinitely (multithreaded
+ffmpeg.wasm parallel encode thrashes/hangs; the core pre-spawns a 32-worker pool, so it's
+not the empty-pool deadlock — it's the encode itself). Root fix: stop re-encoding when it's
+unnecessary.
+- "MP4 (recommended)" now ffprobes the input and REWRAPS (‑c copy, instant) when the video
+  is already H.264 (the common iPhone/QuickTime case) — only re-encodes when the source is
+  known non-H.264 (e.g. HEVC). Unknown/probe-failure → rewrap (instant, non-destructive), not
+  a slow encode.
+- Re-encode path hardened: explicit `-map 0:v:0 -map 0:a:0?` (drops iPhone mebx timed-metadata
+  data streams), `-preset ultrafast`, and audio `-c copy` when already AAC. Added a distinct
+  "force re-encode" option for when a rewrap won't play.
+- Status now distinguishes Checking → Rewrapping (fast) vs Working (re-encode) with the
+  don't-panic note only on the real encode.
+Caveat: can't browser-test encode speed/threading from here; the rewrap path is deterministic
+and fixes the reported file, and the re-encode is now the lightest possible command.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Neon compute: let staging idle its DB (2026-09-03)
+Root cause of the ~$80 Neon "Compute" (found by reading the actual invoices + branch usage,
+not guessing): flat pricing (~$0.106/CU-hr), and CU-hours ~doubled in August because the
+STAGE branch went always-active. Mechanism: stage's Render service was upgraded to paid ($7)
+to stay warm (fast loads); an always-on server runs all background jobs 24/7, and those jobs
+poll the DB (transcription sweep every 20s, others every 15m), so the stage Neon branch never
+scales to zero (~12 CU-hrs/day ≈ ~$38/mo for an unused staging DB). main is similarly kept
+awake by prod's jobs (its July baseline). The nightly→weekly prod→stage sync fix from before
+was intact but minor (DB is only ~50MB, so dump/restore is cheap).
+Fix (keeps the fast always-on stage server, removes the wasted DB polling):
+- `index.js`: gate ALL background-job startup behind `DISABLE_BACKGROUND_JOBS`. Default ON so
+  production is unchanged; set `DISABLE_BACKGROUND_JOBS=true` on the stage (and dev) Render
+  service → no scheduled DB queries → stage Neon branch suspends when idle.
+- `/api/health`: on a keep-idle server (same flag) skip the `SELECT 1` so a recurring health
+  probe can't keep the branch awake; `/api/health/live` (already DB-free) is the liveness probe.
+Verify: set the env var on stage; its Neon branch should flip Active→Idle and CU-hrs flatten.
+Not touched (separate, prod-affecting): prod's own 20s poller keeps main awake — gating it so
+prod can suspend overnight is a follow-up to discuss.
+Full verify green (server 1555, client build + i18n).
+
+## Transcription poller: bounded polling window (2026-09-03)
+The 20s transcription sweep queried the DB unconditionally 24/7, keeping Neon awake (prod
+half of the compute bill). Gated it so it only runs inside a bounded window:
+- `activeUntil` deadline; a submit/retry (via scheduleEarlyPoll → notePendingTranscription)
+  sets it to now + 45min. Cron checks `Date.now() > activeUntil` FIRST and returns with zero
+  DB queries when the window is closed → DB idles → Neon suspends.
+- Anti-"forever" safety (the user's concern): the deadline is only ever set to a bounded
+  now+45min (nothing extends it to infinity); a recording stuck in 'processing' is
+  force-failed after 30min (< the window) so a bad row can neither hold the window open nor
+  linger as a zombie. Worst case: polls ≤45min after the last real submit, then silent.
+- Boot opens one catch-up window (resolve leftovers from a restart), self-closes on the
+  first sweep if nothing pending.
+- Sweep self-closes the window as soon as no 'processing' rows remain.
+New test (transcriptionPollerGate) covers: stale row force-failed (not polled), fresh row
+polled, idle = single query + no external calls. Full verify green (server 1558, client build).
+
+## Prod Neon idling: health-check, booking, live-session sweep (2026-09-03)
+Trimmed the continuous prod DB-touchers so main can idle when unused:
+- `/api/health`: DB `SELECT 1` now runs ONLY on `/api/health?deep=1`. The default probe (any
+  path Render pings) never touches the DB → a recurring health check can't keep Neon awake.
+  Deep DB check is on-demand. (Replaced the earlier DISABLE_BACKGROUND_JOBS special-case.)
+- Booking reminders (15-min DB poll for Online Booking, not in use): OFF by default in
+  `cron.js`; re-enable with `ENABLE_BOOKING_REMINDERS=true` if booking gets used.
+- `liveSessionSweep` (was every 15 min unconditionally): now gated to an armed window —
+  creating a live session arms it (`noteLiveSessionActive`, wired in routes/liveSessions.js via
+  lazy require to dodge the circular import); the sweep disarms only when ZERO active sessions
+  remain, so overlapping sessions keep it armed until the last ends. Idle → zero queries.
+  Self-terminating (abandoned sessions get ended → set empties → disarms). Tests:
+  liveSessionSweepGate.test.js.
+Full verify green (server 1560, client build + i18n).
+
+## Pre-prod audit + trial-expiry bug fix (2026-09-03)
+- BUG FIX: two hourly jobs both flipped 'trial'→'trial_expired' — the silent `expireOldTrials`
+  (cron.js) raced the notifying `expireTrials` (jobs/), and if the silent one won, the
+  "trial ended" email never sent (0 rows for the notifier). Removed `expireOldTrials`;
+  jobs/expireTrials.js owns expiry (flip + email) alone.
+- Pre-prod hardening from auditing today's changes:
+  - sw.js tool-app runtime routes: `cache.put` is now best-effort (`.catch`, not awaited) and
+    the cache-first lib route wraps fetch — a put failure (quota/opaque/redirected) or offline
+    fetch can no longer reject the handler and break tool-app loading for every user.
+  - transcriptionPoller: raised STALE_FAIL 30→60min and POLL_WINDOW 45→90min so a legitimately
+    long transcription isn't force-failed prematurely (only a genuinely stuck job hits it).
+Full verify green (server 1560, client build + i18n).
+
+## Checklist PDF export (2026-09-03)
+Added "Export PDF" to both checklist surfaces (both admin-only):
+- New shared `client/src/components/ChecklistPDF.jsx` (`ChecklistDocument`) — one generic
+  react-pdf doc (company header + meta block + item list + notes + footer). Callers normalize
+  their rows into `items: [{mark, done, label, answer?, who?}]` + `meta: [{label,value}]`.
+- Checklist Reports (ChecklistManager `SubmissionCard`): per-submission "Export PDF" button;
+  data is already in-memory. ChecklistReports fetches company name once, passes down.
+- Daily Checklist history (DailyChecklist `ChecklistHistory`): per-day "PDF" button in the
+  headRow; fetches that day's items if not already expanded, then generates. ProjectDailySetup
+  passes the project name.
+- Follows the app convention: lazy `import('@react-pdf/renderer')` + `import('./ChecklistPDF')`
+  on click → `pdf().toBlob()` → `downloadBlob` (so react-pdf stays out of the main bundle).
+- i18n EN+ES for the PDF labels. Marks are Latin-safe ("Yes"/"No"/"—"/"•") — the built-in
+  Helvetica has no ✓/✗ glyphs, so those would have printed blank.
+Full verify green (server 1560, client build + i18n parity).
+
+## CI: npm audit resilient to registry outages (2026-09-04)
+PR #304 CI went red only on the `npm audit` step — npmjs.org returned 503 Service Unavailable
+(tests + ESLint passed). A transient registry outage shouldn't block a PR. Both audit steps
+(server --audit-level=high, client --audit-level=critical) now retry 3× and, if the registry
+error persists, warn-and-skip (exit 0); genuine high/critical vulnerabilities still fail the
+build. Network-error signatures matched: 503 / Service Unavailable / audit endpoint returned
+an error / ECONNRESET / ETIMEDOUT / EAI_AGAIN / ENOTFOUND / ENETUNREACH / socket hang up /
+Too Many Requests.

@@ -118,6 +118,9 @@ router.post('/', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
       [req.user.company_id, tool, req.user.id, String(b.name || 'Live session').slice(0, 200), pdfUrl, b.pdfName || null, JSON.stringify(state)]);
     const id = String(rows[0].id);
+    // Arm the idle-session sweep while sessions are live (it disarms once all end, so the
+    // DB can idle). Lazy require avoids a circular import — the sweep imports `rooms` here.
+    require('../jobs/liveSessionSweep').noteLiveSessionActive();
     rooms.set(id, {
       id, companyId: String(req.user.company_id), tool,
       meta: { name: b.name || 'Live session', pdfUrl, pdfName: b.pdfName || null, hostUserId: req.user.id },
