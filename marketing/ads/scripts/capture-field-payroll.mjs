@@ -13,6 +13,7 @@ const workerUsername = 'ad.walkthrough';
 const workerPassword = 'DemoWalkthrough123!';
 const workerName = 'Jordan Lee';
 const payrollRulesetName = 'Weekly Field Payroll';
+const reportEntryNote = 'Marketing report walkthrough overtime';
 const phoenix = { latitude: 33.4484, longitude: -112.0740 };
 const browserCandidates = [
   process.env.REMOTION_BROWSER_EXECUTABLE,
@@ -78,6 +79,27 @@ async function shot(page, name) {
 async function settle(page) {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(3500);
+}
+
+function ymdInPhoenix(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Phoenix', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const part = type => parts.find(item => item.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function addDays(ymd, days) {
+  const date = new Date(`${ymd}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function previousSundayToSaturday() {
+  const today = ymdInPhoenix();
+  const day = new Date(`${today}T12:00:00Z`).getUTCDay();
+  const from = addDays(today, -(day + 7));
+  return { from, to: addDays(from, 6), overtimeDate: addDays(from, 3) };
 }
 
 try {
@@ -185,6 +207,12 @@ try {
       }),
     });
   }
+  if (worker.overtime_rule !== 'daily' || Number(worker.hourly_rate) !== 34) {
+    worker = await api(adminSession.apiBase, adminSession.token, `/admin/workers/${worker.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ overtime_rule: 'daily', hourly_rate: 34 }),
+    });
+  }
 
   const projects = (await api(adminSession.apiBase, adminSession.token, '/work')).filter(project => project.active !== false);
   const primaryProject = projects.find(project => !project.geo_radius_ft) || projects[0];
@@ -213,6 +241,14 @@ try {
 
   const pendingEntries = await api(adminSession.apiBase, adminSession.token, '/admin/entries/pending');
   let walkthroughEntries = pendingEntries.entries?.filter(entry => entry.user_id === worker.id) || [];
+  const pendingReportEntries = walkthroughEntries.filter(entry => entry.notes === reportEntryNote);
+  await Promise.all(pendingReportEntries.map(entry => api(
+    adminSession.apiBase,
+    adminSession.token,
+    `/admin/entries/${entry.id}/approve`,
+    { method: 'PATCH', body: '{}' },
+  )));
+  walkthroughEntries = walkthroughEntries.filter(entry => entry.notes !== reportEntryNote);
   if (walkthroughEntries.length > 1) {
     await Promise.all(walkthroughEntries.map(entry => api(
       adminSession.apiBase,
@@ -255,6 +291,49 @@ try {
         local_clock_out: '15:00',
         break_minutes: 0,
       }),
+    });
+  }
+
+  const reportWeek = previousSundayToSaturday();
+  const reportData = await api(
+    adminSession.apiBase,
+    adminSession.token,
+    `/admin/workers/${worker.id}/entries?from=${reportWeek.from}&to=${reportWeek.to}&explain=1`,
+  );
+  const existingReportEntries = reportData.entries?.filter(entry => entry.notes === reportEntryNote) || [];
+  const reportHasOvertime = existingReportEntries.some(entry => Number(entry.overtime_hours) > 0);
+  if (!reportHasOvertime) {
+    await Promise.all(existingReportEntries.map(entry => api(
+      adminSession.apiBase,
+      adminSession.token,
+      `/admin/entries/${entry.id}/reject`,
+      { method: 'PATCH', body: JSON.stringify({ note: 'Replaced by overtime report walkthrough' }) },
+    )));
+    const reportEntry = await api(adminSession.apiBase, adminSession.token, `/admin/workers/${worker.id}/entries`, {
+      method: 'POST',
+      body: JSON.stringify({
+        work_date: reportWeek.overtimeDate,
+        start_time: '07:00',
+        end_time: '17:00',
+        project_id: primaryProject.id,
+        break_minutes: 0,
+        notes: reportEntryNote,
+      }),
+    });
+    await api(adminSession.apiBase, adminSession.token, `/admin/entries/${reportEntry.id}/edit`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        work_date: reportWeek.overtimeDate,
+        start_time: '07:00',
+        end_time: '17:00',
+        project_id: primaryProject.id,
+        wage_type: reportEntry.wage_type || 'regular',
+        overtime_hours_override: 2,
+      }),
+    });
+    await api(adminSession.apiBase, adminSession.token, `/admin/entries/${reportEntry.id}/approve`, {
+      method: 'PATCH',
+      body: '{}',
     });
   }
 
@@ -328,6 +407,68 @@ try {
   await rows.nth(0).getByRole('button', { name: /Approve/i }).click();
   await adminPage.waitForTimeout(800);
   await shot(adminPage, 'both-approved');
+
+  await adminPage.evaluate(() => {
+    localStorage.setItem('opsfloa_report_sections', JSON.stringify({
+      workers: true,
+      projects: true,
+      overtime: true,
+      export: true,
+    }));
+  });
+  await adminPage.goto(`${baseUrl}/timeclock?capture=reports#wf-reports`, { waitUntil: 'domcontentloaded' });
+  await settle(adminPage);
+  await adminPage.getByRole('heading', { name: /^Reports$/ }).waitFor({ state: 'visible' });
+  const teamReports = adminPage.getByRole('button', { name: /Team Member reports/i });
+  await teamReports.scrollIntoViewIfNeeded();
+  await adminPage.evaluate(() => window.scrollBy(0, -70));
+  await shot(adminPage, 'reports-collapsed');
+
+  await teamReports.click();
+  const reportWorkerRow = adminPage.locator('.member-report-row').filter({ hasText: workerName }).first();
+  await reportWorkerRow.waitFor({ state: 'visible', timeout: 15_000 });
+  await shot(adminPage, 'reports-team-open');
+
+  await reportWorkerRow.click();
+  const generateEntries = adminPage.getByRole('button', { name: /^Generate entries$/ });
+  await generateEntries.waitFor({ state: 'visible', timeout: 15_000 });
+  await adminPage.waitForTimeout(900);
+  await shot(adminPage, 'reports-worker-selected');
+
+  const lastWeek = adminPage.getByRole('button', { name: /^Last week$/ });
+  await lastWeek.click();
+  await shot(adminPage, 'reports-last-week');
+
+  await Promise.all([
+    adminPage.waitForResponse(response => response.url().includes(`/api/admin/workers/${worker.id}/entries?`) && response.ok()),
+    generateEntries.click(),
+  ]);
+  const detailsToggle = adminPage.getByText('Details', { exact: true });
+  await detailsToggle.waitFor({ state: 'visible', timeout: 15_000 });
+  await shot(adminPage, 'reports-generated');
+
+  await detailsToggle.click();
+  const overtimeBadge = adminPage.getByText(/^OT Hrs\s+/).first();
+  await overtimeBadge.waitFor({ state: 'visible', timeout: 15_000 });
+  await overtimeBadge.scrollIntoViewIfNeeded();
+  await adminPage.evaluate(() => window.scrollBy(0, -220));
+  await shot(adminPage, 'reports-details');
+
+  const overtimeDateRow = overtimeBadge.locator('..');
+  await overtimeDateRow.click();
+  await adminPage.getByText(/overtime/i).last().waitFor({ state: 'visible', timeout: 15_000 });
+  await shot(adminPage, 'reports-overtime-date');
+
+  const previewBill = adminPage.getByRole('button', { name: /^Preview Bill$/ });
+  await previewBill.scrollIntoViewIfNeeded();
+  await adminPage.evaluate(() => window.scrollBy(0, -160));
+  await shot(adminPage, 'reports-preview-ready');
+
+  await previewBill.click();
+  const billPreview = adminPage.locator('iframe[title="Bill Preview"]');
+  await billPreview.waitFor({ state: 'visible', timeout: 20_000 });
+  await adminPage.waitForTimeout(2500);
+  await shot(adminPage, 'reports-bill-preview');
 
   await adminPage.getByRole('tab', { name: /^Payroll$/ }).click();
   const payrollCard = adminPage.getByRole('heading', { name: /Run payroll/i }).locator('..');

@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const sampleRate = 48_000;
-const duration = 35;
+const duration = 56;
 const channels = 2;
 const frames = sampleRate * duration;
 const tempo = 110;
@@ -76,7 +76,7 @@ for (let i = 0; i < frames; i += 1) {
 
   const fadeIn = Math.min(1, time / 0.8);
   const fadeOut = Math.min(1, Math.max(0, (duration - time) / 2.2));
-  const endingLift = time > 32 ? 1 - (time - 32) / 3 : 1;
+  const endingLift = time > duration - 3 ? 1 - (time - (duration - 3)) / 3 : 1;
   const mono = (pad + pulse + bass + kick + snare + shaker) * fadeIn * fadeOut * endingLift;
   const left = clampSample(mono + pad * 0.18);
   const right = clampSample(mono - pad * 0.18);

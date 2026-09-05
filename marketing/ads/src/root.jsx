@@ -12,7 +12,7 @@ const video = {
 export function AdsRoot() {
   return (
     <>
-      <Composition id="field-to-payroll" component={FieldToPayroll} {...video} durationInFrames={1050} />
+      <Composition id="field-to-payroll" component={FieldToPayroll} {...video} durationInFrames={1680} />
       <Composition id="plans-to-project" component={PlansToProject} {...video} />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />
     </>

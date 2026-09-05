@@ -35,7 +35,7 @@ The footage placeholders are deliberately center-safe so the same source clips c
 
 ### Field to Payroll
 
-The job moved. Did the paperwork? With OpsFloa, crews clock in to the right project in seconds. Operations sees who's working, where, and how every hour should be assigned. Review, split, and approve time without chasing down the details. Pay rules and deductions are applied automatically. From field to payroll, one flow. OpsFloa.
+The job moved. Did the paperwork? With OpsFloa, crews clock in to the right project in seconds. Operations sees who's working, where, and how every hour should be assigned. Review, split, and approve time without chasing down the details. Before payroll, reports make every hour explainable. Choose a team member and last week, then generate the entry report. Open the overtime date to see the rule that was applied, then preview the bill. With the Payroll add-on, pay rules and deductions are applied automatically. From field to payroll, one flow. OpsFloa.
 
 ### Plans to Project
 
