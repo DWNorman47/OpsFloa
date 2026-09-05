@@ -1269,12 +1269,19 @@ async function main() {
          AND notes = ANY($2::text[])`,
       [companyId, demoTimeEntryNotes]
     );
+    await client.query('DELETE FROM location_pings WHERE company_id = $1', [companyId]);
     for (let day = -12; day <= -1; day++) {
       for (let i = 0; i < Math.min(8, workers.length); i++) {
         if ((day + i) % 5 === 0) continue;
         const startHour = 7 + (i % 3);
         const duration = 7 + ((i + Math.abs(day)) % 3);
         const status = (day + i) % 4 === 0 ? 'pending' : 'approved';
+        const clockInLat = 33.4484 + (i * 0.006) + (Math.abs(day) * 0.0002);
+        const clockInLng = -112.0740 - (i * 0.005) + (Math.abs(day) * 0.00015);
+        const clockOutLat = clockInLat + 0.0024;
+        const clockOutLng = clockInLng - 0.0018;
+        const startTs = isoTimestamp(day, startHour, 0);
+        const endTs = isoTimestamp(day, startHour + duration, 0);
         await ensureBy(
           client,
           'time_entries',
@@ -1292,11 +1299,31 @@ async function main() {
             mileage: i % 3 === 0 ? 12 + i : null,
             clock_source: i % 4 === 0 ? 'admin' : 'worker',
             clocked_in_by: i % 4 === 0 ? admin.id : null,
-            start_ts: isoTimestamp(day, startHour, 0),
-            end_ts: isoTimestamp(day, startHour + duration, 0),
+            clock_in_lat: clockInLat,
+            clock_in_lng: clockInLng,
+            clock_out_lat: clockOutLat,
+            clock_out_lng: clockOutLng,
+            timezone: DEMO_TIMEZONE,
+            start_ts: startTs,
+            end_ts: endTs,
           },
           '*'
         );
+        for (let pingIndex = 1; pingIndex <= 3; pingIndex++) {
+          const progress = pingIndex / 4;
+          const recordedAt = new Date(new Date(startTs).getTime() + duration * 60 * 60 * 1000 * progress);
+          await client.query(
+            `INSERT INTO location_pings (company_id, user_id, lat, lng, recorded_at)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [
+              companyId,
+              workers[i].id,
+              clockInLat + (clockOutLat - clockInLat) * progress,
+              clockInLng + (clockOutLng - clockInLng) * progress,
+              recordedAt.toISOString(),
+            ]
+          );
+        }
       }
     }
 

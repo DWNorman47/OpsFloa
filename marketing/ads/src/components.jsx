@@ -133,6 +133,72 @@ export function AppCapture({ frame, duration, src, focus = [50, 50], zoom = 1.05
   );
 }
 
+function guidedCursorPosition(frame, moves) {
+  if (!moves.length) return [0, 0];
+  const active = moves.find(move => frame >= move.start && frame <= move.end);
+  if (active) {
+    const progress = interpolate(frame, [active.start, active.end], [0, 1], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.inOut(Easing.cubic),
+    });
+    return [
+      interpolate(progress, [0, 1], [active.from[0], active.to[0]]),
+      interpolate(progress, [0, 1], [active.from[1], active.to[1]]),
+    ];
+  }
+  const completed = [...moves].reverse().find(move => frame > move.end);
+  return completed ? completed.to : moves[0].from;
+}
+
+export function GuidedCapture({ frame, states, moves, cursorWindows }) {
+  const stateIndex = states.reduce((found, state, index) => frame >= state.at ? index : found, 0);
+  const current = states[stateIndex];
+  const previous = states[Math.max(0, stateIndex - 1)];
+  const scrollFrames = current.transitionFrames || 10;
+  const isScrolling = current.transition === 'scroll' && frame < current.at + scrollFrames;
+  const scrollProgress = isScrolling
+    ? interpolate(frame, [current.at, current.at + scrollFrames], [0, 1], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+        easing: Easing.inOut(Easing.cubic),
+      })
+    : 1;
+  const [cursorX, cursorY] = guidedCursorPosition(frame, moves);
+  const cursorVisible = cursorWindows.some(([start, end]) => frame >= start && frame <= end);
+  const clickDistance = moves.reduce((nearest, move) => (
+    move.clickAt == null ? nearest : Math.min(nearest, Math.abs(frame - move.clickAt))
+  ), Number.POSITIVE_INFINITY);
+  const clickPulse = interpolate(clickDistance, [0, 10], [1, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  return (
+    <div className="app-capture guided-capture">
+      {isScrolling && (
+        <Img
+          src={staticFile(previous.src)}
+          style={{ transform: `translateY(${-180 * scrollProgress}px)` }}
+        />
+      )}
+      <Img
+        src={staticFile(current.src)}
+        style={isScrolling ? {
+          opacity: scrollProgress,
+          transform: `translateY(${180 * (1 - scrollProgress)}px)`,
+        } : undefined}
+      />
+      {cursorVisible && (
+        <div className="capture-cursor" style={{ left: cursorX, top: cursorY }}>
+          <i style={{ opacity: clickPulse, transform: `scale(${1 + clickPulse * 1.2})` }} />
+          <MousePointer2 size={34} fill="#ffffff" stroke="#0b1220" strokeWidth={2.2} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BrowserShell({ title, children, active = 'Overview', accent = colors.blue }) {
   return (
     <div className="browser-shell">

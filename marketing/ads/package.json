@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
+    "capture:field-payroll": "node scripts/capture-field-payroll.mjs",
     "capture:stage": "node scripts/capture-staging.mjs",
     "studio": "remotion studio src/index.jsx",
     "render": "node scripts/render-all.mjs"

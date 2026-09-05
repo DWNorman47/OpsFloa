@@ -4,6 +4,7 @@ import {
   AppCapture,
   EndCard,
   FootageSlot,
+  GuidedCapture,
   Headline,
   Scene,
 } from './components';
@@ -12,16 +13,52 @@ function Caption({ children }) {
   return <div className="caption"><span>{children}</span></div>;
 }
 
+const fieldPayrollStates = [
+  { at: 0, src: 'captures/field-payroll/clock-start.png' },
+  { at: 18, src: 'captures/field-payroll/clock-projects.png' },
+  { at: 34, src: 'captures/field-payroll/clock-selected.png' },
+  { at: 64, src: 'captures/field-payroll/clock-confirmed.png' },
+  { at: 90, src: 'captures/field-payroll/live.png' },
+  { at: 128, src: 'captures/field-payroll/approvals-top.png' },
+  { at: 148, src: 'captures/field-payroll/approvals-scrolled.png', transition: 'scroll', transitionFrames: 10 },
+  { at: 176, src: 'captures/field-payroll/details.png' },
+  { at: 205, src: 'captures/field-payroll/location.png' },
+  { at: 260, src: 'captures/field-payroll/location-closed.png' },
+  { at: 282, src: 'captures/field-payroll/split.png' },
+  { at: 318, src: 'captures/field-payroll/split-time.png' },
+  { at: 347, src: 'captures/field-payroll/split-project.png' },
+  { at: 382, src: 'captures/field-payroll/split-saved.png' },
+  { at: 433, src: 'captures/field-payroll/one-approved.png' },
+  { at: 458, src: 'captures/field-payroll/both-approved.png' },
+];
+
+const fieldPayrollMoves = [
+  { start: 3, end: 12, from: [1970, 490], to: [960, 490], clickAt: 16 },
+  { start: 20, end: 28, from: [960, 490], to: [820, 555], clickAt: 31 },
+  { start: 38, end: 52, from: [820, 555], to: [960, 628], clickAt: 60 },
+  { start: 110, end: 121, from: [1970, 385], to: [690, 385], clickAt: 125 },
+  { start: 132, end: 141, from: [690, 385], to: [1875, 700] },
+  { start: 154, end: 165, from: [1875, 700], to: [960, 658], clickAt: 171 },
+  { start: 180, end: 192, from: [960, 658], to: [650, 650], clickAt: 201 },
+  { start: 210, end: 216, from: [650, 650], to: [900, 820] },
+  { start: 249, end: 253, from: [900, 820], to: [640, 650], clickAt: 257 },
+  { start: 263, end: 272, from: [640, 650], to: [707, 696], clickAt: 278 },
+  { start: 287, end: 298, from: [707, 696], to: [1118, 658], clickAt: 302 },
+  { start: 322, end: 333, from: [1118, 658], to: [1255, 772], clickAt: 338 },
+  { start: 352, end: 364, from: [1255, 772], to: [980, 882], clickAt: 376 },
+  { start: 388, end: 400, from: [980, 882], to: [830, 626] },
+  { start: 416, end: 425, from: [830, 626], to: [1293, 584], clickAt: 429 },
+  { start: 440, end: 447, from: [1293, 584], to: [1293, 584], clickAt: 454 },
+];
+
 export function FieldToPayroll() {
   return (
     <AbsoluteFill className="video-root">
       <Scene from={0} duration={100} className="hook-scene">{frame => <Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." />}</Scene>
       <Scene from={90} duration={65}>{frame => <FootageSlot frame={frame} duration={65} number={1} title="The workday starts" direction="Wide jobsite arrival. One worker checks a phone, then continues toward the crew." />}</Scene>
-      <Scene from={145} duration={145} className="capture-scene">{frame => <><AppCapture frame={frame} duration={145} src="captures/timeclock.png" focus={[50,45]} cursor={{from:[760,420],to:[960,557],clickAt:108}}/><Caption>Clock in to the right project.</Caption></>}</Scene>
-      <Scene from={280} duration={155} className="capture-scene">{frame => <><AppCapture frame={frame} duration={155} src="captures/workforce-live.png" focus={[51,55]} cursor={{from:[860,385],to:[940,385],clickAt:122}}/><Caption>See who is working and where.</Caption></>}</Scene>
-      <Scene from={425} duration={145} className="capture-scene">{frame => <><AppCapture frame={frame} duration={145} src="captures/workforce-approvals.png" focus={[54,57]} cursor={{from:[1020,610],to:[1160,553],clickAt:108}}/><Caption>Review the exceptions first.</Caption></>}</Scene>
-      <Scene from={560} duration={165} className="capture-scene">{frame => <><AppCapture frame={frame} duration={165} src="captures/workforce-payroll.png" focus={[50,58]} cursor={{from:[720,730],to:[875,729],clickAt:125}}/><Caption>Run payroll with the rules resolved.</Caption></>}</Scene>
-      <Scene from={715} duration={185}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
+      <Scene from={145} duration={475} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[3, 70], [110, 462]]} />}</Scene>
+      <Scene from={610} duration={150} className="capture-scene">{frame => <><AppCapture frame={frame} duration={150} src="captures/workforce-payroll.png" focus={[50,58]} cursor={{from:[720,730],to:[875,729],clickAt:112}}/><Caption>Run payroll with the rules resolved.</Caption></>}</Scene>
+      <Scene from={750} duration={150}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
     </AbsoluteFill>
   );
 }
