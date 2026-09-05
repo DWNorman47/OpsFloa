@@ -6451,3 +6451,51 @@ error persists, warn-and-skip (exit 0); genuine high/critical vulnerabilities st
 build. Network-error signatures matched: 503 / Service Unavailable / audit endpoint returned
 an error / ECONNRESET / ETIMEDOUT / EAI_AGAIN / ENOTFOUND / ENETUNREACH / socket hang up /
 Too Many Requests.
+
+## Split time punch: chained, mostly-derived segment times (2026-09-04)
+The Approval Queue "Split entry" editor (ApprovalQueue.jsx) now treats the segments as a
+contiguous chain over the original punch:
+- Every segment's START is disabled (derived): segment 1 = the punch start; each later start
+  = the previous segment's end.
+- The LAST segment's END is disabled (= the fixed punch-out).
+- Only the intermediate ends are editable; changing one flows into the next segment's start
+  (rechainSegments re-derives starts + pins the two fixed bounds after any change).
+- "Add segment" carves a new final segment out of the current last one (split at its
+  midpoint): the new last's end is the fixed punch-out (disabled) and the previously-last
+  segment's end becomes editable. Remove also re-chains.
+Stored the fixed punch bounds in splitBounds. Contiguity is now guaranteed by construction.
+Full verify green (server 1560, client build + i18n).
+
+## Approvals: per-entry Location history button (2026-09-04)
+Each pending entry in the Approval Queue now has a 📍 button (in the always-visible actions
+row, next to ✓/✕) that opens the existing LocationHistoryModal seeded to that entry's worker
+and work_date — showing the breadcrumb path + clock-in/out points for that shift. Reuses the
+`/admin/worker-locations` endpoint and the existing modal; new `locHistoryIconBtn` style,
+reused `t.aqLocationHistory`. (Recent/approved entries already had an equivalent "View on map";
+this brings the same to the pending queue on every row.)
+Full verify green (server 1560, client build + i18n).
+
+## Location History modal: worker-first, day/range/entry scopes (2026-09-04)
+Reworked the Approval Queue Location History popup per spec:
+- Requires picking a team member first (prompt until then).
+- From date (white) defaults to the worker's last day in the pending queue, else their most
+  recent worked day (new `?latest=1` branch on /admin/worker-locations). Dash + a gray To
+  box follow; a "All / <entries>" dropdown of that day's entries on the next line.
+- Three scopes: single day (default) → per-day first clock-in (green) + last clock-out (red)
+  + breadcrumb path; date range (set the To date → it turns white, dropdown hides) → same per
+  day; single entry (pick from dropdown → dash + To hide) → the entry's first/last recorded
+  location + path (one marker if only one location, none if none). Picking "All" returns to
+  day mode; clearing To returns from range to day.
+- /admin/worker-locations now returns ALL entries in range (not only located ones) so the
+  dropdown lists every entry; added the `latest` lookup. Test updated + latest case added.
+- Every per-entry 📍 (pending + recently-approved) now seeds { user_id, date, entry_id } →
+  opens straight into that entry (entry mode).
+Full verify green (server 1561, client build + i18n).
+
+## Revert always-on per-entry location button (2026-09-04)
+Removed the 📍 button that was added to every pending entry's actions row (+ its
+locHistoryIconBtn style). The pre-existing location affordances stay: the pending entry's
+expanded "View location" (only when clock coords exist) and the recently-approved
+"View on map". The reworked Location History modal is still reachable from the top button
+and the recently-approved button.
+Full verify green (server 1561, client build + i18n).

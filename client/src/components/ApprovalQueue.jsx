@@ -62,6 +62,20 @@ function midTime(start, end) {
   return fromMins(Math.round((toMins(start) + toMins(end)) / 2));
 }
 
+// Split segments are a contiguous chain over the original punch: the first start is the
+// punch's start and the last end is the punch's end (both fixed), and every segment's
+// start is just the previous segment's end. Only the intermediate ends are editable, so
+// re-derive the starts (and pin the two fixed bounds) after any change.
+function rechainSegments(segs, bounds) {
+  if (!segs.length) return segs;
+  const lastIdx = segs.length - 1;
+  return segs.map((s, i) => ({
+    ...s,
+    start_time: i === 0 ? bounds.start : segs[i - 1].end_time,
+    end_time: i === lastIdx ? bounds.end : s.end_time,
+  }));
+}
+
 function formatHours(start, end) {
   const s = new Date(`1970-01-01T${start}`);
   const e = new Date(`1970-01-01T${end}`);
@@ -116,50 +130,132 @@ function coordText(lat, lng, t) {
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 }
 
-// Self-contained Location history popup: pick a worker + date range, see their
-// recorded clock-in (green) / clock-out (red) points on a map + a list. Today
-// only two points per entry are stored; when a per-shift breadcrumb table lands,
-// add a <Polyline> per shift here.
-function LocationHistoryModal({ seed, onClose, t, locale }) {
+// Location history popup. Flow: pick a worker first, then a From date (defaults to their
+// last day in the pending queue, else their most recent worked day), an optional To date
+// (a range), and — for a single day — a dropdown of that day's entries. Three scopes:
+//   • single day  → per-day first clock-in (green) + last clock-out (red) + breadcrumb path
+//   • date range  → the same, for each day in the range (the entries dropdown hides)
+//   • one entry   → the entry's first/last recorded location + path (the To date hides)
+function LocationHistoryModal({ seed, pendingEntries, onClose, t, locale }) {
   const [workers, setWorkers] = useState([]);
-  const [userId, setUserId] = useState(seed?.user_id ? String(seed.user_id) : '');
-  const [from, setFrom] = useState(seed?.from || '');
-  const [to, setTo] = useState(seed?.to || '');
-  const [rows, setRows] = useState(null); // entries; null = not loaded yet
-  const [pings, setPings] = useState([]); // breadcrumb path points
+  const [userId, setUserId] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');           // set → range mode (entries dropdown hides)
+  const [entryId, setEntryId] = useState(''); // set → single-entry mode (To date hides)
+  const [rows, setRows] = useState(null);     // entries; null = not loaded yet
+  const [pings, setPings] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const load = (uid = userId, f = from, t2 = to) => {
-    if (!uid) return;
+  const rangeMode = !!to;
+  const entryMode = !!entryId;
+
+  const load = (uid, f, t2) => {
+    if (!uid || !f) { setRows([]); setPings([]); return; }
     setLoading(true);
-    api.get('/admin/worker-locations', { params: { user_id: uid, from: f || undefined, to: t2 || undefined } })
+    api.get('/admin/worker-locations', { params: { user_id: uid, from: f, to: t2 || f } })
       .then(r => { setRows(r.data?.entries || []); setPings(r.data?.pings || []); })
       .catch(() => { setRows([]); setPings([]); })
       .finally(() => setLoading(false));
   };
 
-  // The breadcrumb path for one shift = pings recorded between its start/end.
-  const pathFor = (e) => {
-    if (!e.start_ts || !e.end_ts) return [];
-    const s = new Date(e.start_ts).getTime(), en = new Date(e.end_ts).getTime();
-    return pings
-      .filter(pg => { const ms = new Date(pg.recorded_at).getTime(); return ms >= s && ms <= en; })
-      .map(pg => [Number(pg.lat), Number(pg.lng)]);
+  const lastPendingDay = (uid) => {
+    const ds = (pendingEntries || [])
+      .filter(e => String(e.user_id) === String(uid) && e.work_date)
+      .map(e => String(e.work_date).substring(0, 10))
+      .sort();
+    return ds.length ? ds[ds.length - 1] : null;
   };
+
+  const selectWorker = async (uid) => {
+    setUserId(uid); setEntryId(''); setTo(''); setRows(null); setPings([]);
+    if (!uid) { setFrom(''); return; }
+    let day = lastPendingDay(uid);
+    if (!day) {
+      try {
+        const r = await api.get('/admin/worker-locations', { params: { user_id: uid, latest: 1 } });
+        day = r.data?.latest_date ? String(r.data.latest_date).substring(0, 10) : '';
+      } catch { /* leave blank */ }
+    }
+    setFrom(day || '');
+    load(uid, day || '', '');
+  };
+
+  const changeFrom = (d) => { setFrom(d); setEntryId(''); load(userId, d, to); };
+  const changeTo = (d) => { setTo(d); setEntryId(''); load(userId, from, d); }; // set = range; clear = back to day
+  const selectEntry = (id) => { setEntryId(id); if (id) setTo(''); };            // within the loaded day — no reload
 
   useEffect(() => {
     api.get('/admin/workers', { params: { all_roles: true } })
       .then(r => setWorkers(r.data || []))
       .catch(silentError('lochistory'));
-    if (seed?.user_id) load(String(seed.user_id), seed.from || '', seed.to || '');
+    if (seed?.user_id) {
+      const uid = String(seed.user_id);
+      const d = seed.date ? String(seed.date).substring(0, 10) : '';
+      setUserId(uid);
+      if (d) { setFrom(d); setEntryId(seed.entry_id ? String(seed.entry_id) : ''); load(uid, d, ''); }
+      else selectWorker(uid);
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const positions = [];
-  (rows || []).forEach(e => {
-    if (e.clock_in_lat != null) positions.push([Number(e.clock_in_lat), Number(e.clock_in_lng)]);
-    if (e.clock_out_lat != null) positions.push([Number(e.clock_out_lat), Number(e.clock_out_lng)]);
-  });
-  pings.forEach(pg => positions.push([Number(pg.lat), Number(pg.lng)]));
+  const showDropdown = !rangeMode; // entries dropdown hidden once a To date is set
+  const showToBox = !entryMode;    // dash + To date hidden once an entry is picked
+
+  // ── Map geometry ──────────────────────────────────────────────────────────────
+  // One day (date/range mode): earliest clock-in, latest clock-out, path across its shifts.
+  const dayGeom = (dayEntries) => {
+    const ins = dayEntries.filter(e => e.clock_in_lat != null).sort((a, b) => new Date(a.start_ts) - new Date(b.start_ts));
+    const outs = dayEntries.filter(e => e.clock_out_lat != null).sort((a, b) => new Date(a.end_ts) - new Date(b.end_ts));
+    const green = ins[0] ? [Number(ins[0].clock_in_lat), Number(ins[0].clock_in_lng)] : null;
+    const red = outs.length ? [Number(outs[outs.length - 1].clock_out_lat), Number(outs[outs.length - 1].clock_out_lng)] : null;
+    const starts = dayEntries.map(e => new Date(e.start_ts).getTime()).filter(n => Number.isFinite(n));
+    const ends = dayEntries.map(e => new Date(e.end_ts).getTime()).filter(n => Number.isFinite(n));
+    const path = (starts.length && ends.length)
+      ? pings.filter(pg => { const ms = new Date(pg.recorded_at).getTime(); return ms >= Math.min(...starts) && ms <= Math.max(...ends); })
+             .map(pg => [Number(pg.lat), Number(pg.lng)])
+      : [];
+    return { green, red, path };
+  };
+
+  // One entry (entry mode): all its recorded locations in time order — clock-in point,
+  // pings during the shift, clock-out point.
+  const entryGeom = (e) => {
+    const pts = [];
+    if (e.clock_in_lat != null) pts.push({ pos: [Number(e.clock_in_lat), Number(e.clock_in_lng)], t: new Date(e.start_ts).getTime() });
+    if (e.start_ts && e.end_ts) {
+      const s = new Date(e.start_ts).getTime(), en = new Date(e.end_ts).getTime();
+      pings.forEach(pg => { const ms = new Date(pg.recorded_at).getTime(); if (ms >= s && ms <= en) pts.push({ pos: [Number(pg.lat), Number(pg.lng)], t: ms }); });
+    }
+    if (e.clock_out_lat != null) pts.push({ pos: [Number(e.clock_out_lat), Number(e.clock_out_lng)], t: new Date(e.end_ts).getTime() });
+    pts.sort((a, b) => a.t - b.t);
+    const positions = pts.map(p => p.pos);
+    return {
+      first: positions[0] || null,
+      last: positions.length > 1 ? positions[positions.length - 1] : null,
+      path: positions.length >= 2 ? positions : [],
+      only: positions.length === 1 ? positions[0] : null,
+    };
+  };
+
+  const byDay = {};
+  (rows || []).forEach(e => { const d = String(e.work_date).substring(0, 10); (byDay[d] = byDay[d] || []).push(e); });
+  const dayKeys = Object.keys(byDay).sort();
+  const dayEntries = (rows || []).filter(e => String(e.work_date).substring(0, 10) === from)
+    .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+  const selectedEntry = entryMode ? (rows || []).find(e => String(e.id) === String(entryId)) : null;
+
+  const allPositions = [];
+  if (entryMode && selectedEntry) {
+    const g = entryGeom(selectedEntry);
+    [g.only, g.first, g.last].forEach(p => p && allPositions.push(p));
+    g.path.forEach(p => allPositions.push(p));
+  } else {
+    dayKeys.forEach(d => {
+      const g = dayGeom(byDay[d]);
+      [g.green, g.red].forEach(p => p && allPositions.push(p));
+      g.path.forEach(p => allPositions.push(p));
+    });
+  }
+  const hasMap = allPositions.length > 0;
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -167,63 +263,70 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
         <div onClick={e => e.stopPropagation()}>
           <h3 id="aq-loc-title" style={styles.modalTitle}>📍 {t.aqLocationHistory}</h3>
           <div style={styles.locControls}>
-            <select style={styles.dateInput} value={userId} onChange={e => setUserId(e.target.value)}>
+            <select style={styles.dateInput} value={userId} onChange={e => selectWorker(e.target.value)}>
               <option value="">{t.aqSelectWorker}</option>
               {workers.map(w => (
                 <option key={w.id} value={w.id}>{w.full_name || w.name || w.username}</option>
               ))}
             </select>
-            <input type="date" style={styles.dateInput} value={from} onChange={e => setFrom(e.target.value)} title={t.fromDate} />
-            <span style={{ fontSize: 12, color: '#6b7280' }}>–</span>
-            <input type="date" style={styles.dateInput} value={to} onChange={e => setTo(e.target.value)} title={t.toDate} />
-            <button style={styles.applyDateBtn} onClick={() => load()} disabled={!userId || loading}>{loading ? '…' : t.aqShow}</button>
+            {userId && (
+              <>
+                <input type="date" style={styles.dateInput} value={from} onChange={e => changeFrom(e.target.value)} title={t.fromDate} />
+                {showToBox && (
+                  <>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>–</span>
+                    <input type="date" style={to ? styles.dateInput : styles.dateInputGray} value={to} onChange={e => changeTo(e.target.value)} title={t.toDate} />
+                  </>
+                )}
+              </>
+            )}
           </div>
+          {userId && showDropdown && (
+            <div style={styles.locControls}>
+              <select style={styles.entrySelect} value={entryId} onChange={e => selectEntry(e.target.value)}>
+                <option value="">{t.aqAllEntries}</option>
+                {dayEntries.map(e => (
+                  <option key={e.id} value={e.id}>
+                    {formatTime(e.start_time)}–{formatTime(e.end_time)}{e.project_name ? ` · ${e.project_name}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          {rows === null ? (
-            <p style={styles.approvedEmpty}>{t.aqLocPrompt}</p>
-          ) : rows.length === 0 ? (
+          {!userId ? (
+            <p style={styles.approvedEmpty}>{t.aqPickWorkerFirst}</p>
+          ) : loading ? (
+            <p style={styles.approvedEmpty}>…</p>
+          ) : !hasMap ? (
             <p style={styles.approvedEmpty}>{t.aqNoLocationData}</p>
           ) : (
-            <>
-              <div style={styles.mapWrap}>
-                <MapContainer center={positions[0]} zoom={13} style={styles.map} scrollWheelZoom={false}>
-                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" />
-                  <FitBounds positions={positions} />
-                  {rows.map(e => {
-                    const path = pathFor(e);
-                    return path.length >= 2 ? <Polyline key={`path-${e.id}`} positions={path} color="#2563eb" weight={4} opacity={0.7} /> : null;
-                  })}
-                  {rows.map(e => (
-                    <React.Fragment key={e.id}>
-                      {e.clock_in_lat != null && (
-                        <Marker position={[Number(e.clock_in_lat), Number(e.clock_in_lng)]} icon={clockInIcon}>
-                          <Popup>🟢 {t.clockIn}<br />{formatDate(e.work_date, locale)} {formatTime(e.start_time)}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} /></Popup>
-                        </Marker>
-                      )}
-                      {e.clock_out_lat != null && (
-                        <Marker position={[Number(e.clock_out_lat), Number(e.clock_out_lng)]} icon={clockOutIcon}>
-                          <Popup>🔴 {t.clockOut}<br />{formatDate(e.work_date, locale)} {formatTime(e.end_time)}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} /></Popup>
-                        </Marker>
-                      )}
+            <div style={styles.mapWrap}>
+              <MapContainer center={allPositions[0]} zoom={14} style={styles.map} scrollWheelZoom={false}>
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" />
+                <FitBounds positions={allPositions} />
+                {entryMode && selectedEntry ? (() => {
+                  const g = entryGeom(selectedEntry);
+                  return (
+                    <>
+                      {g.path.length >= 2 && <Polyline positions={g.path} color="#2563eb" weight={4} opacity={0.7} />}
+                      {g.only && <Marker position={g.only} icon={clockInIcon}><Popup>{coordText(g.only[0], g.only[1], t)}</Popup></Marker>}
+                      {g.first && !g.only && <Marker position={g.first} icon={clockInIcon}><Popup>🟢 {t.clockIn}</Popup></Marker>}
+                      {g.last && <Marker position={g.last} icon={clockOutIcon}><Popup>🔴 {t.clockOut}</Popup></Marker>}
+                    </>
+                  );
+                })() : dayKeys.map(d => {
+                  const g = dayGeom(byDay[d]);
+                  return (
+                    <React.Fragment key={d}>
+                      {g.path.length >= 2 && <Polyline positions={g.path} color="#2563eb" weight={4} opacity={0.7} />}
+                      {g.green && <Marker position={g.green} icon={clockInIcon}><Popup>🟢 {t.clockIn}<br />{formatDate(d + 'T00:00:00', locale)}</Popup></Marker>}
+                      {g.red && <Marker position={g.red} icon={clockOutIcon}><Popup>🔴 {t.clockOut}<br />{formatDate(d + 'T00:00:00', locale)}</Popup></Marker>}
                     </React.Fragment>
-                  ))}
-                </MapContainer>
-              </div>
-              <div style={styles.locList}>
-                {rows.map(e => (
-                  <div key={e.id} style={styles.locListRow}>
-                    <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
-                    <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
-                    {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
-                    <span style={styles.locCoord}>🟢 {coordText(e.clock_in_lat, e.clock_in_lng, t)}</span>
-                    <MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} iconOnly />
-                    <span style={styles.locCoord}>🔴 {coordText(e.clock_out_lat, e.clock_out_lng, t)}</span>
-                    <MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} iconOnly />
-                    {pathFor(e).length >= 2 && <span style={styles.locCoord}>🧭 {pathFor(e).length} {t.aqPathPoints}</span>}
-                  </div>
-                ))}
-              </div>
-            </>
+                  );
+                })}
+              </MapContainer>
+            </div>
           )}
 
           <div style={styles.modalActions}>
@@ -285,6 +388,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const [unrejecting, setUnrejecting] = useState(null);
   const [unrejectError, setUnrejectError] = useState('');
   const [splitSegments, setSplitSegments] = useState([]);
+  const [splitBounds, setSplitBounds] = useState({ start: '', end: '' }); // fixed punch start/end
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState('');
   const [confirmingApproveAll, setConfirmingApproveAll] = useState(false);
@@ -438,11 +542,15 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
     setSplittingId(e.id);
     setEditingId(null);
     setSplitError('');
-    // Pre-fill two segments covering the full time range
-    const mid = midTime(e.start_time.substring(0, 5), e.end_time.substring(0, 5));
+    // Pre-fill two segments covering the full time range. Start/end of the punch are fixed;
+    // only the middle boundary (segment 1's end) is editable.
+    const pStart = e.start_time.substring(0, 5);
+    const pEnd = e.end_time.substring(0, 5);
+    const mid = midTime(pStart, pEnd);
+    setSplitBounds({ start: pStart, end: pEnd });
     setSplitSegments([
-      { _key: 0, start_time: e.start_time.substring(0, 5), end_time: mid, project_id: e.project_id ? String(e.project_id) : '' },
-      { _key: 1, start_time: mid, end_time: e.end_time.substring(0, 5), project_id: '' },
+      { _key: 0, start_time: pStart, end_time: mid, project_id: e.project_id ? String(e.project_id) : '' },
+      { _key: 1, start_time: mid, end_time: pEnd, project_id: '' },
     ]);
   };
 
@@ -608,7 +716,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
           style={{ ...styles.viewMapBtn, marginTop: 10 }}
           onClick={() => {
             const d = (entry.work_date || '').toString().substring(0, 10);
-            setLocSeed({ user_id: entry.user_id, from: d, to: d });
+            setLocSeed({ user_id: entry.user_id, date: d, entry_id: entry.id });
             setLocHistoryOpen(true);
           }}
         >📍 {t.aqViewOnMap}</button>
@@ -908,19 +1016,24 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     <div className="approval-form" style={styles.splitForm}>
                       <div style={styles.splitTitle}>{t.aqSplitEntry}</div>
                       {splitError && <div style={styles.splitError}>{splitError}</div>}
-                      {splitSegments.map((seg, i) => (
+                      {splitSegments.map((seg, i) => {
+                        const isLast = i === splitSegments.length - 1;
+                        // Starts are always derived (the previous end); the last end is the fixed
+                        // punch-out. Only intermediate ends are editable.
+                        const disabledStyle = { ...styles.editTimeInput, background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed' };
+                        return (
                         <div key={seg._key} style={styles.splitSegment}>
                           <div style={styles.splitSegLabel}>{t.aqSegment} {i + 1}</div>
                           <div style={styles.splitSegRow}>
                             <div>
                               <div style={styles.editTimesLabel}>{t.start}</div>
-                              <input type="time" style={styles.editTimeInput} value={seg.start_time}
-                                onChange={ev => setSplitSegments(prev => prev.map((s, j) => j === i ? { ...s, start_time: ev.target.value } : s))} />
+                              <input type="time" style={disabledStyle} value={seg.start_time} disabled readOnly />
                             </div>
                             <div>
                               <div style={styles.editTimesLabel}>{t.end}</div>
-                              <input type="time" style={styles.editTimeInput} value={seg.end_time}
-                                onChange={ev => setSplitSegments(prev => prev.map((s, j) => j === i ? { ...s, end_time: ev.target.value } : s))} />
+                              <input type="time" style={isLast ? disabledStyle : styles.editTimeInput} value={seg.end_time}
+                                disabled={isLast} min={seg.start_time} max={splitBounds.end}
+                                onChange={ev => setSplitSegments(prev => rechainSegments(prev.map((s, j) => j === i ? { ...s, end_time: ev.target.value } : s), splitBounds))} />
                             </div>
                             <div style={{ flex: 1, minWidth: 120 }}>
                               <div style={styles.editTimesLabel}>Project</div>
@@ -933,14 +1046,26 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                               </select>
                             </div>
                             {splitSegments.length > 2 && (
-                              <button style={styles.splitRemoveBtn} aria-label={t.removeSegment} onClick={() => setSplitSegments(prev => prev.filter((_, j) => j !== i))}>✕</button>
+                              <button style={styles.splitRemoveBtn} aria-label={t.removeSegment} onClick={() => setSplitSegments(prev => rechainSegments(prev.filter((_, j) => j !== i), splitBounds))}>✕</button>
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       <button style={styles.splitAddBtn} onClick={() => {
-                        const last = splitSegments[splitSegments.length - 1];
-                        setSplitSegments(prev => [...prev, { _key: Date.now(), start_time: last.end_time, end_time: last.end_time, project_id: '' }]);
+                        // Carve a new final segment out of the current last one: split it at its
+                        // midpoint. The new segment's end becomes the fixed punch-out (disabled),
+                        // and the previously-last segment's end becomes editable.
+                        setSplitSegments(prev => {
+                          const li = prev.length - 1;
+                          const last = prev[li];
+                          const mid = midTime(last.start_time, last.end_time);
+                          return rechainSegments([
+                            ...prev.slice(0, li),
+                            { ...last, end_time: mid },
+                            { _key: Date.now(), start_time: mid, end_time: splitBounds.end, project_id: '' },
+                          ], splitBounds);
+                        });
                       }}>{t.aqAddSegment}</button>
                       <div style={styles.editTimesActions}>
                         <button style={{ ...styles.saveTimesBtn, ...(splitSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => saveSplit(e.id)} disabled={splitSaving}>{splitSaving ? t.saving : t.aqSplitSave}</button>
@@ -1083,7 +1208,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       </div>
 
       {locHistoryOpen && (
-        <LocationHistoryModal seed={locSeed} onClose={() => setLocHistoryOpen(false)} t={t} locale={locale} />
+        <LocationHistoryModal seed={locSeed} pendingEntries={entries} onClose={() => setLocHistoryOpen(false)} t={t} locale={locale} />
       )}
     </div>
   );
@@ -1094,6 +1219,8 @@ const styles = {
   header: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap', minWidth: 0 },
   dateFilterRow: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap' },
   dateInput: { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#374151', minHeight: 'unset' },
+  dateInputGray: { padding: '4px 8px', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, color: '#9ca3af', background: '#f9fafb', minHeight: 'unset' },
+  entrySelect: { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#374151', minHeight: 'unset', minWidth: 220, maxWidth: '100%' },
   applyDateBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, padding: '4px 10px', cursor: 'pointer' },
   clearDateBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, cursor: 'pointer', padding: '0 4px', lineHeight: 1, minHeight: 'unset' },
   title: { fontSize: 17, fontWeight: 700, margin: 0, flex: '1 1 120px', minWidth: 0 },
