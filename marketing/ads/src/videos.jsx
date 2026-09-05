@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill } from 'remotion';
+import { AbsoluteFill, Audio, interpolate, Sequence, staticFile } from 'remotion';
 import {
   AppCapture,
   EndCard,
@@ -61,9 +61,38 @@ const payrollRunMoves = [
   { start: 5, end: 30, from: [1970, 728], to: [1198, 728], clickAt: 52 },
 ];
 
+const fieldPayrollVoice = [
+  { from: 5, src: 'audio/field-payroll/01-hook.wav' },
+  { from: 135, src: 'audio/field-payroll/02-clock-in.wav' },
+  { from: 295, src: 'audio/field-payroll/03-oversight.wav' },
+  { from: 500, src: 'audio/field-payroll/04-approval.wav' },
+  { from: 775, src: 'audio/field-payroll/05-payroll.wav' },
+  { from: 895, src: 'audio/field-payroll/06-close.wav' },
+];
+
+function FieldPayrollAudio() {
+  return (
+    <>
+      <Audio
+        src={staticFile('audio/field-payroll/music.wav')}
+        volume={frame => interpolate(frame, [0, 24, 972, 1049], [0, 0.11, 0.11, 0], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        })}
+      />
+      {fieldPayrollVoice.map(clip => (
+        <Sequence key={clip.src} from={clip.from}>
+          <Audio src={staticFile(clip.src)} volume={0.96} />
+        </Sequence>
+      ))}
+    </>
+  );
+}
+
 export function FieldToPayroll() {
   return (
     <AbsoluteFill className="video-root">
+      <FieldPayrollAudio />
       <Scene from={0} duration={100} className="hook-scene">{frame => <Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." />}</Scene>
       <Scene from={90} duration={65}>{frame => <FootageSlot frame={frame} duration={65} number={1} title="The workday starts" direction="Wide jobsite arrival. One worker checks a phone, then continues toward the crew." />}</Scene>
       <Scene from={145} duration={625} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 610]]} />}</Scene>

@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
+    "audio:field-payroll": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-field-payroll-voice.ps1 && node scripts/generate-field-payroll-music.mjs",
     "capture:field-payroll": "node scripts/capture-field-payroll.mjs",
     "capture:stage": "node scripts/capture-staging.mjs",
     "studio": "remotion studio src/index.jsx",

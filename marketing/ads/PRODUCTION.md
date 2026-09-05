@@ -35,7 +35,7 @@ The footage placeholders are deliberately center-safe so the same source clips c
 
 ### Field to Payroll
 
-The job moved. Did the paperwork? With OpsFloa, crews clock in to the right project and complete required checklists before work begins. Operations sees who is working and where. Time moves into approval, every pay rule is applied, and payroll is ready. From field to payroll, one flow. OpsFloa.
+The job moved. Did the paperwork? With OpsFloa, crews clock in to the right project in seconds. Operations sees who's working, where, and how every hour should be assigned. Review, split, and approve time without chasing down the details. Pay rules and deductions are applied automatically. From field to payroll, one flow. OpsFloa.
 
 ### Plans to Project
 
@@ -51,6 +51,8 @@ Margin does not disappear all at once. It leaks through disconnected labor, mate
 - Voice: Calm owner-operator authority; conversational rather than announcer-like.
 - Mix: Voice dominant, music about 16 dB below narration, subtle interface taps only.
 - End card: Let the music resolve cleanly beneath `opsfloa.com`.
+
+The `field-to-payroll` composition currently includes a generated 110 BPM original music bed and scene-timed local draft narration. Regenerate both with `npm run audio:field-payroll`. The narration is intentionally split into six clips so a final recorded or licensed voice can replace it line by line without changing the edit.
 
 ## Working with the compositions
 
@@ -74,8 +76,8 @@ On Windows ARM64, the render script automatically uses installed Google Chrome o
 ## Delivery checklist
 
 - Replace the two footage slates.
-- Record final voiceover using the scripts above.
-- License and add one music track across the campaign.
+- Replace the local draft narration with the final recorded or licensed voice.
+- Extend the original music bed to the other campaign compositions, or replace it with one licensed track across the campaign.
 - Verify all claims against the release being advertised.
 - Export 1920x1080 masters.
 - Create 1080x1920 and 1080x1080 reframes.
