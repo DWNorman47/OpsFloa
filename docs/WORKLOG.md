@@ -6491,3 +6491,11 @@ Reworked the Approval Queue Location History popup per spec:
 - Every per-entry 📍 (pending + recently-approved) now seeds { user_id, date, entry_id } →
   opens straight into that entry (entry mode).
 Full verify green (server 1561, client build + i18n).
+
+## Revert always-on per-entry location button (2026-09-04)
+Removed the 📍 button that was added to every pending entry's actions row (+ its
+locHistoryIconBtn style). The pre-existing location affordances stay: the pending entry's
+expanded "View location" (only when clock coords exist) and the recently-approved
+"View on map". The reworked Location History modal is still reachable from the top button
+and the recently-approved button.
+Full verify green (server 1561, client build + i18n).

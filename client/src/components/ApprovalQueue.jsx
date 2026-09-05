@@ -1093,16 +1093,6 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                         {working === e.id ? '…' : '✓'}
                       </button>
                       <button style={styles.rejectIconBtn} onClick={() => { setRejectingId(e.id); setRejectNote(''); }} title={t.reject} aria-label={t.reject}>✕</button>
-                      <button
-                        style={styles.locHistoryIconBtn}
-                        onClick={() => {
-                          const d = (e.work_date || '').toString().substring(0, 10);
-                          setLocSeed({ user_id: e.user_id, date: d, entry_id: e.id });
-                          setLocHistoryOpen(true);
-                        }}
-                        title={t.aqLocationHistory}
-                        aria-label={t.aqLocationHistory}
-                      >📍</button>
                     </div>
                   )}
                   {!isExpanded && rejectingId !== e.id && (
@@ -1281,7 +1271,6 @@ const styles = {
   rejectBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   approveIconBtn: { background: '#059669', color: '#fff', border: 'none', width: 34, height: 34, borderRadius: 6, fontSize: 17, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
   rejectIconBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', width: 34, height: 34, borderRadius: 6, fontSize: 15, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
-  locHistoryIconBtn: { background: 'none', border: '1px solid #bfdbfe', color: 'var(--ops-page-accent)', width: 34, height: 34, borderRadius: 6, fontSize: 15, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
   // Full-bleed footer bar: negative margins cancel the card's 12x16 padding so it
   // sits flush against the card's bottom/side borders, with only the bottom corners
   // rounded to match. Thin tap strip that expands the row.
