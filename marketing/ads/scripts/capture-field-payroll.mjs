@@ -212,12 +212,15 @@ try {
   await api(adminSession.apiBase, workerSession.token, '/clock/cancel', { method: 'DELETE' }).catch(() => {});
 
   const pendingEntries = await api(adminSession.apiBase, adminSession.token, '/admin/entries/pending');
-  const walkthroughEntries = pendingEntries.entries?.filter(entry => entry.user_id === worker.id) || [];
+  let walkthroughEntries = pendingEntries.entries?.filter(entry => entry.user_id === worker.id) || [];
   if (walkthroughEntries.length > 1) {
-    await api(adminSession.apiBase, adminSession.token, '/admin/entries/bulk-approve', {
-      method: 'POST',
-      body: JSON.stringify({ ids: walkthroughEntries.map(entry => entry.id) }),
-    });
+    await Promise.all(walkthroughEntries.map(entry => api(
+      adminSession.apiBase,
+      adminSession.token,
+      `/admin/entries/${entry.id}/reject`,
+      { method: 'PATCH', body: JSON.stringify({ note: 'Replaced by marketing walkthrough capture' }) },
+    )));
+    walkthroughEntries = [];
   }
   const locatedWalkthroughEntry = walkthroughEntries.length === 1
     && walkthroughEntries[0].clock_in_lat != null
@@ -227,9 +230,10 @@ try {
   if (!locatedWalkthroughEntry) {
     const now = new Date();
     const clockInAt = new Date(now.getTime() - 8 * 60 * 60 * 1000);
+    const walkthroughDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const localDate = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Phoenix', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(now);
+    }).format(walkthroughDate);
     await api(adminSession.apiBase, workerSession.token, '/clock/in', {
       method: 'POST',
       body: JSON.stringify({
@@ -298,7 +302,16 @@ try {
   await targetRow.getByRole('button', { name: /Split/i }).click();
   await shot(adminPage, 'split');
   const timeInputs = targetRow.locator('input[type="time"]');
-  await timeInputs.nth(1).fill('11:30');
+  const firstEndTime = timeInputs.nth(1);
+  const firstEndTimeBox = await firstEndTime.boundingBox();
+  if (!firstEndTimeBox) throw new Error('The first split end-time input is not visible.');
+  await firstEndTime.click({
+    position: { x: firstEndTimeBox.width * 0.38, y: firstEndTimeBox.height / 2 },
+  });
+  const typeEndTime = firstEndTime.pressSequentially('30', { delay: 650 });
+  await adminPage.waitForTimeout(50);
+  await shot(adminPage, 'split-time-typing');
+  await typeEndTime;
   await shot(adminPage, 'split-time');
   const projectSelects = targetRow.locator('select');
   await projectSelects.nth(1).selectOption(String(secondProject.id));
