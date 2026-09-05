@@ -25,7 +25,7 @@ const fieldPayrollStates = [
   { at: 262, src: 'captures/field-payroll/location.png' },
   { at: 335, src: 'captures/field-payroll/location-closed.png' },
   { at: 365, src: 'captures/field-payroll/split.png' },
-  { at: 410, src: 'captures/field-payroll/split-time-typing.png' },
+  { at: 420, src: 'captures/field-payroll/split-time-typing.png' },
   { at: 430, src: 'captures/field-payroll/split-time.png' },
   { at: 455, src: 'captures/field-payroll/split-project.png' },
   { at: 500, src: 'captures/field-payroll/split-saved.png' },
