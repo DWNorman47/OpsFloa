@@ -6474,3 +6474,20 @@ and work_date — showing the breadcrumb path + clock-in/out points for that shi
 reused `t.aqLocationHistory`. (Recent/approved entries already had an equivalent "View on map";
 this brings the same to the pending queue on every row.)
 Full verify green (server 1560, client build + i18n).
+
+## Location History modal: worker-first, day/range/entry scopes (2026-09-04)
+Reworked the Approval Queue Location History popup per spec:
+- Requires picking a team member first (prompt until then).
+- From date (white) defaults to the worker's last day in the pending queue, else their most
+  recent worked day (new `?latest=1` branch on /admin/worker-locations). Dash + a gray To
+  box follow; a "All / <entries>" dropdown of that day's entries on the next line.
+- Three scopes: single day (default) → per-day first clock-in (green) + last clock-out (red)
+  + breadcrumb path; date range (set the To date → it turns white, dropdown hides) → same per
+  day; single entry (pick from dropdown → dash + To hide) → the entry's first/last recorded
+  location + path (one marker if only one location, none if none). Picking "All" returns to
+  day mode; clearing To returns from range to day.
+- /admin/worker-locations now returns ALL entries in range (not only located ones) so the
+  dropdown lists every entry; added the `latest` lookup. Test updated + latest case added.
+- Every per-entry 📍 (pending + recently-approved) now seeds { user_id, date, entry_id } →
+  opens straight into that entry (entry mode).
+Full verify green (server 1561, client build + i18n).
