@@ -12,6 +12,7 @@ const adminPassword = process.env.OPSFLOA_CAPTURE_PASSWORD || 'Admin123';
 const workerUsername = 'ad.walkthrough';
 const workerPassword = 'DemoWalkthrough123!';
 const workerName = 'Jordan Lee';
+const payrollRulesetName = 'Weekly Field Payroll';
 const phoenix = { latitude: 33.4484, longitude: -112.0740 };
 const browserCandidates = [
   process.env.REMOTION_BROWSER_EXECUTABLE,
@@ -81,7 +82,90 @@ async function settle(page) {
 
 try {
   const adminSession = await loginThroughUi(adminPage, adminUsername, adminPassword);
+  const [settings, roles] = await Promise.all([
+    api(adminSession.apiBase, adminSession.token, '/admin/settings'),
+    api(adminSession.apiBase, adminSession.token, '/admin/roles'),
+  ]);
+  const workerRoleIds = roles
+    .filter(role => role.parent_role === 'worker')
+    .map(role => Number(role.id));
+  if (!workerRoleIds.length) throw new Error('At least one worker role is required for the payroll walkthrough.');
+
+  await api(adminSession.apiBase, adminSession.token, '/admin/settings', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      week_start: 1,
+      work_week_end: 0,
+      overtime_rule: 'weekly',
+      overtime_threshold: 40,
+      overtime_multiplier: 1.5,
+      regular_shift_hours: 8,
+    }),
+  });
+  const deductions = JSON.stringify({
+    version: 1,
+    items: [
+      { id: 'demo_retirement', name: 'Retirement contribution', kind: 'percent', value: 3 },
+      { id: 'demo_health', name: 'Health plan', kind: 'fixed', value: 45 },
+    ],
+  });
+  if (settings.deductions !== deductions) {
+    await api(adminSession.apiBase, adminSession.token, '/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        deductions,
+        expected_settings: { deductions: settings.deductions || '' },
+      }),
+    });
+  }
+  const paycheckRules = JSON.stringify({
+    version: 1,
+    rulesets: [{
+      id: 'demo_weekly_field',
+      name: payrollRulesetName,
+      roles: workerRoleIds,
+      schedule: {
+        frequency: 'weekly',
+        periodBasis: 'work_week',
+        payWeekday: 5,
+        anchorDate: null,
+        daysOfMonth: [],
+        dayOfMonth: 30,
+        weekendShift: 'before',
+      },
+      deductions: {
+        timing: 'every',
+        group: { by: 'pair', applyOn: 'second' },
+        combineGroup: true,
+        exemptAmountCents: 0,
+        cap: { type: 'none', valueCents: 0, valuePct: 0 },
+        minNetCents: 0,
+        scope: 'all',
+        selectedDeductionIds: [],
+      },
+      notes: 'Weekly Friday payroll for the prior completed Monday-Sunday work week.',
+    }],
+  });
+  if (settings.paycheck_rules !== paycheckRules) {
+    await api(adminSession.apiBase, adminSession.token, '/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        paycheck_rules: paycheckRules,
+        expected_settings: { paycheck_rules: settings.paycheck_rules || '' },
+      }),
+    });
+  }
+
   const workers = await api(adminSession.apiBase, adminSession.token, '/admin/workers?all_roles=true');
+  const defaultWorkerRole = roles.find(role => role.is_builtin && role.name === 'Worker')
+    || roles.find(role => role.parent_role === 'worker');
+  const workersMissingRoles = workers.filter(item => item.role === 'worker' && !item.role_id);
+  for (const item of workersMissingRoles) {
+    await api(adminSession.apiBase, adminSession.token, `/admin/workers/${item.id}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role_id: defaultWorkerRole.id }),
+    });
+  }
   let worker = workers.find(item => item.username === workerUsername);
   if (!worker) {
     worker = await api(adminSession.apiBase, adminSession.token, '/admin/workers', {
@@ -231,6 +315,27 @@ try {
   await rows.nth(0).getByRole('button', { name: /Approve/i }).click();
   await adminPage.waitForTimeout(800);
   await shot(adminPage, 'both-approved');
+
+  await adminPage.getByRole('tab', { name: /^Payroll$/ }).click();
+  const payrollCard = adminPage.getByRole('heading', { name: /Run payroll/i }).locator('..');
+  await payrollCard.locator('option').filter({ hasText: payrollRulesetName }).first().waitFor({ state: 'attached', timeout: 15_000 });
+  const runPayroll = payrollCard.getByRole('button', { name: /^Run$/ });
+  await runPayroll.waitFor({ state: 'visible' });
+  await payrollCard.locator('table').waitFor({ state: 'visible', timeout: 15_000 });
+  await payrollCard.getByRole('button', { name: /custom date range/i }).click();
+  await payrollCard.getByRole('button', { name: /scheduled pay periods/i }).click();
+  await payrollCard.locator('table').waitFor({ state: 'hidden' });
+  await payrollCard.scrollIntoViewIfNeeded();
+  await adminPage.evaluate(() => window.scrollBy(0, -80));
+  await shot(adminPage, 'payroll-ready');
+
+  await Promise.all([
+    adminPage.waitForResponse(response => response.url().includes('/api/admin/payroll-run?') && response.ok()),
+    runPayroll.click(),
+  ]);
+  await payrollCard.locator('table').waitFor({ state: 'visible' });
+  await adminPage.evaluate(() => window.scrollBy(0, 220));
+  await shot(adminPage, 'payroll-results');
 } finally {
   await context.close();
   await browser.close();

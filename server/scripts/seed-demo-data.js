@@ -264,7 +264,7 @@ async function ensureDemoAdmin(client, companyId) {
   );
 }
 
-async function ensureDemoSettings(client, companyId) {
+async function ensureDemoSettings(client, companyId, workerRoleId) {
   const settings = {
     module_timeclock: '1',
     module_field: '1',
@@ -290,6 +290,47 @@ async function ensureDemoSettings(client, companyId) {
     feature_worker_edit_time: '1',
     show_worker_wages: '1',
     company_timezone: 'America/Phoenix',
+    week_start: '1',
+    work_week_end: '0',
+    overtime_rule: 'weekly',
+    overtime_threshold: '40',
+    overtime_multiplier: '1.5',
+    regular_shift_hours: '8',
+    deductions: JSON.stringify({
+      version: 1,
+      items: [
+        { id: 'demo_retirement', name: 'Retirement contribution', kind: 'percent', value: 3 },
+        { id: 'demo_health', name: 'Health plan', kind: 'fixed', value: 45 },
+      ],
+    }),
+    paycheck_rules: JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'demo_weekly_field',
+        name: 'Weekly Field Payroll',
+        roles: [workerRoleId],
+        schedule: {
+          frequency: 'weekly',
+          periodBasis: 'work_week',
+          payWeekday: 5,
+          anchorDate: null,
+          daysOfMonth: [],
+          dayOfMonth: 30,
+          weekendShift: 'before',
+        },
+        deductions: {
+          timing: 'every',
+          group: { by: 'pair', applyOn: 'second' },
+          combineGroup: true,
+          exemptAmountCents: 0,
+          cap: { type: 'none', valueCents: 0, valuePct: 0 },
+          minNetCents: 0,
+          scope: 'all',
+          selectedDeductionIds: [],
+        },
+        notes: 'Weekly Friday payroll for the prior completed Monday-Sunday work week.',
+      }],
+    }),
     setup_questionnaire_completed_at: new Date().toISOString(),
   };
   for (const [key, value] of Object.entries(settings)) {
@@ -366,7 +407,8 @@ async function main() {
 
     const company = await ensureDemoCompany(client);
     const companyId = company.id;
-    await ensureDemoSettings(client, companyId);
+    const { workerId, adminId } = await seedBuiltinRoles(client, companyId);
+    await ensureDemoSettings(client, companyId, workerId);
     await ensureDemoPublicProfile(client, companyId);
 
     const admin = await ensureDemoAdmin(client, companyId);
@@ -396,6 +438,7 @@ async function main() {
         {
           password_hash: 'demo-disabled-password',
           role,
+          role_id: role === 'worker' ? workerId : adminId,
           full_name: fullName,
           email,
           hourly_rate: rate,

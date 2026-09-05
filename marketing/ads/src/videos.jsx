@@ -51,13 +51,22 @@ const fieldPayrollMoves = [
   { start: 578, end: 592, from: [1293, 584], to: [1293, 584], clickAt: 598 },
 ];
 
+const payrollRunStates = [
+  { at: 0, src: 'captures/field-payroll/payroll-ready.png' },
+  { at: 68, src: 'captures/field-payroll/payroll-results.png', transition: 'scroll', transitionFrames: 12 },
+];
+
+const payrollRunMoves = [
+  { start: 5, end: 30, from: [1970, 728], to: [1198, 728], clickAt: 52 },
+];
+
 export function FieldToPayroll() {
   return (
     <AbsoluteFill className="video-root">
       <Scene from={0} duration={100} className="hook-scene">{frame => <Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." />}</Scene>
       <Scene from={90} duration={65}>{frame => <FootageSlot frame={frame} duration={65} number={1} title="The workday starts" direction="Wide jobsite arrival. One worker checks a phone, then continues toward the crew." />}</Scene>
       <Scene from={145} duration={625} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 610]]} />}</Scene>
-      <Scene from={760} duration={150} className="capture-scene">{frame => <><AppCapture frame={frame} duration={150} src="captures/workforce-payroll.png" focus={[50,58]} cursor={{from:[720,730],to:[875,729],clickAt:112}}/><Caption>Run payroll with the rules resolved.</Caption></>}</Scene>
+      <Scene from={760} duration={150} className="capture-scene">{frame => <><GuidedCapture frame={frame} states={payrollRunStates} moves={payrollRunMoves} cursorWindows={[[5, 64]]}/><Caption>Run payroll from the scheduled pay period.</Caption></>}</Scene>
       <Scene from={900} duration={150}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
     </AbsoluteFill>
   );
