@@ -393,7 +393,14 @@ try {
   await typeEndTime;
   await shot(adminPage, 'split-time');
   const projectSelects = targetRow.locator('select');
-  await projectSelects.nth(1).selectOption(String(secondProject.id));
+  const secondProjectSelect = projectSelects.nth(1);
+  await secondProjectSelect.click();
+  await adminPage.waitForTimeout(500);
+  await shot(adminPage, 'split-project-open');
+  await secondProjectSelect.selectOption(String(secondProject.id));
+  await adminPage.keyboard.press('Escape');
+  await secondProjectSelect.evaluate(select => select.blur());
+  await adminPage.waitForTimeout(100);
   await shot(adminPage, 'split-project');
   await targetRow.getByRole('button', { name: /Split.*Save/i }).click();
   await adminPage.locator('.approval-row').filter({ hasText: workerName }).nth(1).waitFor({ timeout: 15_000 });
