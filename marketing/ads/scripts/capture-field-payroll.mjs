@@ -366,7 +366,7 @@ try {
   await targetRow.waitFor({ timeout: 15_000 });
   await shot(adminPage, 'approvals-top');
   await targetRow.scrollIntoViewIfNeeded();
-  await adminPage.evaluate(() => window.scrollBy(0, 180));
+  await adminPage.evaluate(() => window.scrollBy(0, 400));
   await shot(adminPage, 'approvals-scrolled');
 
   await targetRow.locator('.approval-expand').click();
