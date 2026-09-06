@@ -72,6 +72,75 @@ export function Headline({ frame, eyebrow, title, body, align = 'left' }) {
   );
 }
 
+const openingSteps = [
+  [Clock3, 'FIELD', 'CLOCKED IN'],
+  [CheckCircle2, 'APPROVALS', 'CLEARED'],
+  [ReceiptText, 'PAYROLL', 'READY'],
+];
+
+export function OpeningBackdrop({ frame }) {
+  const { fps } = useVideoConfig();
+  const boardIn = spring({ frame, fps, config: { damping: 20, stiffness: 95 } });
+  const routeProgress = interpolate(frame, [10, 82], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.inOut(Easing.cubic),
+  });
+  const pulseY = interpolate(frame, [12, 92], [206, 706], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  return (
+    <div className="opening-backdrop" aria-hidden="true">
+      <div
+        className="opening-panel"
+        style={{ transform: `translateX(${(1 - boardIn) * 150}px)` }}
+      />
+      <div className="opening-grid" style={{ backgroundPosition: `${frame * 0.6}px ${frame * 0.28}px` }} />
+      <div className="opening-plan-lines">
+        {[0, 1, 2, 3].map(index => (
+          <i
+            key={index}
+            style={{
+              opacity: boardIn * (0.24 + index * 0.05),
+              transform: `rotate(${-14 + index * 11}deg) scaleX(${Math.min(1, routeProgress * 1.35)})`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="opening-route">
+        <div className="opening-route-track" />
+        <div className="opening-route-fill" style={{ height: `${routeProgress * 500}px` }} />
+        <div className="opening-route-pulse" style={{ top: pulseY }} />
+        {openingSteps.map(([Icon, label, value], index) => {
+          const cardIn = spring({
+            frame: Math.max(0, frame - 8 - index * 10),
+            fps,
+            config: { damping: 18, stiffness: 120 },
+          });
+          const isReached = routeProgress >= index / 2;
+          return (
+            <div
+              className="opening-step"
+              key={label}
+              style={{
+                top: 142 + index * 250,
+                opacity: cardIn,
+                transform: `translateX(${(1 - cardIn) * 90}px)`,
+              }}
+            >
+              <div className={`opening-step-icon ${isReached ? 'is-reached' : ''}`}><Icon size={26} /></div>
+              <div><span>{label}</span><strong>{value}</strong></div>
+              <b>{String(index + 1).padStart(2, '0')}</b>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function FootageSlot({ frame, number, title, direction, duration }) {
   const sweep = interpolate(frame, [0, Math.max(1, duration)], [-20, 120], { extrapolateRight: 'clamp' });
   return (
@@ -380,9 +449,31 @@ export function MoneyFlow({ frame }) {
 }
 
 export function EndCard({ frame, line, subline }) {
+  const chevronDrift = interpolate(frame, [0, 230], [-20, 70], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const railProgress = interpolate(frame, [5, 120], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.out(Easing.cubic),
+  });
   return (
     <div className="end-card">
-      <div className="end-grid" />
+      <div className="end-grid" style={{ backgroundPosition: `${frame * 0.7}px ${frame * 0.35}px` }} />
+      <div className="end-chevrons" style={{ transform: `translateX(${chevronDrift}px)` }} aria-hidden="true">
+        <ChevronRight />
+        <ChevronRight />
+        <ChevronRight />
+      </div>
+      <div className="end-rails" aria-hidden="true">
+        {[0, 1, 2, 3].map(index => (
+          <div className="end-rail" key={index}>
+            <i style={{ width: `${Math.max(0, railProgress - index * 0.08) * 100}%` }} />
+            <span style={{ left: `${Math.max(0, railProgress - index * 0.08) * 100}%` }} />
+          </div>
+        ))}
+      </div>
       <Rise frame={frame}><Brand light /></Rise>
       <Rise frame={frame} delay={6}><h2>{line}</h2></Rise>
       <Rise frame={frame} delay={11}><p>{subline}</p></Rise>
