@@ -239,6 +239,22 @@ try {
   await api(adminSession.apiBase, workerSession.token, '/auth/accept-terms', { method: 'POST', body: '{}' });
   await api(adminSession.apiBase, workerSession.token, '/clock/cancel', { method: 'DELETE' }).catch(() => {});
 
+  const reportWeek = previousSundayToSaturday();
+  const approvedEntries = await api(
+    adminSession.apiBase,
+    adminSession.token,
+    `/admin/entries/recently-approved?from=${reportWeek.from}&to=${reportWeek.to}`,
+  );
+  const priorWalkthroughEntries = approvedEntries.filter(entry => (
+    Number(entry.user_id) === Number(worker.id) && entry.notes === 'Travel and staging'
+  ));
+  await Promise.all(priorWalkthroughEntries.map(entry => api(
+    adminSession.apiBase,
+    adminSession.token,
+    `/admin/entries/${entry.id}/reject`,
+    { method: 'PATCH', body: JSON.stringify({ note: 'Replaced by marketing walkthrough capture' }) },
+  )));
+
   const pendingEntries = await api(adminSession.apiBase, adminSession.token, '/admin/entries/pending');
   let walkthroughEntries = pendingEntries.entries?.filter(entry => entry.user_id === worker.id) || [];
   const pendingReportEntries = walkthroughEntries.filter(entry => entry.notes === reportEntryNote);
@@ -294,7 +310,6 @@ try {
     });
   }
 
-  const reportWeek = previousSundayToSaturday();
   const reportData = await api(
     adminSession.apiBase,
     adminSession.token,
@@ -432,22 +447,28 @@ try {
   await adminPage.evaluate(() => window.scrollBy(0, -70));
   await shot(adminPage, 'reports-collapsed');
 
+  const collapsedScrollTop = await adminPage.evaluate(() => window.scrollY);
   await teamReports.click();
   const reportWorkerRow = adminPage.locator('.member-report-row').filter({ hasText: workerName }).first();
   await reportWorkerRow.waitFor({ state: 'visible', timeout: 15_000 });
+  await adminPage.evaluate(scrollTop => window.scrollTo(0, scrollTop), collapsedScrollTop);
+  await shot(adminPage, 'reports-team-expanded');
+  await adminPage.evaluate(() => window.scrollBy(0, 164));
   await shot(adminPage, 'reports-team-open');
 
+  const teamScrollTop = await adminPage.evaluate(() => window.scrollY);
   await reportWorkerRow.click();
   const generateEntries = adminPage.getByRole('button', { name: /^Generate entries$/ });
   await generateEntries.waitFor({ state: 'visible', timeout: 15_000 });
   const lastTwoWeeks = adminPage.getByRole('button', { name: /^Last two weeks$/ });
   await lastTwoWeeks.click();
   await adminPage.waitForTimeout(900);
-  await shot(adminPage, 'reports-worker-selected-top');
-  await adminPage.evaluate(() => {
+  await adminPage.evaluate(scrollTop => {
+    window.scrollTo(0, scrollTop);
     document.body.style.paddingBottom = '300px';
-    window.scrollBy(0, 140);
-  });
+  }, teamScrollTop);
+  await shot(adminPage, 'reports-worker-expanded');
+  await adminPage.evaluate(() => window.scrollBy(0, 272));
   await shot(adminPage, 'reports-worker-selected');
 
   const lastWeek = adminPage.getByRole('button', { name: /^Last week$/ });
@@ -477,11 +498,15 @@ try {
   await adminPage.evaluate(() => window.scrollBy(0, 250));
   await shot(adminPage, 'reports-preview-ready');
 
+  const previewScrollTop = await adminPage.evaluate(() => window.scrollY);
   await previewBill.click();
   const billPreview = adminPage.locator('iframe[title="Bill Preview"]');
   await billPreview.waitFor({ state: 'visible', timeout: 20_000 });
   await adminPage.waitForTimeout(2500);
+  await adminPage.evaluate(scrollTop => window.scrollTo(0, scrollTop), previewScrollTop);
   await shot(adminPage, 'reports-bill-preview');
+  await adminPage.evaluate(() => window.scrollBy(0, 520));
+  await shot(adminPage, 'reports-bill-preview-full');
 
   await adminPage.getByRole('tab', { name: /^Payroll$/ }).click();
   const payrollCard = adminPage.getByRole('heading', { name: /Run payroll/i }).locator('..');

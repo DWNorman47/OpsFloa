@@ -66,20 +66,22 @@ const payrollRunMoves = [
 
 const reportsStates = [
   { at: 0, src: 'captures/field-payroll/reports-collapsed.png' },
-  { at: 52, src: 'captures/field-payroll/reports-team-open.png' },
-  { at: 112, src: 'captures/field-payroll/reports-worker-selected-top.png' },
-  { at: 132, src: 'captures/field-payroll/reports-worker-selected.png', transition: 'scroll', transitionFrames: 18, scrollDistance: 140, matchedScroll: true },
+  { at: 52, src: 'captures/field-payroll/reports-team-expanded.png' },
+  { at: 70, src: 'captures/field-payroll/reports-team-open.png', transition: 'scroll', transitionFrames: 18, scrollDistance: 164, matchedScroll: true },
+  { at: 112, src: 'captures/field-payroll/reports-worker-expanded.png' },
+  { at: 132, src: 'captures/field-payroll/reports-worker-selected.png', transition: 'scroll', transitionFrames: 24, scrollDistance: 272, matchedScroll: true },
   { at: 187, src: 'captures/field-payroll/reports-last-week.png' },
   { at: 252, src: 'captures/field-payroll/reports-generated.png' },
   { at: 295, src: 'captures/field-payroll/reports-details.png' },
   { at: 350, src: 'captures/field-payroll/reports-overtime-date.png' },
   { at: 410, src: 'captures/field-payroll/reports-preview-ready.png', transition: 'scroll', transitionFrames: 24, scrollDistance: 250, matchedScroll: true },
   { at: 470, src: 'captures/field-payroll/reports-bill-preview.png' },
+  { at: 490, src: 'captures/field-payroll/reports-bill-preview-full.png', transition: 'scroll', transitionFrames: 22, scrollDistance: 520, matchedScroll: true },
 ];
 
 const reportsMoves = [
   { start: 8, end: 38, from: [960, 540], to: [960, 326], clickAt: 47 },
-  { start: 62, end: 88, from: [960, 326], to: [640, 358], clickAt: 100 },
+  { start: 90, end: 104, from: [960, 326], to: [640, 328], clickAt: 108 },
   { start: 155, end: 175, from: [960, 540], to: [889, 224], clickAt: 182 },
   { start: 227, end: 243, from: [889, 224], to: [916, 174], clickAt: 247 },
   { start: 260, end: 280, from: [916, 174], to: [600, 278], clickAt: 288 },
