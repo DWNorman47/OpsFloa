@@ -73,7 +73,7 @@ const reportsStates = [
   { at: 252, src: 'captures/field-payroll/reports-generated.png' },
   { at: 295, src: 'captures/field-payroll/reports-details.png' },
   { at: 350, src: 'captures/field-payroll/reports-overtime-date.png' },
-  { at: 410, src: 'captures/field-payroll/reports-preview-ready.png', transition: 'scroll', transitionFrames: 24, scrollDistance: 425, matchedScroll: true },
+  { at: 410, src: 'captures/field-payroll/reports-preview-ready.png', transition: 'scroll', transitionFrames: 24, scrollDistance: 250, matchedScroll: true },
   { at: 470, src: 'captures/field-payroll/reports-bill-preview.png' },
 ];
 
@@ -83,9 +83,9 @@ const reportsMoves = [
   { start: 155, end: 175, from: [960, 540], to: [889, 224], clickAt: 182 },
   { start: 227, end: 243, from: [889, 224], to: [916, 174], clickAt: 247 },
   { start: 260, end: 280, from: [916, 174], to: [600, 278], clickAt: 288 },
-  { start: 305, end: 330, from: [600, 278], to: [600, 570], clickAt: 345 },
-  { start: 360, end: 395, from: [600, 570], to: [760, 732] },
-  { start: 434, end: 454, from: [760, 732], to: [600, 700], clickAt: 465 },
+  { start: 305, end: 330, from: [600, 278], to: [950, 350], clickAt: 345 },
+  { start: 360, end: 395, from: [950, 350], to: [790, 525] },
+  { start: 434, end: 454, from: [790, 525], to: [600, 653], clickAt: 465 },
 ];
 
 const reportsHighlights = [{

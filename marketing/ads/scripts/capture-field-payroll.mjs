@@ -462,11 +462,9 @@ try {
   await detailsToggle.waitFor({ state: 'visible', timeout: 15_000 });
   await shot(adminPage, 'reports-generated');
 
-  await detailsToggle.click();
   const overtimeBadge = adminPage.getByText(/^OT Hrs\s+/).first();
+  await detailsToggle.click();
   await overtimeBadge.waitFor({ state: 'visible', timeout: 15_000 });
-  await overtimeBadge.scrollIntoViewIfNeeded();
-  await adminPage.evaluate(() => window.scrollBy(0, -220));
   await shot(adminPage, 'reports-details');
 
   const overtimeDateRow = overtimeBadge.locator('..');
@@ -476,7 +474,7 @@ try {
 
   const previewBill = adminPage.getByRole('button', { name: /^Preview Bill$/ });
   await previewBill.scrollIntoViewIfNeeded();
-  await adminPage.evaluate(() => window.scrollBy(0, -160));
+  await adminPage.evaluate(() => window.scrollBy(0, 250));
   await shot(adminPage, 'reports-preview-ready');
 
   await previewBill.click();
