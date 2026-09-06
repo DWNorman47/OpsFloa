@@ -358,9 +358,10 @@ try {
   await settle(workerPage);
   const dismissHint = workerPage.getByRole('button', { name: 'Dismiss' }).first();
   if (await dismissHint.isVisible().catch(() => false)) await dismissHint.click();
+  const projectPicker = workerPage.locator('.project-wheel-trigger').first();
+  await projectPicker.waitFor({ state: 'visible', timeout: 15_000 });
   await shot(workerPage, 'clock-start');
 
-  const projectPicker = workerPage.locator('.project-wheel-trigger').first();
   await projectPicker.click();
   await shot(workerPage, 'clock-projects');
   await workerPage.locator('.project-wheel-option').filter({ hasText: primaryProject.name }).click();

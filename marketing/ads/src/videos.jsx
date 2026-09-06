@@ -40,19 +40,19 @@ const fieldPayrollMoves = [
   { start: 28, end: 39, from: [960, 490], to: [820, 555], clickAt: 44 },
   { start: 54, end: 71, from: [820, 555], to: [960, 628], clickAt: 78 },
   { start: 135, end: 151, from: [960, 540], to: [690, 385], clickAt: 155 },
-  { start: 207, end: 215, from: [960, 540], to: [960, 570], clickAt: 219 },
-  { start: 230, end: 248, from: [960, 570], to: [650, 560], clickAt: 258 },
-  { start: 270, end: 278, from: [650, 560], to: [900, 732] },
-  { start: 315, end: 323, from: [900, 732], to: [650, 560], clickAt: 330 },
-  { start: 340, end: 356, from: [650, 560], to: [707, 608], clickAt: 362 },
-  { start: 374, end: 394, from: [707, 608], to: [1118, 570], clickAt: 400 },
-  { start: 436, end: 447, from: [1118, 570], to: [1255, 682], clickAt: 451 },
-  { start: 458, end: 463, from: [1255, 682], to: [1255, 505], clickAt: 466 },
-  { start: 479, end: 498, from: [1255, 505], to: [980, 794], clickAt: 510 },
-  { start: 527, end: 537, from: [980, 794], to: [780, 685] },
-  { start: 538, end: 550, from: [780, 685], to: [1020, 685] },
-  { start: 565, end: 575, from: [1020, 685], to: [1293, 493], clickAt: 579 },
-  { start: 593, end: 607, from: [1293, 493], to: [1293, 493], clickAt: 613 },
+  { start: 207, end: 215, from: [960, 540], to: [960, 440], clickAt: 219 },
+  { start: 230, end: 248, from: [960, 440], to: [650, 430], clickAt: 258 },
+  { start: 270, end: 278, from: [650, 430], to: [900, 620] },
+  { start: 315, end: 323, from: [900, 620], to: [650, 430], clickAt: 330 },
+  { start: 340, end: 356, from: [650, 430], to: [707, 499], clickAt: 362 },
+  { start: 374, end: 394, from: [707, 499], to: [1117, 440], clickAt: 400 },
+  { start: 436, end: 447, from: [1117, 440], to: [1258, 551], clickAt: 451 },
+  { start: 458, end: 463, from: [1258, 551], to: [1245, 376], clickAt: 466 },
+  { start: 479, end: 498, from: [1245, 376], to: [981, 662], clickAt: 510 },
+  { start: 527, end: 537, from: [981, 662], to: [780, 570] },
+  { start: 538, end: 550, from: [780, 570], to: [1020, 570] },
+  { start: 565, end: 575, from: [1020, 570], to: [1293, 520], clickAt: 579 },
+  { start: 593, end: 607, from: [1293, 520], to: [1293, 362], clickAt: 613 },
 ];
 
 const payrollRunStates = [
@@ -61,7 +61,7 @@ const payrollRunStates = [
 ];
 
 const payrollRunMoves = [
-  { start: 5, end: 30, from: [960, 540], to: [1198, 728], clickAt: 52 },
+  { start: 5, end: 30, from: [960, 540], to: [1198, 500], clickAt: 52 },
 ];
 
 const reportsStates = [
@@ -87,7 +87,7 @@ const reportsMoves = [
   { start: 260, end: 280, from: [916, 174], to: [600, 278], clickAt: 288 },
   { start: 305, end: 330, from: [600, 278], to: [950, 350], clickAt: 345 },
   { start: 360, end: 395, from: [950, 350], to: [790, 525] },
-  { start: 434, end: 454, from: [790, 525], to: [600, 653], clickAt: 465 },
+  { start: 434, end: 454, from: [790, 525], to: [600, 738], clickAt: 465 },
 ];
 
 const reportsHighlights = [{
