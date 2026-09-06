@@ -151,11 +151,12 @@ function guidedCursorPosition(frame, moves) {
   return completed ? completed.to : moves[0].from;
 }
 
-export function GuidedCapture({ frame, states, moves, cursorWindows }) {
+export function GuidedCapture({ frame, states, moves, cursorWindows, highlights = [] }) {
   const stateIndex = states.reduce((found, state, index) => frame >= state.at ? index : found, 0);
   const current = states[stateIndex];
   const previous = states[Math.max(0, stateIndex - 1)];
   const scrollFrames = current.transitionFrames || 10;
+  const scrollDistance = current.scrollDistance || 180;
   const isScrolling = current.transition === 'scroll' && frame < current.at + scrollFrames;
   const scrollProgress = isScrolling
     ? interpolate(frame, [current.at, current.at + scrollFrames], [0, 1], {
@@ -179,16 +180,42 @@ export function GuidedCapture({ frame, states, moves, cursorWindows }) {
       {isScrolling && (
         <Img
           src={staticFile(previous.src)}
-          style={{ transform: `translateY(${-180 * scrollProgress}px)` }}
+          style={{
+            zIndex: current.matchedScroll ? 1 : undefined,
+            transform: `translateY(${-scrollDistance * scrollProgress}px)`,
+          }}
         />
       )}
       <Img
         src={staticFile(current.src)}
         style={isScrolling ? {
-          opacity: scrollProgress,
-          transform: `translateY(${180 * (1 - scrollProgress)}px)`,
+          zIndex: current.matchedScroll ? 0 : undefined,
+          opacity: current.matchedScroll ? 1 : scrollProgress,
+          transform: `translateY(${scrollDistance * (1 - scrollProgress)}px)`,
         } : undefined}
       />
+      {highlights.flatMap((highlight, highlightIndex) => {
+        const opacity = interpolate(
+          frame,
+          [highlight.start, highlight.start + 5, highlight.end - 12, highlight.end],
+          [0, 1, 1, 0],
+          { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+        );
+        if (frame < highlight.start || frame > highlight.end) return [];
+        return highlight.boxes.map((box, boxIndex) => (
+          <div
+            className="capture-highlight"
+            key={`${highlightIndex}-${boxIndex}`}
+            style={{
+              left: box.x,
+              top: box.y,
+              width: box.width,
+              height: box.height,
+              opacity,
+            }}
+          />
+        ));
+      })}
       {cursorVisible && (
         <div className="capture-cursor" style={{ left: cursorX, top: cursorY }}>
           <i style={{ opacity: clickPulse, transform: `scale(${1 + clickPulse * 1.2})` }} />

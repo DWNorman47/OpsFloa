@@ -64,6 +64,7 @@ button, .primary-button { border: 0; border-radius: 5px; font: 700 17px Inter; p
 .capture-cursor { position: absolute; width: 38px; height: 38px; z-index: 12; filter: drop-shadow(0 3px 4px rgba(15,23,42,.28)); transform: translate(-7px,-5px); }
 .capture-cursor > i { position: absolute; width: 42px; height: 42px; left: -10px; top: -10px; border: 4px solid #84cc16; border-radius: 50%; }
 .capture-cursor > svg { position: relative; z-index: 2; }
+.capture-highlight { position: absolute; z-index: 10; border: 3px solid #2563eb; border-radius: 7px; background: rgba(37,99,235,.08); box-shadow: 0 0 0 5px rgba(37,99,235,.14), 0 5px 18px rgba(37,99,235,.18); }
 .screen-wrap { width: 1720px; height: 915px; transform: translateY(-10px); }
 .browser-shell { width: 100%; height: 100%; background: white; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; box-shadow: 0 35px 90px rgba(15,23,42,.18); }
 .browser-top { height: 68px; background: #111827; color: white; display: flex; align-items: center; padding: 0 22px; position: relative; }

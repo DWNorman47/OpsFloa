@@ -387,6 +387,7 @@ try {
   await firstEndTime.click({
     position: { x: firstEndTimeBox.width * 0.38, y: firstEndTimeBox.height / 2 },
   });
+  await shot(adminPage, 'split-time-selected');
   const typeEndTime = firstEndTime.pressSequentially('30', { delay: 650 });
   await adminPage.waitForTimeout(50);
   await shot(adminPage, 'split-time-typing');
@@ -439,7 +440,14 @@ try {
   await reportWorkerRow.click();
   const generateEntries = adminPage.getByRole('button', { name: /^Generate entries$/ });
   await generateEntries.waitFor({ state: 'visible', timeout: 15_000 });
+  const lastTwoWeeks = adminPage.getByRole('button', { name: /^Last two weeks$/ });
+  await lastTwoWeeks.click();
   await adminPage.waitForTimeout(900);
+  await shot(adminPage, 'reports-worker-selected-top');
+  await adminPage.evaluate(() => {
+    document.body.style.paddingBottom = '300px';
+    window.scrollBy(0, 140);
+  });
   await shot(adminPage, 'reports-worker-selected');
 
   const lastWeek = adminPage.getByRole('button', { name: /^Last week$/ });

@@ -20,11 +20,12 @@ const fieldPayrollStates = [
   { at: 82, src: 'captures/field-payroll/clock-confirmed.png' },
   { at: 110, src: 'captures/field-payroll/live.png' },
   { at: 158, src: 'captures/field-payroll/approvals-top.png' },
-  { at: 186, src: 'captures/field-payroll/approvals-scrolled.png', transition: 'scroll', transitionFrames: 14 },
+  { at: 186, src: 'captures/field-payroll/approvals-scrolled.png', transition: 'scroll', transitionFrames: 20, scrollDistance: 400, matchedScroll: true },
   { at: 224, src: 'captures/field-payroll/details.png' },
   { at: 262, src: 'captures/field-payroll/location.png' },
   { at: 335, src: 'captures/field-payroll/location-closed.png' },
   { at: 365, src: 'captures/field-payroll/split.png' },
+  { at: 404, src: 'captures/field-payroll/split-time-selected.png' },
   { at: 420, src: 'captures/field-payroll/split-time-typing.png' },
   { at: 430, src: 'captures/field-payroll/split-time.png' },
   { at: 455, src: 'captures/field-payroll/split-project-open.png' },
@@ -39,7 +40,7 @@ const fieldPayrollMoves = [
   { start: 28, end: 39, from: [960, 490], to: [820, 555], clickAt: 44 },
   { start: 54, end: 71, from: [820, 555], to: [960, 628], clickAt: 78 },
   { start: 135, end: 151, from: [960, 540], to: [690, 385], clickAt: 155 },
-  { start: 195, end: 211, from: [960, 540], to: [960, 570], clickAt: 219 },
+  { start: 207, end: 215, from: [960, 540], to: [960, 570], clickAt: 219 },
   { start: 230, end: 248, from: [960, 570], to: [650, 560], clickAt: 258 },
   { start: 270, end: 278, from: [650, 560], to: [900, 732] },
   { start: 315, end: 323, from: [900, 732], to: [650, 560], clickAt: 330 },
@@ -66,25 +67,35 @@ const payrollRunMoves = [
 const reportsStates = [
   { at: 0, src: 'captures/field-payroll/reports-collapsed.png' },
   { at: 52, src: 'captures/field-payroll/reports-team-open.png' },
-  { at: 105, src: 'captures/field-payroll/reports-worker-selected.png' },
-  { at: 155, src: 'captures/field-payroll/reports-last-week.png' },
-  { at: 210, src: 'captures/field-payroll/reports-generated.png' },
-  { at: 270, src: 'captures/field-payroll/reports-details.png' },
-  { at: 335, src: 'captures/field-payroll/reports-overtime-date.png' },
-  { at: 410, src: 'captures/field-payroll/reports-preview-ready.png', transition: 'scroll', transitionFrames: 14 },
+  { at: 112, src: 'captures/field-payroll/reports-worker-selected-top.png' },
+  { at: 132, src: 'captures/field-payroll/reports-worker-selected.png', transition: 'scroll', transitionFrames: 18, scrollDistance: 140, matchedScroll: true },
+  { at: 187, src: 'captures/field-payroll/reports-last-week.png' },
+  { at: 252, src: 'captures/field-payroll/reports-generated.png' },
+  { at: 295, src: 'captures/field-payroll/reports-details.png' },
+  { at: 350, src: 'captures/field-payroll/reports-overtime-date.png' },
+  { at: 410, src: 'captures/field-payroll/reports-preview-ready.png', transition: 'scroll', transitionFrames: 24, scrollDistance: 425, matchedScroll: true },
   { at: 470, src: 'captures/field-payroll/reports-bill-preview.png' },
 ];
 
 const reportsMoves = [
   { start: 8, end: 38, from: [960, 540], to: [960, 326], clickAt: 47 },
   { start: 62, end: 88, from: [960, 326], to: [640, 358], clickAt: 100 },
-  { start: 112, end: 138, from: [640, 358], to: [889, 364], clickAt: 150 },
-  { start: 162, end: 190, from: [889, 364], to: [916, 314], clickAt: 205 },
-  { start: 222, end: 248, from: [916, 314], to: [580, 418], clickAt: 265 },
-  { start: 282, end: 315, from: [580, 418], to: [600, 710], clickAt: 330 },
-  { start: 348, end: 388, from: [600, 710], to: [760, 895] },
-  { start: 424, end: 452, from: [760, 895], to: [600, 700], clickAt: 465 },
+  { start: 155, end: 175, from: [960, 540], to: [889, 224], clickAt: 182 },
+  { start: 227, end: 243, from: [889, 224], to: [916, 174], clickAt: 247 },
+  { start: 260, end: 280, from: [916, 174], to: [600, 278], clickAt: 288 },
+  { start: 305, end: 330, from: [600, 278], to: [600, 570], clickAt: 345 },
+  { start: 360, end: 395, from: [600, 570], to: [760, 732] },
+  { start: 434, end: 454, from: [760, 732], to: [600, 700], clickAt: 465 },
 ];
+
+const reportsHighlights = [{
+  start: 187,
+  end: 225,
+  boxes: [
+    { x: 540, y: 149, width: 147, height: 49 },
+    { x: 691, y: 149, width: 147, height: 49 },
+  ],
+}];
 
 const fieldPayrollVoice = [
   { from: 5, src: 'audio/field-payroll/01-hook.wav' },
@@ -122,8 +133,8 @@ export function FieldToPayroll() {
     <AbsoluteFill className="video-root">
       <FieldPayrollAudio />
       <Scene from={0} duration={100} className="hook-scene">{frame => <Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." />}</Scene>
-      <Scene from={90} duration={640} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 158], [195, 625]]} />}</Scene>
-      <Scene from={720} duration={560} className="capture-scene">{frame => <GuidedCapture frame={frame} states={reportsStates} moves={reportsMoves} cursorWindows={[[8, 470]]} />}</Scene>
+      <Scene from={90} duration={640} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 158], [207, 625]]} />}</Scene>
+      <Scene from={720} duration={560} className="capture-scene">{frame => <GuidedCapture frame={frame} states={reportsStates} moves={reportsMoves} cursorWindows={[[8, 110], [155, 470]]} highlights={reportsHighlights} />}</Scene>
       <Scene from={1270} duration={150} className="capture-scene">{frame => <><GuidedCapture frame={frame} states={payrollRunStates} moves={payrollRunMoves} cursorWindows={[[5, 64]]}/><Caption>With the Payroll add-on, run payroll from the scheduled pay period.</Caption></>}</Scene>
       <Scene from={1410} duration={230}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
     </AbsoluteFill>
