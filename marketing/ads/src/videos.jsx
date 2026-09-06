@@ -40,7 +40,7 @@ const fieldPayrollMoves = [
   { start: 28, end: 39, from: [960, 490], to: [820, 555], clickAt: 44 },
   { start: 54, end: 71, from: [820, 555], to: [960, 628], clickAt: 78 },
   { start: 135, end: 151, from: [960, 540], to: [690, 385], clickAt: 155 },
-  { start: 207, end: 215, from: [960, 540], to: [960, 440], clickAt: 219 },
+  { start: 207, end: 215, from: [690, 385], to: [960, 440], clickAt: 219 },
   { start: 230, end: 248, from: [960, 440], to: [650, 430], clickAt: 258 },
   { start: 270, end: 278, from: [650, 430], to: [900, 620] },
   { start: 315, end: 323, from: [900, 620], to: [650, 430], clickAt: 330 },
@@ -135,7 +135,7 @@ export function FieldToPayroll() {
     <AbsoluteFill className="video-root">
       <FieldPayrollAudio />
       <Scene from={0} duration={100} className="hook-scene">{frame => <Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." />}</Scene>
-      <Scene from={90} duration={640} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 158], [207, 625]]} />}</Scene>
+      <Scene from={90} duration={640} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 625]]} />}</Scene>
       <Scene from={720} duration={560} className="capture-scene">{frame => <GuidedCapture frame={frame} states={reportsStates} moves={reportsMoves} cursorWindows={[[8, 110], [155, 470]]} highlights={reportsHighlights} />}</Scene>
       <Scene from={1270} duration={150} className="capture-scene">{frame => <><GuidedCapture frame={frame} states={payrollRunStates} moves={payrollRunMoves} cursorWindows={[[5, 64]]}/><Caption>With the Payroll add-on, run payroll from the scheduled pay period.</Caption></>}</Scene>
       <Scene from={1410} duration={230}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
