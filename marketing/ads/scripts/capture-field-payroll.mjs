@@ -529,6 +529,12 @@ try {
   await payrollCard.locator('table').waitFor({ state: 'visible' });
   await adminPage.evaluate(() => window.scrollBy(0, 220));
   await shot(adminPage, 'payroll-results');
+
+  const jordanPayrollRow = payrollCard.locator('tbody tr[aria-expanded="false"]')
+    .filter({ hasText: 'Jordan Lee' }).first();
+  await jordanPayrollRow.click();
+  await payrollCard.getByRole('button', { name: /^Print$/ }).waitFor({ state: 'visible', timeout: 15_000 });
+  await shot(adminPage, 'payroll-stub');
 } finally {
   await context.close();
   await browser.close();

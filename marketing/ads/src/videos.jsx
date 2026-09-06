@@ -58,10 +58,12 @@ const fieldPayrollMoves = [
 const payrollRunStates = [
   { at: 0, src: 'captures/field-payroll/payroll-ready.png' },
   { at: 68, src: 'captures/field-payroll/payroll-results.png', transition: 'scroll', transitionFrames: 12 },
+  { at: 128, src: 'captures/field-payroll/payroll-stub.png' },
 ];
 
 const payrollRunMoves = [
   { start: 5, end: 30, from: [960, 540], to: [1198, 500], clickAt: 52 },
+  { start: 98, end: 114, from: [1198, 500], to: [710, 446], clickAt: 120 },
 ];
 
 const reportsStates = [
@@ -108,7 +110,7 @@ const fieldPayrollVoice = [
   { from: 875, src: 'audio/field-payroll/06-report-range.wav' },
   { from: 1050, src: 'audio/field-payroll/07-overtime-preview.wav' },
   { from: 1280, src: 'audio/field-payroll/08-payroll-addon.wav' },
-  { from: 1470, src: 'audio/field-payroll/09-close.wav' },
+  { from: 1570, src: 'audio/field-payroll/09-close.wav' },
 ];
 
 function FieldPayrollAudio() {
@@ -116,7 +118,7 @@ function FieldPayrollAudio() {
     <>
       <Audio
         src={staticFile('audio/field-payroll/music.wav')}
-        volume={frame => interpolate(frame, [0, 24, 1565, 1639], [0, 0.11, 0.11, 0], {
+        volume={frame => interpolate(frame, [0, 24, 1665, 1739], [0, 0.11, 0.11, 0], {
           extrapolateLeft: 'clamp',
           extrapolateRight: 'clamp',
         })}
@@ -137,8 +139,8 @@ export function FieldToPayroll() {
       <Scene from={0} duration={100} className="hook-scene">{frame => <Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." />}</Scene>
       <Scene from={90} duration={640} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 625]]} />}</Scene>
       <Scene from={720} duration={560} className="capture-scene">{frame => <GuidedCapture frame={frame} states={reportsStates} moves={reportsMoves} cursorWindows={[[8, 110], [155, 470]]} highlights={reportsHighlights} />}</Scene>
-      <Scene from={1270} duration={150} className="capture-scene">{frame => <><GuidedCapture frame={frame} states={payrollRunStates} moves={payrollRunMoves} cursorWindows={[[5, 64]]}/><Caption>With the Payroll add-on, run payroll from the scheduled pay period.</Caption></>}</Scene>
-      <Scene from={1410} duration={230}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
+      <Scene from={1270} duration={250} className="capture-scene">{frame => <><GuidedCapture frame={frame} states={payrollRunStates} moves={payrollRunMoves} cursorWindows={[[5, 130]]}/><Caption>With the Payroll add-on, run payroll from the scheduled pay period.</Caption></>}</Scene>
+      <Scene from={1510} duration={230}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
     </AbsoluteFill>
   );
 }
