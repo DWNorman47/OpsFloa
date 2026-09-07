@@ -7,6 +7,7 @@
     "audio:field-payroll:alternate": "node scripts/generate-field-payroll-music-alt.mjs",
     "audio:field-payroll:system-voice": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-field-payroll-voice.ps1 -ForceSystemVoice",
     "audio:plan-to-paid": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-plan-to-paid-voice.ps1",
+    "audio:plan-to-paid:balanced": "node scripts/generate-plan-to-paid-music-balanced.mjs",
     "audio:plan-to-paid:flow": "node scripts/generate-plan-to-paid-music-flow.mjs",
     "capture:field-payroll": "node scripts/capture-field-payroll.mjs",
     "capture:stage": "node scripts/capture-staging.mjs",

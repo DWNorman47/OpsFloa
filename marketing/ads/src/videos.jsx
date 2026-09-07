@@ -210,8 +210,8 @@ function PlanToPaidAudio({ musicSrc, musicVolume }) {
 }
 
 export function PlanToPaid({
-  musicSrc = 'audio/plan-to-paid/music-flow.wav',
-  musicVolume = 0.27,
+  musicSrc = 'audio/plan-to-paid/music-balanced.wav',
+  musicVolume = 0.22,
 }) {
   return (
     <AbsoluteFill className="video-root plan-paid-root">

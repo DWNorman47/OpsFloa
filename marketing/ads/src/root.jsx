@@ -34,6 +34,15 @@ export function AdsRoot() {
           musicVolume: 0.17,
         }}
       />
+      <Composition
+        id="plan-to-paid-slow-music"
+        component={PlanToPaid}
+        {...video}
+        defaultProps={{
+          musicSrc: 'audio/plan-to-paid/music-flow.wav',
+          musicVolume: 0.27,
+        }}
+      />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />
     </>
   );

@@ -67,7 +67,7 @@ npm run render
 
 ## Plan to Paid AI previsualization
 
-The `plan-to-paid` composition is a complete 30-second image-based concept ad using four center-safe placeholder frames, real OpsFloa captures, a slow ambient music bed, and a free local draft voice. Regenerate the draft voice with `npm run audio:plan-to-paid` and the music with `npm run audio:plan-to-paid:flow`. The prior 110 BPM bed remains available in the `plan-to-paid-original-music` composition for A/B comparison.
+The `plan-to-paid` composition is a complete 30-second image-based concept ad using four center-safe placeholder frames, real OpsFloa captures, a moderate 92 BPM cinematic music bed, and a free local draft voice. Regenerate the draft voice with `npm run audio:plan-to-paid` and the music with `npm run audio:plan-to-paid:balanced`. The prior 110 BPM bed remains available in `plan-to-paid-original-music`, while the slower ambient experiment is available in `plan-to-paid-slow-music` for A/B comparison.
 
 The reference frames and optional motion prompts live under `public/footage/plan-to-paid`. Generate one five-second Runway take at a time so costs stay explicit:
 
