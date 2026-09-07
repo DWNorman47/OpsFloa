@@ -23,6 +23,39 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-09-06 — Super-admin Mail page (/mail): own interface over the forwarding Gmail
+
+New `/mail` page (super_admin only) that reads the Gmail account the opsfloa.com
+addresses forward into, over IMAP with an app password, and presents each address
+as an isolated mailbox: per-account inbox/folders/sent, search (Gmail syntax
+passes through), date sort, reply/compose (sent via Resend from the chosen
+address, copy APPENDed back to Gmail), attachments. `npm run verify` green
+(server 1561; one client smoke test — Analytics tab — timed out under full-suite
+load but passes in isolation, pre-existing flake).
+
+Findings / calls:
+- **Per-account isolation** rides Gmail's `deliveredto:` search operator
+  (X-GM-RAW), which survives forwarding — so mail addressed to the Gmail account
+  itself never appears, with zero config. Single-message reads re-verify the
+  address against parsed headers/labels so account switching can't read across.
+- **Folders are Gmail labels** under `OpsFloaMail/<localpart>/<Folder>` — state
+  lives in the mailbox (no parallel DB to drift; no migration needed at all).
+  Inbox = delivered-to minus that account's folder labels.
+- **Compose bypasses email.js on purpose**: sendEmail() forces the transactional
+  from-address and redirects recipients in non-prod (EMAIL_MODE). A hand-written
+  email goes to its real recipient in every environment; rationale commented in
+  `server/routes/mailbox.js`.
+- English-only UI, following the SuperAdmin.jsx precedent (single-user page, no
+  i18n keys).
+- ⚠️ Needs env on Render + local: `MAILBOX_GMAIL_USER`, `MAILBOX_GMAIL_APP_PASSWORD`
+  (Google app password — requires 2FA), `MAILBOX_ACCOUNTS` (comma list, first =
+  default view). Page shows "not configured" until set.
+- ⚠️ To keep the Gmail *inbox* clean (opsfloa mail reachable but not shown):
+  Gmail → Settings → Filters → new filter, **To:** `@opsfloa.com` → "Skip the
+  Inbox (Archive it)". Mail stays in All Mail, where IMAP reads it.
+- Parked: sending attachments, HTML compose, delete-message, and threading UI —
+  see BACKLOG.
+
 ## 2026-08-20 — Field Work: individual-mode history, offline idempotency, shared-text conflicts
 
 Follow-up on the Field Work deep-audit findings — fixed the two big ones plus the shared-text
