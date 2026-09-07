@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
+import { safeLocal } from '../utils/safeStorage';
 
 /**
  * Super-admin Mail page (/mail): a mail client over the opsfloa.com
@@ -93,7 +94,13 @@ export default function MailPage() {
 
   useEffect(() => {
     api.get('/mailbox/config', { suppressToast: true })
-      .then(({ data }) => { setConfig(data); setAccount(data.defaultAccount); })
+      .then(({ data }) => {
+        setConfig(data);
+        // Reopen on the account used last time (survives refresh); fall back
+        // to the configured default if it's gone from MAILBOX_ACCOUNTS.
+        const saved = safeLocal.getItem('mail_account');
+        setAccount(data.accounts.includes(saved) ? saved : data.defaultAccount);
+      })
       .catch(err => setError(err.response?.data?.error || 'Could not load mailbox configuration.'));
   }, []);
 
@@ -328,7 +335,12 @@ export default function MailPage() {
       <div style={S.topBar}>
         <Link to="/superadmin" style={{ color: '#64748b', textDecoration: 'none', fontSize: 14 }}>&larr; Super Admin</Link>
         <h2 style={{ margin: 0, fontSize: 20 }}>Mail</h2>
-        <select style={S.select} value={account || ''} onChange={e => { setAccount(e.target.value); setFolder(null); }} aria-label="Email account">
+        <select
+          style={S.select}
+          value={account || ''}
+          onChange={e => { setAccount(e.target.value); setFolder(null); safeLocal.setItem('mail_account', e.target.value); }}
+          aria-label="Email account"
+        >
           {config.accounts.map(a => <option key={a} value={a}>{a}</option>)}
         </select>
         <button className="ops-button-primary" onClick={() => setCompose({ to: '', cc: '', subject: '', text: '', inReplyTo: '', references: '' })}>
