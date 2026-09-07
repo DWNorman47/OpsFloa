@@ -12,6 +12,7 @@
 
 const router = require('express').Router();
 const { Resend } = require('resend');
+const pool = require('../db');
 const { requireSuperAdmin } = require('../middleware/auth');
 const mailbox = require('../services/gmailMailbox');
 
@@ -59,18 +60,108 @@ router.get('/config', (req, res) => {
   res.json({ configured: mailbox.isConfigured(), accounts, defaultAccount: accounts[0] || null });
 });
 
-// GET /mailbox/messages?account=&folder=&q=&page=&dir= — one account view
+// GET /mailbox/messages?account=&folder=&tab=&q=&page=&dir= — one account view.
+// tab=<id> narrows to that tab's senders; no tab (and no folder) is the
+// inbox, which excludes every tab's senders so tabbed mail only shows in
+// its tab.
 router.get('/messages', requireConfigured, requireAccount, async (req, res) => {
   try {
+    const folder = req.query.folder ? String(req.query.folder) : null;
+    let tabSenders = null;
+    let excludeSenders = [];
+    if (!folder) {
+      const tabId = parseInt(req.query.tab) || 0;
+      if (tabId) {
+        const { rows } = await pool.query('SELECT senders FROM mailbox_tabs WHERE id = $1 AND account = $2', [tabId, req.mailAccount]);
+        if (!rows.length) return res.status(404).json({ error: 'Tab not found' });
+        tabSenders = rows[0].senders;
+      } else {
+        const { rows } = await pool.query('SELECT senders FROM mailbox_tabs WHERE account = $1', [req.mailAccount]);
+        excludeSenders = [...new Set(rows.flatMap(r => r.senders))];
+      }
+    }
     const result = await mailbox.listMessages({
       account: req.mailAccount,
-      folder: req.query.folder ? String(req.query.folder) : null,
+      folder,
       q: req.query.q ? String(req.query.q) : '',
       page: Math.max(1, parseInt(req.query.page) || 1),
       dir: req.query.dir === 'asc' ? 'asc' : 'desc',
+      tabSenders,
+      excludeSenders,
     });
     res.json(result);
   } catch (err) { sendErr(res, err, req.log, 'Could not load messages from the mailbox.'); }
+});
+
+// ---------------------------------------------------------------------------
+// Tabs — sender-routed views (see migration 0198). Entries may be full
+// addresses or bare domains; lowercased and deduped on write.
+
+function cleanSenders(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [...new Set(raw.map(s => String(s).trim().toLowerCase()).filter(Boolean))];
+  if (!out.length || out.length > 100) return null;
+  if (out.some(s => !/^[a-z0-9._%+@-]{1,100}$/.test(s))) return null;
+  return out;
+}
+
+// GET /mailbox/tabs?account=
+router.get('/tabs', requireConfigured, requireAccount, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, senders FROM mailbox_tabs WHERE account = $1 ORDER BY position, id',
+      [req.mailAccount]
+    );
+    res.json({ tabs: rows });
+  } catch (err) { sendErr(res, err, req.log, 'Could not load tabs.'); }
+});
+
+// POST /mailbox/tabs { account, name, senders[] }
+router.post('/tabs', requireConfigured, requireAccount, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim().slice(0, 40);
+    const senders = cleanSenders(req.body?.senders);
+    if (!name) return res.status(400).json({ error: 'Missing tab name' });
+    if (!senders) return res.status(400).json({ error: 'Senders must be 1-100 email addresses or domains.' });
+    const { rows } = await pool.query(
+      `INSERT INTO mailbox_tabs (account, name, senders, position)
+       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(position), 0) + 1 FROM mailbox_tabs WHERE account = $1))
+       RETURNING id, name, senders`,
+      [req.mailAccount, name, JSON.stringify(senders)]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { sendErr(res, err, req.log, 'Could not create the tab.'); }
+});
+
+// PATCH /mailbox/tabs/:id { account, name?, senders? }
+router.patch('/tabs/:id', requireConfigured, requireAccount, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM mailbox_tabs WHERE id = $1 AND account = $2', [parseInt(req.params.id), req.mailAccount]);
+    if (!rows.length) return res.status(404).json({ error: 'Tab not found' });
+    let { name, senders } = rows[0];
+    if (req.body?.name !== undefined) {
+      name = String(req.body.name || '').trim().slice(0, 40);
+      if (!name) return res.status(400).json({ error: 'Missing tab name' });
+    }
+    if (req.body?.senders !== undefined) {
+      senders = cleanSenders(req.body.senders);
+      if (!senders) return res.status(400).json({ error: 'Senders must be 1-100 email addresses or domains.' });
+    }
+    const upd = await pool.query(
+      'UPDATE mailbox_tabs SET name = $1, senders = $2, updated_at = NOW() WHERE id = $3 RETURNING id, name, senders',
+      [name, JSON.stringify(senders), rows[0].id]
+    );
+    res.json(upd.rows[0]);
+  } catch (err) { sendErr(res, err, req.log, 'Could not update the tab.'); }
+});
+
+// DELETE /mailbox/tabs/:id?account= — its mail returns to the inbox view
+router.delete('/tabs/:id', requireConfigured, requireAccount, async (req, res) => {
+  try {
+    const del = await pool.query('DELETE FROM mailbox_tabs WHERE id = $1 AND account = $2', [parseInt(req.params.id), req.mailAccount]);
+    if (!del.rowCount) return res.status(404).json({ error: 'Tab not found' });
+    res.json({ ok: true });
+  } catch (err) { sendErr(res, err, req.log, 'Could not delete the tab.'); }
 });
 
 // GET /mailbox/messages/:uid?account= — full parsed message

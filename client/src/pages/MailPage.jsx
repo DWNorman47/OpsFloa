@@ -41,6 +41,13 @@ const S = {
     display: 'flex', gap: 10, alignItems: 'baseline', padding: '9px 12px', borderBottom: '1px solid #f1f5f9',
     cursor: 'pointer', fontWeight: unseen ? 700 : 400, background: unseen ? '#fff' : '#fbfcfd',
   }),
+  tabBar: { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px 0', borderBottom: '1px solid #e2e8f0' },
+  tab: active => ({
+    display: 'flex', gap: 6, alignItems: 'center', padding: '7px 12px', cursor: 'pointer', fontSize: 14,
+    border: '1px solid ' + (active ? '#c7d2fe' : 'transparent'), borderBottom: 'none',
+    borderRadius: '8px 8px 0 0', background: active ? '#e0e7ff' : 'transparent',
+    color: active ? '#3730a3' : '#475569', fontWeight: active ? 700 : 500,
+  }),
   notice: { padding: '10px 12px', borderRadius: 8, background: '#f1f5f9', color: '#475569', fontSize: 14, margin: 12 },
   errNotice: { padding: '10px 12px', borderRadius: 8, background: '#fee2e2', color: '#991b1b', fontSize: 14, margin: 12 },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
@@ -63,6 +70,10 @@ export default function MailPage() {
   const [compose, setCompose] = useState(null);        // { to, cc, subject, text, inReplyTo, references }
   const [sending, setSending] = useState(false);
   const [newFolder, setNewFolder] = useState('');
+  const [tabs, setTabs] = useState([]);                // sender-routed tabs for this account
+  const [activeTab, setActiveTab] = useState(null);    // tab id; null = Inbox
+  const [tabModal, setTabModal] = useState(null);      // { id?, name, senders(text) }
+  const [tabSaving, setTabSaving] = useState(false);
 
   useEffect(() => {
     api.get('/mailbox/config', { suppressToast: true })
@@ -70,13 +81,28 @@ export default function MailPage() {
       .catch(err => setError(err.response?.data?.error || 'Could not load mailbox configuration.'));
   }, []);
 
+  useEffect(() => {
+    if (!account) return;
+    setActiveTab(null);
+    api.get('/mailbox/tabs', { params: { account }, suppressToast: true })
+      .then(({ data }) => setTabs(data.tabs || []))
+      .catch(() => { /* tab bar just shows Inbox */ });
+  }, [account]);
+
   const loadList = useCallback(async (page = 1) => {
     if (!account) return;
     setLoading(true);
     setError('');
     try {
       const { data } = await api.get('/mailbox/messages', {
-        params: { account, folder: folder || undefined, q: q || undefined, page, dir },
+        params: {
+          account,
+          folder: folder || undefined,
+          tab: (!folder && activeTab) || undefined,
+          q: q || undefined,
+          page,
+          dir,
+        },
         suppressToast: true,
       });
       setList(data);
@@ -86,7 +112,7 @@ export default function MailPage() {
     } finally {
       setLoading(false);
     }
-  }, [account, folder, q, dir]);
+  }, [account, folder, q, dir, activeTab]);
 
   useEffect(() => { setMessage(null); loadList(1); }, [loadList]);
 
@@ -164,6 +190,47 @@ export default function MailPage() {
     }
   };
 
+  const saveTab = async () => {
+    const name = tabModal.name.trim();
+    const senders = tabModal.senders.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+    if (!name || !senders.length) { setError('A tab needs a name and at least one address or domain.'); return; }
+    setTabSaving(true);
+    setError('');
+    try {
+      if (tabModal.id) {
+        const { data } = await api.patch(`/mailbox/tabs/${tabModal.id}`, { account, name, senders }, { suppressToast: true });
+        setTabs(prev => prev.map(t => (t.id === data.id ? data : t)));
+        loadList(1); // senders changed — refresh the current view
+      } else {
+        const { data } = await api.post('/mailbox/tabs', { account, name, senders }, { suppressToast: true });
+        setTabs(prev => [...prev, data]);
+        setActiveTab(data.id); // switching tabs reloads via effect
+      }
+      setTabModal(null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not save the tab.');
+    } finally {
+      setTabSaving(false);
+    }
+  };
+
+  const deleteTab = async () => {
+    if (!tabModal?.id) return;
+    if (!window.confirm(`Delete tab "${tabModal.name}"? Its emails go back to the inbox.`)) return;
+    setTabSaving(true);
+    try {
+      await api.delete(`/mailbox/tabs/${tabModal.id}`, { params: { account }, suppressToast: true });
+      setTabs(prev => prev.filter(t => t.id !== tabModal.id));
+      if (activeTab === tabModal.id) setActiveTab(null); // reloads via effect
+      else loadList(1); // inbox exclusions changed — refresh
+      setTabModal(null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not delete the tab.');
+    } finally {
+      setTabSaving(false);
+    }
+  };
+
   const startReply = () => {
     if (!message) return;
     const fromAddr = (message.from.match(/<([^>]+)>/) || [null, message.from])[1];
@@ -238,9 +305,9 @@ export default function MailPage() {
 
       <div style={S.body}>
         <div style={S.side}>
-          <button style={S.folderBtn(!folder)} onClick={() => setFolder(null)}>Inbox</button>
+          <button style={S.folderBtn(!folder && !activeTab)} onClick={() => { setFolder(null); setActiveTab(null); }}>Inbox</button>
           {folders.map(f => (
-            <button key={f} style={S.folderBtn(folder === f)} onClick={() => setFolder(f)}>
+            <button key={f} style={S.folderBtn(folder === f)} onClick={() => { setFolder(f); setActiveTab(null); }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f}</span>
               {f !== 'Sent' && (
                 <span
@@ -315,10 +382,35 @@ export default function MailPage() {
             </div>
           ) : (
             <>
+              <div style={S.tabBar}>
+                <button style={S.tab(!folder && !activeTab)} onClick={() => { setFolder(null); setActiveTab(null); }}>Inbox</button>
+                {tabs.map(t => (
+                  <button key={t.id} style={S.tab(!folder && activeTab === t.id)} onClick={() => { setFolder(null); setActiveTab(t.id); }}>
+                    {t.name}
+                    <span
+                      role="button"
+                      aria-label={`Edit tab ${t.name}`}
+                      title="Edit tab"
+                      onClick={e => { e.stopPropagation(); setTabModal({ id: t.id, name: t.name, senders: (t.senders || []).join('\n') }); }}
+                      style={{ color: '#94a3b8', fontSize: 12 }}
+                    >✎</span>
+                  </button>
+                ))}
+                <button
+                  style={{ ...S.tab(false), color: '#6366f1' }}
+                  onClick={() => setTabModal({ name: '', senders: '' })}
+                  title="Add a tab that shows mail from specific senders"
+                >+ Tab</button>
+              </div>
               <div style={{ overflowY: 'auto', flex: 1 }}>
                 {loading && <div className="ops-loading-state" style={{ margin: 12 }}>Loading…</div>}
                 {!loading && list.items.length === 0 && (
-                  <div style={S.notice}>{q ? 'No messages match this search.' : folder ? 'This folder is empty.' : 'Inbox zero 🎉'}</div>
+                  <div style={S.notice}>
+                    {q ? 'No messages match this search.'
+                      : folder ? 'This folder is empty.'
+                      : activeTab ? "No unfiled messages from this tab's senders."
+                      : 'Inbox zero 🎉'}
+                  </div>
                 )}
                 {!loading && list.items.map(item => (
                   <div key={item.uid} style={S.row(!item.seen)} onClick={() => openMessage(item)}>
@@ -342,6 +434,44 @@ export default function MailPage() {
           )}
         </div>
       </div>
+
+      {tabModal && (
+        <div style={S.overlay} onClick={() => !tabSaving && setTabModal(null)}>
+          <div style={S.modal} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: 0 }}>{tabModal.id ? 'Edit tab' : 'New tab'}</h3>
+            <div style={{ color: '#64748b', fontSize: 13 }}>
+              Emails from these senders show in this tab instead of the inbox. One address or domain
+              per line (e.g. <code>billing@acme.com</code> or just <code>acme.com</code>).
+            </div>
+            <input
+              style={S.input}
+              placeholder="Tab name"
+              value={tabModal.name}
+              onChange={e => setTabModal(m => ({ ...m, name: e.target.value }))}
+              aria-label="Tab name"
+            />
+            <textarea
+              style={{ ...S.input, minHeight: 140, resize: 'vertical', fontFamily: 'inherit' }}
+              placeholder={'billing@acme.com\nsupplier.com'}
+              value={tabModal.senders}
+              onChange={e => setTabModal(m => ({ ...m, senders: e.target.value }))}
+              aria-label="Sender addresses"
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              {tabModal.id && (
+                <button className="ops-button-secondary" disabled={tabSaving} onClick={deleteTab} style={{ color: '#dc2626' }}>
+                  Delete tab
+                </button>
+              )}
+              <div style={{ flex: 1 }} />
+              <button className="ops-button-secondary" disabled={tabSaving} onClick={() => setTabModal(null)}>Cancel</button>
+              <button className="ops-button-primary" disabled={tabSaving} onClick={saveTab}>
+                {tabSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {compose && (
         <div style={S.overlay} onClick={() => !sending && setCompose(null)}>

@@ -23,6 +23,18 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-09-06 — Mail page: sender-routed tabs
+
+Follow-up to the Mail page below: a tab bar (Inbox always first) where each
+added tab is a name + list of sender addresses/domains (`mailbox_tabs` table,
+migration `0198`). A tab's senders show in that tab instead of the inbox —
+inbox query excludes every tab's senders (`-from:`), tab query includes only
+its own (`from:(a OR b)`), all still server-side Gmail search. Folder filing
+wins over tabs (tabs show unfiled mail, same rule as inbox); deleting a tab
+returns its mail to the inbox. Edit via the ✎ on each tab; domains work
+(`acme.com` matches all its addresses). Migration renumbered 0125→0198 after
+the repo's migration set moved.
+
 ## 2026-09-06 — Super-admin Mail page (/mail): own interface over the forwarding Gmail
 
 New `/mail` page (super_admin only) that reads the Gmail account the opsfloa.com

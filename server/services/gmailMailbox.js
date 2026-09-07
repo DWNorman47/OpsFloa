@@ -166,8 +166,14 @@ async function deleteFolder(account, name) {
  * address and not filed into any of its folders"; a folder view is just
  * its label. Sent copies live under the prefix too, so they are excluded
  * from the inbox by the same rule.
+ *
+ * Tabs route by sender on top of the unfiled rule: a tab view narrows to
+ * its senders (`from:(a OR b)`), and the inbox excludes every tab's
+ * senders (`-from:a -from:b`) so tabbed mail shows in its tab instead.
+ * Entries can be full addresses or bare domains — Gmail's `from:`
+ * matches either.
  */
-function buildQuery(account, folder, folderNames, q) {
+function buildQuery(account, folder, folderNames, q, { tabSenders = null, excludeSenders = [] } = {}) {
   const prefix = accountPrefix(account);
   let query;
   if (folder) {
@@ -175,17 +181,22 @@ function buildQuery(account, folder, folderNames, q) {
   } else {
     const exclusions = folderNames.map(n => `-label:"${prefix}/${n}"`).join(' ');
     query = `deliveredto:"${account}" ${exclusions} -in:sent -in:trash -in:spam`;
+    if (tabSenders && tabSenders.length) {
+      query += ` (${tabSenders.map(s => `from:${s}`).join(' OR ')})`;
+    } else if (excludeSenders.length) {
+      query += ` ${excludeSenders.map(s => `-from:${s}`).join(' ')}`;
+    }
   }
   if (q) query += ` ${String(q).replace(/[\r\n]/g, ' ').slice(0, 200)}`;
   return query;
 }
 
-async function listMessages({ account, folder = null, q = '', page = 1, dir = 'desc' }) {
+async function listMessages({ account, folder = null, q = '', page = 1, dir = 'desc', tabSenders = null, excludeSenders = [] }) {
   const folderNames = await listFolders(account);
   if (folder && !folderNames.includes(folder)) throw Object.assign(new Error('Folder not found'), { status: 404 });
   return withMailbox(async (client, allMail) => {
     await client.mailboxOpen(allMail, { readOnly: true });
-    const uids = await client.search({ gmraw: buildQuery(account, folder, folderNames, q) }, { uid: true }) || [];
+    const uids = await client.search({ gmraw: buildQuery(account, folder, folderNames, q, { tabSenders, excludeSenders }) }, { uid: true }) || [];
     uids.sort((a, b) => (dir === 'asc' ? a - b : b - a)); // uid order ≈ arrival order
     const total = uids.length;
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
