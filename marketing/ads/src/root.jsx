@@ -18,7 +18,10 @@ export function AdsRoot() {
         component={FieldToPayroll}
         {...video}
         durationInFrames={1740}
-        defaultProps={{ musicSrc: 'audio/field-payroll/music-alt.wav' }}
+        defaultProps={{
+          musicSrc: 'audio/field-payroll/music-alt.wav',
+          musicVolume: 0.32,
+        }}
       />
       <Composition id="plans-to-project" component={PlansToProject} {...video} />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />

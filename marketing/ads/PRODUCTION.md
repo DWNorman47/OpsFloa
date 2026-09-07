@@ -52,7 +52,7 @@ Margin does not disappear all at once. It leaks through disconnected labor, mate
 - Mix: Voice dominant, music about 16 dB below narration, subtle interface taps only.
 - End card: Let the music resolve cleanly beneath `opsfloa.com`.
 
-The `field-to-payroll` composition currently includes a generated 110 BPM original music bed and scene-timed Juniper narration generated with ElevenLabs at 0.85 speed and elevated stability. The `field-to-payroll-alt-music` composition uses a warmer 104 BPM original bed with the same narration and edit for A/B review. The narration is split into nine clips so individual lines can be replaced without changing the edit. Regenerate the original music with `npm run audio:field-payroll`, or the alternate with `npm run audio:field-payroll:alternate`. For temporary local drafts only, replace the narration with the Windows system voice by running `npm run audio:field-payroll:system-voice`.
+The `field-to-payroll` composition currently includes a generated 110 BPM original music bed and scene-timed Juniper narration generated with ElevenLabs at 0.85 speed and elevated stability. The `field-to-payroll-alt-music` composition uses a warmer 104 BPM original bed with the same narration and edit for A/B review, mixed at `0.32` to compensate for its softer arrangement. The narration is split into nine clips so individual lines can be replaced without changing the edit. Regenerate the original music with `npm run audio:field-payroll`, or the alternate with `npm run audio:field-payroll:alternate`. For temporary local drafts only, replace the narration with the Windows system voice by running `npm run audio:field-payroll:system-voice`.
 
 ## Working with the compositions
 

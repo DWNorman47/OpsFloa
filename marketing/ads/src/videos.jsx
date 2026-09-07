@@ -114,12 +114,12 @@ const fieldPayrollVoice = [
   { from: 1570, src: 'audio/field-payroll/09-close.wav' },
 ];
 
-function FieldPayrollAudio({ musicSrc }) {
+function FieldPayrollAudio({ musicSrc, musicVolume }) {
   return (
     <>
       <Audio
         src={staticFile(musicSrc)}
-        volume={frame => interpolate(frame, [0, 24, 1665, 1739], [0, 0.11, 0.11, 0], {
+        volume={frame => interpolate(frame, [0, 24, 1665, 1739], [0, musicVolume, musicVolume, 0], {
           extrapolateLeft: 'clamp',
           extrapolateRight: 'clamp',
         })}
@@ -133,10 +133,13 @@ function FieldPayrollAudio({ musicSrc }) {
   );
 }
 
-export function FieldToPayroll({ musicSrc = 'audio/field-payroll/music.wav' }) {
+export function FieldToPayroll({
+  musicSrc = 'audio/field-payroll/music.wav',
+  musicVolume = 0.11,
+}) {
   return (
     <AbsoluteFill className="video-root">
-      <FieldPayrollAudio musicSrc={musicSrc} />
+      <FieldPayrollAudio musicSrc={musicSrc} musicVolume={musicVolume} />
       <Scene from={0} duration={100} className="hook-scene">{frame => <><OpeningBackdrop frame={frame} /><Headline frame={frame} eyebrow="FIELD TO PAYROLL" title={<>The job moved.<br/><em>Did the paperwork?</em></>} body="Put every hour, approval, and payroll decision on the same path." /></>}</Scene>
       <Scene from={90} duration={640} className="capture-scene">{frame => <GuidedCapture frame={frame} states={fieldPayrollStates} moves={fieldPayrollMoves} cursorWindows={[[4, 90], [135, 625]]} />}</Scene>
       <Scene from={720} duration={560} className="capture-scene">{frame => <GuidedCapture frame={frame} states={reportsStates} moves={reportsMoves} cursorWindows={[[8, 110], [155, 470]]} highlights={reportsHighlights} />}</Scene>
