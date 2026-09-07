@@ -55,6 +55,17 @@ const S = {
   notice: { padding: '10px 12px', borderRadius: 8, background: '#f1f5f9', color: '#475569', fontSize: 14, margin: 12 },
   errNotice: { padding: '10px 12px', borderRadius: 8, background: '#fee2e2', color: '#991b1b', fontSize: 14, margin: 12 },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
+  menuPanel: {
+    position: 'fixed', zIndex: 61, minWidth: 200, maxWidth: 260, maxHeight: 340, overflowY: 'auto',
+    background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,.16)', padding: 4,
+  },
+  menuItem: disabled => ({
+    display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 6, border: 'none',
+    background: 'transparent', fontSize: 13.5, cursor: disabled ? 'default' : 'pointer',
+    color: disabled ? '#94a3b8' : '#1e293b',
+  }),
+  menuHeader: { padding: '7px 10px 3px', fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em' },
+  menuDivider: { borderTop: '1px solid #f1f5f9', margin: '4px 0' },
   modal: { background: '#fff', borderRadius: 12, padding: 16, width: 'min(640px, 92vw)', display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '90vh' },
 };
 
@@ -78,6 +89,7 @@ export default function MailPage() {
   const [activeTab, setActiveTab] = useState(null);    // tab id; null = Inbox
   const [tabModal, setTabModal] = useState(null);      // { id?, name, senders(text) }
   const [tabSaving, setTabSaving] = useState(false);
+  const [menu, setMenu] = useState(null);              // context menu: { x, y, kind: 'message'|'tab', item|tab }
 
   useEffect(() => {
     api.get('/mailbox/config', { suppressToast: true })
@@ -144,14 +156,49 @@ export default function MailPage() {
     setMessage(null);
   };
 
-  const moveTo = async target => {
-    if (!message) return;
+  const moveUid = async (uid, target) => {
     try {
-      await api.post(`/mailbox/messages/${message.uid}/move`, { account, folder: target || null }, { suppressToast: true });
-      setMessage(null);
+      await api.post(`/mailbox/messages/${uid}/move`, { account, folder: target || null }, { suppressToast: true });
+      if (message?.uid === uid) setMessage(null);
       loadList(list.page);
     } catch (err) {
       setError(err.response?.data?.error || 'Could not move the message.');
+    }
+  };
+
+  const moveTo = target => { if (message) moveUid(message.uid, target); };
+
+  /** Flip read state for a list row without opening it. */
+  const toggleRead = item => {
+    const seen = !item.seen;
+    api.post(`/mailbox/messages/${item.uid}/read`, { account, seen }, { suppressToast: true }).catch(() => {});
+    setList(prev => ({ ...prev, items: prev.items.map(m => (m.uid === item.uid ? { ...m, seen } : m)) }));
+  };
+
+  /** Add a message's sender to a tab — its mail routes there from now on. */
+  const addSenderToTab = async (tab, address) => {
+    if (!address) return;
+    const senders = [...new Set([...(tab.senders || []), String(address).toLowerCase()])];
+    try {
+      const { data } = await api.patch(`/mailbox/tabs/${tab.id}`, { account, senders }, { suppressToast: true });
+      setTabs(prev => prev.map(t => (t.id === data.id ? data : t)));
+      loadList(list.page);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not update the tab.');
+    }
+  };
+
+  const deleteTabById = async tab => {
+    if (!window.confirm(`Delete tab "${tab.name}"? Its emails go back to the inbox.`)) return false;
+    try {
+      await api.delete(`/mailbox/tabs/${tab.id}`, { params: { account }, suppressToast: true });
+      setTabs(prev => prev.filter(t => t.id !== tab.id));
+      if (activeTab === tab.id) setActiveTab(null); // reloads via effect
+      else loadList(1); // inbox exclusions changed
+      return true;
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not delete the tab.');
+      return false;
     }
   };
 
@@ -220,19 +267,10 @@ export default function MailPage() {
 
   const deleteTab = async () => {
     if (!tabModal?.id) return;
-    if (!window.confirm(`Delete tab "${tabModal.name}"? Its emails go back to the inbox.`)) return;
     setTabSaving(true);
-    try {
-      await api.delete(`/mailbox/tabs/${tabModal.id}`, { params: { account }, suppressToast: true });
-      setTabs(prev => prev.filter(t => t.id !== tabModal.id));
-      if (activeTab === tabModal.id) setActiveTab(null); // reloads via effect
-      else loadList(1); // inbox exclusions changed — refresh
-      setTabModal(null);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not delete the tab.');
-    } finally {
-      setTabSaving(false);
-    }
+    const ok = await deleteTabById({ id: tabModal.id, name: tabModal.name });
+    setTabSaving(false);
+    if (ok) setTabModal(null);
   };
 
   const startReply = () => {
@@ -391,15 +429,14 @@ export default function MailPage() {
               <div style={S.tabBar}>
                 <button style={S.tab(!folder && !activeTab)} onClick={() => { setFolder(null); setActiveTab(null); }}>Inbox</button>
                 {tabs.map(t => (
-                  <button key={t.id} style={S.tab(!folder && activeTab === t.id)} onClick={() => { setFolder(null); setActiveTab(t.id); }}>
+                  <button
+                    key={t.id}
+                    style={S.tab(!folder && activeTab === t.id)}
+                    onClick={() => { setFolder(null); setActiveTab(t.id); }}
+                    onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, kind: 'tab', tab: t }); }}
+                    title="Right-click to edit or delete"
+                  >
                     {t.name}
-                    <span
-                      role="button"
-                      aria-label={`Edit tab ${t.name}`}
-                      title="Edit tab"
-                      onClick={e => { e.stopPropagation(); setTabModal({ id: t.id, name: t.name, senders: (t.senders || []).join('\n') }); }}
-                      style={{ color: '#94a3b8', fontSize: 12 }}
-                    >✎</span>
                   </button>
                 ))}
                 <button
@@ -419,7 +456,12 @@ export default function MailPage() {
                   </div>
                 )}
                 {!loading && list.items.map(item => (
-                  <div key={item.uid} style={S.row(!item.seen)} onClick={() => openMessage(item)}>
+                  <div
+                    key={item.uid}
+                    style={S.row(!item.seen)}
+                    onClick={() => openMessage(item)}
+                    onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, kind: 'message', item }); }}
+                  >
                     <span style={{ width: 190, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {item.from?.name || item.from?.address || '—'}
                     </span>
@@ -440,6 +482,73 @@ export default function MailPage() {
           )}
         </div>
       </div>
+
+      {menu && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 60 }}
+          onClick={() => setMenu(null)}
+          onContextMenu={e => { e.preventDefault(); setMenu(null); }}
+        >
+          <div
+            style={{
+              ...S.menuPanel,
+              left: Math.min(menu.x, (window.innerWidth || 1200) - 270),
+              top: Math.min(menu.y, (window.innerHeight || 800) - 360),
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {menu.kind === 'message' ? (
+              <>
+                <button
+                  style={S.menuItem(false)}
+                  onClick={() => { toggleRead(menu.item); setMenu(null); }}
+                >
+                  {menu.item.seen ? 'Mark unread' : 'Mark read'}
+                </button>
+                <div style={S.menuDivider} />
+                <div style={S.menuHeader}>Move to folder</div>
+                {folder && (
+                  <button style={S.menuItem(false)} onClick={() => { moveUid(menu.item.uid, null); setMenu(null); }}>
+                    Inbox (remove from folder)
+                  </button>
+                )}
+                {folders.filter(f => f !== 'Sent' && f !== folder).map(f => (
+                  <button key={f} style={S.menuItem(false)} onClick={() => { moveUid(menu.item.uid, f); setMenu(null); }}>
+                    {f}
+                  </button>
+                ))}
+                <div style={S.menuDivider} />
+                <div style={S.menuHeader}>Add sender to tab</div>
+                {tabs.length === 0 && <div style={S.menuItem(true)}>No tabs yet — use + Tab</div>}
+                {!menu.item.from?.address && tabs.length > 0 && <div style={S.menuItem(true)}>Sender address unknown</div>}
+                {menu.item.from?.address && tabs.map(t => (
+                  <button key={t.id} style={S.menuItem(false)} onClick={() => { addSenderToTab(t, menu.item.from.address); setMenu(null); }}>
+                    {t.name}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+                <button
+                  style={S.menuItem(false)}
+                  onClick={() => {
+                    setTabModal({ id: menu.tab.id, name: menu.tab.name, senders: (menu.tab.senders || []).join('\n') });
+                    setMenu(null);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  style={{ ...S.menuItem(false), color: '#dc2626' }}
+                  onClick={() => { deleteTabById(menu.tab); setMenu(null); }}
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {tabModal && (
         <div style={S.overlay} onClick={() => !tabSaving && setTabModal(null)}>

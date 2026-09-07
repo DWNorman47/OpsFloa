@@ -40,6 +40,10 @@ Same day: **Archived + Trash default folders** — always present alongside Sent
 open message. Trash is filing, not deletion — the message stays in Gmail; real
 IMAP delete remains parked in BACKLOG.
 
+Same day: **context menus** — right-click an email row for Mark read/unread,
+Move to folder, and Add sender to tab (routes that sender's mail to the tab
+from then on); right-click a tab for Edit/Delete (the ✎ affordance is gone).
+
 ## 2026-09-06 — Super-admin Mail page (/mail): own interface over the forwarding Gmail
 
 New `/mail` page (super_admin only) that reads the Gmail account the opsfloa.com
