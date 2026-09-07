@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "audio:field-payroll": "node scripts/generate-field-payroll-music.mjs",
+    "audio:field-payroll:alternate": "node scripts/generate-field-payroll-music-alt.mjs",
     "audio:field-payroll:system-voice": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-field-payroll-voice.ps1 -ForceSystemVoice",
     "capture:field-payroll": "node scripts/capture-field-payroll.mjs",
     "capture:stage": "node scripts/capture-staging.mjs",

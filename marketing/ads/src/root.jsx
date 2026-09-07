@@ -13,6 +13,13 @@ export function AdsRoot() {
   return (
     <>
       <Composition id="field-to-payroll" component={FieldToPayroll} {...video} durationInFrames={1740} />
+      <Composition
+        id="field-to-payroll-alt-music"
+        component={FieldToPayroll}
+        {...video}
+        durationInFrames={1740}
+        defaultProps={{ musicSrc: 'audio/field-payroll/music-alt.wav' }}
+      />
       <Composition id="plans-to-project" component={PlansToProject} {...video} />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />
     </>
