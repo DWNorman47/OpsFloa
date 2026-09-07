@@ -405,7 +405,7 @@ export default function SuperAdmin() {
           <span style={styles.superBadge}>Super Admin</span>
         </div>
         <div style={styles.headerRight}>
-          <a href="/mail" style={{ ...styles.headerBtn, textDecoration: 'none', display: 'inline-block' }}>Mail</a>
+          {prodHost && <a href="/mail" style={{ ...styles.headerBtn, textDecoration: 'none', display: 'inline-block' }}>Mail</a>}
           <span style={styles.userName} className="sa-header-username">{user?.full_name}</span>
           <button style={styles.headerBtn} onClick={logout}>Logout</button>
         </div>

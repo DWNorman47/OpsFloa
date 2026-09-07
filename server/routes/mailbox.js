@@ -19,6 +19,18 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 
 router.use(requireSuperAdmin);
 
+// Production only — the real mailbox credentials live on the prod service,
+// and a second environment reading/sending as the opsfloa addresses would
+// only cause confusion (duplicate sent copies, dev replies to real people).
+// Mirrors the superadmin staging-sync gate, inverted. The client hides the
+// page off opsfloa.com; this is the enforcement.
+router.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production') {
+    return res.status(403).json({ error: 'The Mail page is only available in production.' });
+  }
+  next();
+});
+
 function requireConfigured(req, res, next) {
   if (!mailbox.isConfigured()) {
     return res.status(400).json({ error: 'Mailbox is not configured. Set MAILBOX_GMAIL_USER, MAILBOX_GMAIL_APP_PASSWORD and MAILBOX_ACCOUNTS.' });
