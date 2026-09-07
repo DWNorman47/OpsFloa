@@ -1,8 +1,13 @@
 param(
-  [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\public\audio\field-payroll')
+  [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\public\audio\field-payroll'),
+  [switch]$ForceSystemVoice
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $ForceSystemVoice) {
+  throw 'The current ad uses the licensed Juniper voiceover. Pass -ForceSystemVoice only when intentionally replacing it with the local draft voice.'
+}
+
 Add-Type -AssemblyName System.Speech
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 Get-ChildItem -Path $OutputDirectory -Filter '*.wav' -File |
