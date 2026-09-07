@@ -207,6 +207,11 @@ function buildQuery(account, folder, folderNames, q, { tabSenders = null, exclud
 async function listMessages({ account, folder = null, q = '', page = 1, dir = 'desc', tabSenders = null, excludeSenders = [] }) {
   const folderNames = await listFolders(account);
   if (folder && !folderNames.includes(folder)) throw Object.assign(new Error('Folder not found'), { status: 404 });
+  // A tab with no senders yet matches nothing — don't let it fall through
+  // to the inbox query (buildQuery treats empty tabSenders as "no tab").
+  if (tabSenders && tabSenders.length === 0) {
+    return { items: [], total: 0, page: 1, pages: 1, folders: folderNames };
+  }
   return withMailbox(async (client, allMail) => {
     await client.mailboxOpen(allMail, { readOnly: true });
     const uids = await client.search({ gmraw: buildQuery(account, folder, folderNames, q, { tabSenders, excludeSenders }) }, { uid: true }) || [];

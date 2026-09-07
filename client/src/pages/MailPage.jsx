@@ -244,7 +244,7 @@ export default function MailPage() {
   const saveTab = async () => {
     const name = tabModal.name.trim();
     const senders = tabModal.senders.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
-    if (!name || !senders.length) { setError('A tab needs a name and at least one address or domain.'); return; }
+    if (!name) { setError('A tab needs a name.'); return; }
     setTabSaving(true);
     setError('');
     try {
@@ -451,6 +451,8 @@ export default function MailPage() {
                   <div style={S.notice}>
                     {q ? 'No messages match this search.'
                       : folder ? 'This folder is empty.'
+                      : activeTab && !(tabs.find(t => t.id === activeTab)?.senders?.length)
+                        ? 'This tab has no senders yet — right-click an email in the inbox and choose "Add sender to tab".'
                       : activeTab ? "No unfiled messages from this tab's senders."
                       : 'Inbox zero 🎉'}
                   </div>
@@ -556,7 +558,8 @@ export default function MailPage() {
             <h3 style={{ margin: 0 }}>{tabModal.id ? 'Edit tab' : 'New tab'}</h3>
             <div style={{ color: '#64748b', fontSize: 13 }}>
               Emails from these senders show in this tab instead of the inbox. One address or domain
-              per line (e.g. <code>billing@acme.com</code> or just <code>acme.com</code>).
+              per line (e.g. <code>billing@acme.com</code> or just <code>acme.com</code>). You can leave
+              it empty and fill it later by right-clicking an email &rarr; Add sender to tab.
             </div>
             <input
               style={S.input}

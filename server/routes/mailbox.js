@@ -100,7 +100,7 @@ router.get('/messages', requireConfigured, requireAccount, async (req, res) => {
 function cleanSenders(raw) {
   if (!Array.isArray(raw)) return null;
   const out = [...new Set(raw.map(s => String(s).trim().toLowerCase()).filter(Boolean))];
-  if (!out.length || out.length > 100) return null;
+  if (out.length > 100) return null; // empty is fine — a tab can be created bare and filled later
   if (out.some(s => !/^[a-z0-9._%+@-]{1,100}$/.test(s))) return null;
   return out;
 }
@@ -122,7 +122,7 @@ router.post('/tabs', requireConfigured, requireAccount, async (req, res) => {
     const name = String(req.body?.name || '').trim().slice(0, 40);
     const senders = cleanSenders(req.body?.senders);
     if (!name) return res.status(400).json({ error: 'Missing tab name' });
-    if (!senders) return res.status(400).json({ error: 'Senders must be 1-100 email addresses or domains.' });
+    if (!senders) return res.status(400).json({ error: 'Senders must be up to 100 email addresses or domains.' });
     const { rows } = await pool.query(
       `INSERT INTO mailbox_tabs (account, name, senders, position)
        VALUES ($1, $2, $3, (SELECT COALESCE(MAX(position), 0) + 1 FROM mailbox_tabs WHERE account = $1))
@@ -145,7 +145,7 @@ router.patch('/tabs/:id', requireConfigured, requireAccount, async (req, res) =>
     }
     if (req.body?.senders !== undefined) {
       senders = cleanSenders(req.body.senders);
-      if (!senders) return res.status(400).json({ error: 'Senders must be 1-100 email addresses or domains.' });
+      if (!senders) return res.status(400).json({ error: 'Senders must be up to 100 email addresses or domains.' });
     }
     const upd = await pool.query(
       'UPDATE mailbox_tabs SET name = $1, senders = $2, updated_at = NOW() WHERE id = $3 RETURNING id, name, senders',
