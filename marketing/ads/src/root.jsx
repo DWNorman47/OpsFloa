@@ -25,6 +25,15 @@ export function AdsRoot() {
       />
       <Composition id="plans-to-project" component={PlansToProject} {...video} />
       <Composition id="plan-to-paid" component={PlanToPaid} {...video} />
+      <Composition
+        id="plan-to-paid-original-music"
+        component={PlanToPaid}
+        {...video}
+        defaultProps={{
+          musicSrc: 'audio/field-payroll/music.wav',
+          musicVolume: 0.17,
+        }}
+      />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />
     </>
   );

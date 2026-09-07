@@ -190,15 +190,15 @@ export function FieldToPayroll({
   );
 }
 
-function PlanToPaidAudio() {
+function PlanToPaidAudio({ musicSrc, musicVolume }) {
   return (
     <>
       <Audio
-        src={staticFile('audio/field-payroll/music.wav')}
+        src={staticFile(musicSrc)}
         volume={frame => interpolate(
           frame,
           [0, 18, 40, 760, 820, 899],
-          [0, 0.24, 0.17, 0.17, 0.25, 0],
+          [0, musicVolume * 1.3, musicVolume, musicVolume, musicVolume * 1.28, 0],
           { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
         )}
       />
@@ -209,10 +209,13 @@ function PlanToPaidAudio() {
   );
 }
 
-export function PlanToPaid() {
+export function PlanToPaid({
+  musicSrc = 'audio/plan-to-paid/music-flow.wav',
+  musicVolume = 0.27,
+}) {
   return (
     <AbsoluteFill className="video-root plan-paid-root">
-      <PlanToPaidAudio />
+      <PlanToPaidAudio musicSrc={musicSrc} musicVolume={musicVolume} />
       <Scene from={0} duration={95}>{frame => (
         <PhotoBeat
           frame={frame}
