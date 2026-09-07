@@ -191,21 +191,6 @@ export default function MailPage() {
     }
   };
 
-  // Production-only page (matches the server's 403 gate): the real mailbox
-  // credentials exist only on prod, and dev shouldn't read or send as the
-  // real opsfloa addresses.
-  const prodHost = typeof window !== 'undefined'
-    && (window.location.hostname === 'opsfloa.com' || window.location.hostname === 'www.opsfloa.com');
-  if (!prodHost) {
-    return (
-      <div style={{ maxWidth: 640, margin: '60px auto', padding: 20 }}>
-        <h2 style={{ marginTop: 0 }}>Mail</h2>
-        <div style={S.notice}>The Mail page is only available on production (opsfloa.com).</div>
-        <Link to="/superadmin">&larr; Back to Super Admin</Link>
-      </div>
-    );
-  }
-
   if (!config) return <div className="ops-loading-state" style={{ margin: 40 }}>Loading mailbox…</div>;
 
   if (!config.configured) {

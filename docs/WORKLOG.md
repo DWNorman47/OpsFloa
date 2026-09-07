@@ -47,10 +47,10 @@ Findings / calls:
   `server/routes/mailbox.js`.
 - English-only UI, following the SuperAdmin.jsx precedent (single-user page, no
   i18n keys).
-- **Production only** (David's call): the Mail link/page only shows on
-  opsfloa.com and the API 403s off `NODE_ENV=production` — mirrors the
-  staging-sync gate, inverted. Local testing would need NODE_ENV=production set
-  deliberately.
+- Briefly gated production-only (`f46e82f3`), reverted the same day on David's
+  call: the page shows in **every** environment and always talks to the live
+  mailbox. Note the consequence: dev.opsfloa.com reads/sends the real opsfloa
+  mail once its Render env has the `MAILBOX_*` vars.
 - ⚠️ Needs env on Render + local: `MAILBOX_GMAIL_USER`, `MAILBOX_GMAIL_APP_PASSWORD`
   (Google app password — requires 2FA), `MAILBOX_ACCOUNTS` (comma list, first =
   default view). Page shows "not configured" until set.

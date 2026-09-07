@@ -45,8 +45,7 @@ role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder
 `leaveRateMultipliers`, `loadSettings`) · `deductions.js` (`payStubTotals`).
 
 ## Super-admin Mail page
-- `/mail` (super_admin only, **production only** — hidden off opsfloa.com, API
-  403s when `NODE_ENV !== 'production'`) — own interface over the Gmail account the opsfloa
+- `/mail` (super_admin only) — own interface over the Gmail account the opsfloa
   addresses forward into. IMAP read via `server/services/gmailMailbox.js`
   (per-address isolation via Gmail `deliveredto:`; folders = labels under
   `OpsFloaMail/<localpart>/`), API `server/routes/mailbox.js`, UI
