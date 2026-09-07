@@ -67,7 +67,7 @@ export default function MailPage() {
   useEffect(() => {
     api.get('/mailbox/config', { suppressToast: true })
       .then(({ data }) => { setConfig(data); setAccount(data.defaultAccount); })
-      .catch(() => setError('Could not load mailbox configuration.'));
+      .catch(err => setError(err.response?.data?.error || 'Could not load mailbox configuration.'));
   }, []);
 
   const loadList = useCallback(async (page = 1) => {
@@ -191,7 +191,15 @@ export default function MailPage() {
     }
   };
 
-  if (!config) return <div className="ops-loading-state" style={{ margin: 40 }}>Loading mailbox…</div>;
+  if (!config) {
+    return error ? (
+      <div style={{ maxWidth: 640, margin: '60px auto', padding: 20 }}>
+        <h2 style={{ marginTop: 0 }}>Mail</h2>
+        <div style={S.errNotice}>{error}</div>
+        <Link to="/superadmin">&larr; Back to Super Admin</Link>
+      </div>
+    ) : <div className="ops-loading-state" style={{ margin: 40 }}>Loading mailbox…</div>;
+  }
 
   if (!config.configured) {
     return (

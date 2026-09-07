@@ -19,6 +19,20 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 
 router.use(requireSuperAdmin);
 
+// Optional extra pin beyond the super_admin role: MAILBOX_ALLOWED_USERS is a
+// comma list of usernames and/or user ids allowed to use the Mail page.
+// Unset = any super admin (today that's one person; the pin exists so a
+// second super-admin account added later doesn't silently inherit the inbox).
+router.use((req, res, next) => {
+  const allowed = String(process.env.MAILBOX_ALLOWED_USERS || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!allowed.length) return next();
+  if (allowed.includes(String(req.user.id)) || allowed.includes(String(req.user.username || '').toLowerCase())) {
+    return next();
+  }
+  res.status(403).json({ error: 'The Mail page is restricted to specific users.' });
+});
+
 function requireConfigured(req, res, next) {
   if (!mailbox.isConfigured()) {
     return res.status(400).json({ error: 'Mailbox is not configured. Set MAILBOX_GMAIL_USER, MAILBOX_GMAIL_APP_PASSWORD and MAILBOX_ACCOUNTS.' });
