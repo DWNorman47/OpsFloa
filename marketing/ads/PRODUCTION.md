@@ -65,6 +65,19 @@ npm run studio
 npm run render
 ```
 
+## Plan to Paid AI previsualization
+
+Three center-safe reference frames and motion prompts live under `public/footage/plan-to-paid`. Generate one five-second Runway take at a time so costs stay explicit:
+
+```powershell
+$env:RUNWAYML_API_SECRET = '<Runway Dev API key>'
+npm run runway:plan-to-paid -- opening --confirm-cost
+npm run runway:plan-to-paid -- superintendent --confirm-cost
+npm run runway:plan-to-paid -- closing --confirm-cost
+```
+
+Each call uses `gen4_turbo` at 1280x720 and is expected to cost about 25 Runway credits. Existing outputs are protected; pass `--force` only when intentionally purchasing another take. The API key must stay in the environment and must never be committed.
+
 `npm run capture:stage` signs in to the public Demo Operations account on `stage.opsfloa.com` and refreshes the source images in `public/captures/`. Those images are tracked so the campaign renders consistently without requiring a live connection. The Plan Room capture uses a locally generated sample grading sheet and does not share or publish it to staging.
 
 `npm run capture:field-payroll` is intentionally limited to the staging Demo Operations workspace. It creates or reuses the fictional `Jordan Lee` walkthrough worker, records a located shift, configures the demo's weekly payroll rules, and captures the real clock-in, map, split, approval, and payroll-run states used by the first ad.

@@ -1,0 +1,17 @@
+{
+  "opening": {
+    "image": "public/footage/plan-to-paid/reference/01-opening-excavator.jpg",
+    "output": "public/footage/plan-to-paid/generated/01-opening-excavator.mp4",
+    "prompt": "The excavator smoothly pulls a shallow pass of soil toward itself while its tracks remain planted. The articulated dump truck rolls slowly along the graded road in the background. Fine dust drifts naturally near the tires. The camera performs a restrained lateral dolly to the right. Continuous physically realistic motion, premium documentary commercial footage, no cuts, no zoom, no added objects, no text."
+  },
+  "superintendent": {
+    "image": "public/footage/plan-to-paid/reference/02-superintendent.jpg",
+    "output": "public/footage/plan-to-paid/generated/02-superintendent.mp4",
+    "prompt": "The superintendent makes one small natural tap and a short scroll on the tablet, then briefly lifts his eyes toward the active site. His hands remain anatomically correct and the tablet stays rigid. Background equipment moves slowly and naturally. A light breeze moves the shirt and vest. The camera makes a subtle steady push-in. Premium documentary commercial footage, no cuts, no readable screen, no added people, no text."
+  },
+  "closing": {
+    "image": "public/footage/plan-to-paid/reference/03-closing-aerial.jpg",
+    "output": "public/footage/plan-to-paid/generated/03-closing-aerial.mp4",
+    "prompt": "The drone slowly rises and pulls backward, revealing more of the organized grading pattern. The excavator boom makes one controlled movement and the dozer advances gradually along its existing path. Only faint localized dust moves with the equipment. Late-afternoon light remains consistent. Continuous physically realistic motion, premium documentary commercial footage, no cuts, no added machinery, no text."
+  }
+}
