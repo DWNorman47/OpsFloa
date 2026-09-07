@@ -31,8 +31,21 @@ const { simpleParser } = require('mailparser');
 const logger = require('../logger');
 
 const LABEL_ROOT = 'OpsFloaMail';
-const IDLE_CLOSE_MS = 60 * 1000;
+// Reconnecting costs a full TLS + LOGIN handshake (~1-2s), so keep the
+// connection warm well past a normal between-clicks pause.
+const IDLE_CLOSE_MS = 5 * 60 * 1000;
 const PAGE_SIZE = 50;
+
+// Short server-side caches so switching tabs/folders back and forth doesn't
+// re-run IMAP searches. Content mutations (move, sent copy, folder ops)
+// invalidate; a stale \Seen flag for a few seconds is tolerated because the
+// client updates its own list state optimistically.
+const FOLDERS_TTL_MS = 60 * 1000;
+const LIST_TTL_MS = 25 * 1000;
+const folderCache = new Map(); // account -> { names, ts }
+const listCache = new Map();   // JSON key -> { result, ts }
+
+function invalidateListCache() { listCache.clear(); }
 
 function isConfigured() {
   return !!(process.env.MAILBOX_GMAIL_USER && process.env.MAILBOX_GMAIL_APP_PASSWORD && accounts().length);
@@ -75,11 +88,13 @@ function isValidFolderName(name) {
 
 let conn = null;          // live ImapFlow client (or null)
 let allMailPath = null;   // cached "[Gmail]/All Mail" path (locale-dependent)
+let openPath = null;      // mailbox currently SELECTed on `conn`
 let queue = Promise.resolve();
 let idleTimer = null;
 
 async function getConnection() {
   if (conn && conn.usable) return conn;
+  openPath = null;
   conn = new ImapFlow({
     host: 'imap.gmail.com',
     port: 993,
@@ -90,9 +105,18 @@ async function getConnection() {
   conn.on('error', err => {
     logger.warn({ err: { message: err.message } }, 'mailbox: imap connection error');
     conn = null;
+    openPath = null;
   });
   await conn.connect();
   return conn;
+}
+
+/** SELECT `path` only when it isn't the mailbox already open — reopening on
+ *  every call costs a round trip to Gmail per request. */
+async function ensureOpen(client, path) {
+  if (openPath === path) return;
+  await client.mailboxOpen(path);
+  openPath = path;
 }
 
 async function findAllMailPath(client) {
@@ -125,6 +149,7 @@ function withMailbox(fn) {
       idleTimer = setTimeout(() => {
         conn?.logout?.().catch(() => {});
         conn = null;
+        openPath = null;
       }, IDLE_CLOSE_MS).unref?.();
     }
   });
@@ -139,20 +164,26 @@ function withMailbox(fn) {
  *  first (alphabetical), then the reserved ones in fixed order — all reserved
  *  folders always exist conceptually, even before their label is created. */
 async function listFolders(account) {
-  return withMailbox(async client => {
+  const cached = folderCache.get(account);
+  if (cached && Date.now() - cached.ts < FOLDERS_TTL_MS) return cached.names;
+  const names = await withMailbox(async client => {
     const prefix = accountPrefix(account) + '/';
     const boxes = await client.list();
-    const names = boxes
+    const found = boxes
       .filter(b => b.path.startsWith(prefix))
       .map(b => b.path.slice(prefix.length))
       .filter(n => n && !n.includes('/'));
-    for (const r of RESERVED_FOLDERS) if (!names.includes(r)) names.push(r);
+    for (const r of RESERVED_FOLDERS) if (!found.includes(r)) found.push(r);
     const rank = n => RESERVED_FOLDERS.indexOf(n) + 1 || 0;
-    return names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    return found.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   });
+  folderCache.set(account, { names, ts: Date.now() });
+  return names;
 }
 
 async function createFolder(account, name) {
+  folderCache.delete(account);
+  invalidateListCache();
   return withMailbox(async client => {
     const path = `${accountPrefix(account)}/${name.trim()}`;
     try {
@@ -166,6 +197,8 @@ async function createFolder(account, name) {
 
 /** Deleting a folder removes the label; its messages fall back to the inbox view. */
 async function deleteFolder(account, name) {
+  folderCache.delete(account);
+  invalidateListCache();
   return withMailbox(async client => {
     await client.mailboxDelete(`${accountPrefix(account)}/${name.trim()}`);
   });
@@ -212,8 +245,12 @@ async function listMessages({ account, folder = null, q = '', page = 1, dir = 'd
   if (tabSenders && tabSenders.length === 0) {
     return { items: [], total: 0, page: 1, pages: 1, folders: folderNames };
   }
-  return withMailbox(async (client, allMail) => {
-    await client.mailboxOpen(allMail, { readOnly: true });
+  // Sender lists are part of the key, so tab edits change it naturally.
+  const cacheKey = JSON.stringify([account, folder, q, page, dir, tabSenders, excludeSenders]);
+  const hit = listCache.get(cacheKey);
+  if (hit && Date.now() - hit.ts < LIST_TTL_MS) return hit.result;
+  const result = await withMailbox(async (client, allMail) => {
+    await ensureOpen(client, allMail);
     const uids = await client.search({ gmraw: buildQuery(account, folder, folderNames, q, { tabSenders, excludeSenders }) }, { uid: true }) || [];
     uids.sort((a, b) => (dir === 'asc' ? a - b : b - a)); // uid order ≈ arrival order
     const total = uids.length;
@@ -239,6 +276,11 @@ async function listMessages({ account, folder = null, q = '', page = 1, dir = 'd
     }
     return { items, total, page, pages, folders: folderNames };
   });
+  if (listCache.size > 100) {
+    for (const [k, v] of listCache) if (Date.now() - v.ts >= LIST_TTL_MS) listCache.delete(k);
+  }
+  listCache.set(cacheKey, { result, ts: Date.now() });
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +312,7 @@ function addressesOf(parsed) {
  */
 async function getMessage(account, uid) {
   return withMailbox(async (client, allMail) => {
-    await client.mailboxOpen(allMail, { readOnly: true });
+    await ensureOpen(client, allMail);
     const msg = await client.fetchOne(String(uid), { uid: true, source: true, flags: true, labels: true }, { uid: true });
     if (!msg || !msg.source) throw Object.assign(new Error('Message not found'), { status: 404 });
 
@@ -307,7 +349,7 @@ async function getMessage(account, uid) {
 /** Re-parse and return one attachment's bytes (no caching — single-user tool). */
 async function getAttachment(account, uid, index) {
   return withMailbox(async (client, allMail) => {
-    await client.mailboxOpen(allMail, { readOnly: true });
+    await ensureOpen(client, allMail);
     const msg = await client.fetchOne(String(uid), { uid: true, source: true, labels: true }, { uid: true });
     if (!msg || !msg.source) throw Object.assign(new Error('Message not found'), { status: 404 });
     const parsed = await simpleParser(msg.source);
@@ -324,7 +366,7 @@ async function getAttachment(account, uid, index) {
 
 async function setSeen(uid, seen) {
   return withMailbox(async (client, allMail) => {
-    await client.mailboxOpen(allMail);
+    await ensureOpen(client, allMail);
     if (seen) await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
     else await client.messageFlagsRemove(String(uid), ['\\Seen'], { uid: true });
   });
@@ -336,8 +378,9 @@ async function setSeen(uid, seen) {
  */
 async function moveToFolder(account, uid, folder) {
   if (folder) await createFolder(account, folder);
+  invalidateListCache();
   return withMailbox(async (client, allMail) => {
-    await client.mailboxOpen(allMail);
+    await ensureOpen(client, allMail);
     const prefix = accountPrefix(account) + '/';
     const msg = await client.fetchOne(String(uid), { uid: true, labels: true }, { uid: true });
     if (!msg) throw Object.assign(new Error('Message not found'), { status: 404 });
@@ -376,6 +419,7 @@ function buildRawMessage({ from, to, cc, subject, text, inReplyTo, references, d
 
 async function appendSent(account, fields) {
   const prefix = accountPrefix(account);
+  invalidateListCache();
   return withMailbox(async client => {
     try {
       await client.mailboxCreate(`${prefix}/Sent`);
