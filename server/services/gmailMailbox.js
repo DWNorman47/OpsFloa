@@ -55,9 +55,19 @@ function accountPrefix(account) {
   return `${LABEL_ROOT}/${String(account).toLowerCase().split('@')[0]}`;
 }
 
+// Always-present folders, listed last in a fixed order. 'Archived' and
+// 'Trash' are normal move targets (Trash is filing, not deletion — the
+// message keeps living in Gmail's All Mail); 'Sent' only receives copies
+// of outgoing mail. None can be created, renamed, or deleted.
+const RESERVED_FOLDERS = ['Archived', 'Trash', 'Sent'];
+
+function isReservedFolder(name) {
+  return RESERVED_FOLDERS.includes(String(name || '').trim());
+}
+
 // Folder names become Gmail label path segments — no slashes or exotic chars.
 function isValidFolderName(name) {
-  return typeof name === 'string' && /^[\w\- ()&]{1,40}$/.test(name.trim()) && name.trim() !== 'Sent';
+  return typeof name === 'string' && /^[\w\- ()&]{1,40}$/.test(name.trim()) && !isReservedFolder(name);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +135,9 @@ function withMailbox(fn) {
 // ---------------------------------------------------------------------------
 // Folders
 
-/** List an account's folders (label segment after the prefix). 'Sent' always exists conceptually. */
+/** List an account's folders (label segment after the prefix). Custom folders
+ *  first (alphabetical), then the reserved ones in fixed order — all reserved
+ *  folders always exist conceptually, even before their label is created. */
 async function listFolders(account) {
   return withMailbox(async client => {
     const prefix = accountPrefix(account) + '/';
@@ -134,8 +146,9 @@ async function listFolders(account) {
       .filter(b => b.path.startsWith(prefix))
       .map(b => b.path.slice(prefix.length))
       .filter(n => n && !n.includes('/'));
-    if (!names.includes('Sent')) names.push('Sent');
-    return names.sort((a, b) => (a === 'Sent') - (b === 'Sent') || a.localeCompare(b));
+    for (const r of RESERVED_FOLDERS) if (!names.includes(r)) names.push(r);
+    const rank = n => RESERVED_FOLDERS.indexOf(n) + 1 || 0;
+    return names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   });
 }
 
@@ -369,7 +382,7 @@ async function appendSent(account, fields) {
 }
 
 module.exports = {
-  isConfigured, accounts, isKnownAccount, isValidFolderName,
+  isConfigured, accounts, isKnownAccount, isValidFolderName, isReservedFolder,
   listFolders, createFolder, deleteFolder,
   listMessages, getMessage, getAttachment, setSeen, moveToFolder,
   appendSent,

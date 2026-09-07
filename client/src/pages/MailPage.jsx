@@ -10,6 +10,10 @@ import api from '../api';
  * English-only like SuperAdmin.jsx — this page has exactly one user.
  */
 
+// Always-present folders (mirrors the server): not deletable, listed last.
+// Archived/Trash are move targets; Sent only receives outgoing copies.
+const RESERVED_FOLDERS = ['Archived', 'Trash', 'Sent'];
+
 function fmtDate(d) {
   if (!d) return '';
   const date = new Date(d);
@@ -309,7 +313,7 @@ export default function MailPage() {
           {folders.map(f => (
             <button key={f} style={S.folderBtn(folder === f)} onClick={() => { setFolder(f); setActiveTab(null); }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f}</span>
-              {f !== 'Sent' && (
+              {!RESERVED_FOLDERS.includes(f) && (
                 <span
                   role="button"
                   aria-label={`Delete folder ${f}`}
@@ -343,6 +347,8 @@ export default function MailPage() {
                     <button className="ops-button-secondary" onClick={() => setMessage(null)}>&larr; Back</button>
                     <button className="ops-button-primary" onClick={startReply}>Reply</button>
                     <button className="ops-button-secondary" onClick={markUnread}>Mark unread</button>
+                    <button className="ops-button-secondary" onClick={() => moveTo('Archived')} title="File into Archived">Archive</button>
+                    <button className="ops-button-secondary" onClick={() => moveTo('Trash')} title="File into Trash">Trash</button>
                     <select
                       style={S.select}
                       value={message.labels?.[0] || ''}

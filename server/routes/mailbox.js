@@ -193,7 +193,10 @@ router.post('/messages/:uid/read', requireConfigured, requireAccount, async (req
 router.post('/messages/:uid/move', requireConfigured, requireAccount, async (req, res) => {
   try {
     const folder = req.body?.folder ? String(req.body.folder).trim() : null;
-    if (folder && !mailbox.isValidFolderName(folder)) return res.status(400).json({ error: 'Invalid folder name' });
+    // Archived and Trash are legit move targets; Sent only receives copies
+    // of outgoing mail, never filed messages.
+    const okTarget = folder && (mailbox.isValidFolderName(folder) || (mailbox.isReservedFolder(folder) && folder !== 'Sent'));
+    if (folder && !okTarget) return res.status(400).json({ error: 'Invalid folder name' });
     await mailbox.moveToFolder(req.mailAccount, parseInt(req.params.uid), folder);
     res.json({ ok: true });
   } catch (err) { sendErr(res, err, req.log, 'Could not move the message.'); }
@@ -203,7 +206,7 @@ router.post('/messages/:uid/move', requireConfigured, requireAccount, async (req
 router.post('/folders', requireConfigured, requireAccount, async (req, res) => {
   try {
     const name = String(req.body?.name || '').trim();
-    if (!mailbox.isValidFolderName(name)) return res.status(400).json({ error: 'Folder names: letters, numbers, spaces, - _ & ( ) — max 40 chars ("Sent" is reserved).' });
+    if (!mailbox.isValidFolderName(name)) return res.status(400).json({ error: 'Folder names: letters, numbers, spaces, - _ & ( ) — max 40 chars (Sent, Archived and Trash are reserved).' });
     await mailbox.createFolder(req.mailAccount, name);
     res.json({ ok: true, folders: await mailbox.listFolders(req.mailAccount) });
   } catch (err) { sendErr(res, err, req.log, 'Could not create the folder.'); }

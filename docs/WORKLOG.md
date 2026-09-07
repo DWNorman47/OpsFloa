@@ -35,6 +35,11 @@ returns its mail to the inbox. Edit via the ✎ on each tab; domains work
 (`acme.com` matches all its addresses). Migration renumbered 0125→0198 after
 the repo's migration set moved.
 
+Same day: **Archived + Trash default folders** — always present alongside Sent
+(reserved: can't be created/deleted), one-click Archive/Trash buttons on an
+open message. Trash is filing, not deletion — the message stays in Gmail; real
+IMAP delete remains parked in BACKLOG.
+
 ## 2026-09-06 — Super-admin Mail page (/mail): own interface over the forwarding Gmail
 
 New `/mail` page (super_admin only) that reads the Gmail account the opsfloa.com
