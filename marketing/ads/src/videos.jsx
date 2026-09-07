@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Audio, interpolate, Sequence, staticFile } from 'remotion';
+import { AbsoluteFill, Audio, Easing, Img, interpolate, Sequence, staticFile } from 'remotion';
 import {
   AppCapture,
   EndCard,
@@ -12,6 +12,47 @@ import {
 
 function Caption({ children }) {
   return <div className="caption"><span>{children}</span></div>;
+}
+
+function PhotoBeat({ frame, duration, src, eyebrow, title, position = 'center' }) {
+  const scale = interpolate(frame, [0, duration], [1.015, 1.075], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.inOut(Easing.cubic),
+  });
+  const drift = interpolate(frame, [0, duration], [-12, 12], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  return (
+    <div className="plan-paid-photo">
+      <Img
+        src={staticFile(src)}
+        style={{
+          objectPosition: position,
+          transform: `translateX(${drift}px) scale(${scale})`,
+        }}
+      />
+      <div className="plan-paid-photo-shade" />
+      <div className="plan-paid-photo-copy">
+        <span>{eyebrow}</span>
+        <h2>{title}</h2>
+      </div>
+      <div className="plan-paid-previs">AI PREVIS</div>
+    </div>
+  );
+}
+
+function CaptureBeat({ frame, duration, src, eyebrow, title, focus, zoom = 1.045 }) {
+  return (
+    <div className="plan-paid-capture">
+      <AppCapture frame={frame} duration={duration} src={src} focus={focus} zoom={zoom} />
+      <div className="plan-paid-capture-copy">
+        <span>{eyebrow}</span>
+        <strong>{title}</strong>
+      </div>
+    </div>
+  );
 }
 
 const fieldPayrollStates = [
@@ -145,6 +186,108 @@ export function FieldToPayroll({
       <Scene from={720} duration={560} className="capture-scene">{frame => <GuidedCapture frame={frame} states={reportsStates} moves={reportsMoves} cursorWindows={[[8, 110], [155, 470]]} highlights={reportsHighlights} />}</Scene>
       <Scene from={1270} duration={250} className="capture-scene">{frame => <><GuidedCapture frame={frame} states={payrollRunStates} moves={payrollRunMoves} cursorWindows={[[5, 130]]}/><Caption>With the Payroll add-on, run payroll from the scheduled pay period.</Caption></>}</Scene>
       <Scene from={1510} duration={230}>{frame => <EndCard frame={frame} line="From field to payroll. One flow." subline="Time, oversight, approvals, and pay built for the way contractors work." />}</Scene>
+    </AbsoluteFill>
+  );
+}
+
+function PlanToPaidAudio() {
+  return (
+    <>
+      <Audio
+        src={staticFile('audio/field-payroll/music.wav')}
+        volume={frame => interpolate(
+          frame,
+          [0, 18, 40, 760, 820, 899],
+          [0, 0.24, 0.17, 0.17, 0.25, 0],
+          { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+        )}
+      />
+      <Sequence from={10}>
+        <Audio src={staticFile('audio/plan-to-paid/voice-draft.wav')} volume={0.94} />
+      </Sequence>
+    </>
+  );
+}
+
+export function PlanToPaid() {
+  return (
+    <AbsoluteFill className="video-root plan-paid-root">
+      <PlanToPaidAudio />
+      <Scene from={0} duration={95}>{frame => (
+        <PhotoBeat
+          frame={frame}
+          duration={95}
+          src="footage/plan-to-paid/reference/01-opening-excavator.jpg"
+          eyebrow="THE WORK MOVES"
+          title="The job changes every hour."
+        />
+      )}</Scene>
+      <Scene from={80} duration={80}>{frame => (
+        <PhotoBeat
+          frame={frame}
+          duration={80}
+          src="footage/plan-to-paid/reference/04-paperwork.jpg"
+          eyebrow="THE PAPERWORK LAGS"
+          title="Your numbers shouldn’t."
+          position="center 58%"
+        />
+      )}</Scene>
+      <Scene from={145} duration={90} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={90} src="captures/plan-room.png" eyebrow="PLAN" title="Measure the work." focus={[48, 46]} zoom={1.055} />
+      )}</Scene>
+      <Scene from={220} duration={75} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={75} src="captures/estimates.png" eyebrow="PRICE" title="Build the estimate." focus={[52, 36]} />
+      )}</Scene>
+      <Scene from={280} duration={65} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={65} src="captures/projects.png" eyebrow="WIN" title="Turn work into a project." focus={[50, 42]} />
+      )}</Scene>
+      <Scene from={330} duration={90}>{frame => (
+        <PhotoBeat
+          frame={frame}
+          duration={90}
+          src="footage/plan-to-paid/reference/02-superintendent.jpg"
+          eyebrow="ONE LIVE OPERATION"
+          title="The field and office move together."
+          position="center 38%"
+        />
+      )}</Scene>
+      <Scene from={405} duration={65} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={65} src="captures/timeclock.png" eyebrow="FIELD" title="Hours land on the right job." focus={[50, 48]} />
+      )}</Scene>
+      <Scene from={455} duration={65} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={65} src="captures/workforce-live.png" eyebrow="LIVE" title="See work as it happens." focus={[50, 45]} />
+      )}</Scene>
+      <Scene from={505} duration={65} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={65} src="captures/workforce-approvals.png" eyebrow="CONTROL" title="Review before costs settle." focus={[53, 45]} />
+      )}</Scene>
+      <Scene from={555} duration={70} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={70} src="captures/performance.png" eyebrow="KNOW" title="See pressure while there’s time." focus={[52, 43]} />
+      )}</Scene>
+      <Scene from={610} duration={65} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={65} src="captures/change-orders.png" eyebrow="CHANGE" title="Keep every dollar attached." focus={[52, 34]} />
+      )}</Scene>
+      <Scene from={660} duration={65} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={65} src="captures/invoices.png" eyebrow="BILL" title="Move approved work forward." focus={[51, 36]} />
+      )}</Scene>
+      <Scene from={710} duration={70} className="capture-scene">{frame => (
+        <CaptureBeat frame={frame} duration={70} src="captures/workforce-payroll.png" eyebrow="PAY" title="Finish with payroll ready." focus={[51, 40]} />
+      )}</Scene>
+      <Scene from={765} duration={75}>{frame => (
+        <PhotoBeat
+          frame={frame}
+          duration={75}
+          src="footage/plan-to-paid/reference/03-closing-aerial.jpg"
+          eyebrow="LESS CHASING. FEWER SURPRISES."
+          title="One clear path from plan to paid."
+        />
+      )}</Scene>
+      <Scene from={825} duration={75}>{frame => (
+        <EndCard
+          frame={frame}
+          line="From plan to paid. One flow."
+          subline="Run the work, not the paperwork."
+        />
+      )}</Scene>
     </AbsoluteFill>
   );
 }

@@ -20,7 +20,7 @@ if (!browserExecutable) {
   throw new Error('No Chrome-compatible browser found. Set REMOTION_BROWSER_EXECUTABLE.');
 }
 
-for (const id of ['field-to-payroll', 'plans-to-project', 'protect-the-margin']) {
+for (const id of ['field-to-payroll', 'plans-to-project', 'protect-the-margin', 'plan-to-paid']) {
   console.log(`Rendering ${id}...`);
   const args = [
     cli,

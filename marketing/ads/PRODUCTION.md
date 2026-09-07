@@ -67,11 +67,14 @@ npm run render
 
 ## Plan to Paid AI previsualization
 
-Three center-safe reference frames and motion prompts live under `public/footage/plan-to-paid`. Generate one five-second Runway take at a time so costs stay explicit:
+The `plan-to-paid` composition is a complete 30-second image-based concept ad using four center-safe placeholder frames, real OpsFloa captures, the original music bed, and a free local draft voice. Regenerate the draft voice with `npm run audio:plan-to-paid`.
+
+The reference frames and optional motion prompts live under `public/footage/plan-to-paid`. Generate one five-second Runway take at a time so costs stay explicit:
 
 ```powershell
 $env:RUNWAYML_API_SECRET = '<Runway Dev API key>'
 npm run runway:plan-to-paid -- opening --confirm-cost
+npm run runway:plan-to-paid -- paperwork --confirm-cost
 npm run runway:plan-to-paid -- superintendent --confirm-cost
 npm run runway:plan-to-paid -- closing --confirm-cost
 ```

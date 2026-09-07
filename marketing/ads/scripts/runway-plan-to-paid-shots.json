@@ -4,6 +4,11 @@
     "output": "public/footage/plan-to-paid/generated/01-opening-excavator.mp4",
     "prompt": "The excavator smoothly pulls a shallow pass of soil toward itself while its tracks remain planted. The articulated dump truck rolls slowly along the graded road in the background. Fine dust drifts naturally near the tires. The camera performs a restrained lateral dolly to the right. Continuous physically realistic motion, premium documentary commercial footage, no cuts, no zoom, no added objects, no text."
   },
+  "paperwork": {
+    "image": "public/footage/plan-to-paid/reference/04-paperwork.jpg",
+    "output": "public/footage/plan-to-paid/generated/04-paperwork.mp4",
+    "prompt": "A light breeze moves only the loose corners of the plans and receipts. The phone screen gives one subtle notification glow while all screen content remains indistinct. Background equipment moves slowly and naturally. The camera makes a restrained push toward the paperwork. Premium documentary commercial footage, no cuts, no added objects, no readable text, no logos."
+  },
   "superintendent": {
     "image": "public/footage/plan-to-paid/reference/02-superintendent.jpg",
     "output": "public/footage/plan-to-paid/generated/02-superintendent.mp4",

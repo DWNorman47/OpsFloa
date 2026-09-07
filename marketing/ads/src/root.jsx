@@ -1,6 +1,6 @@
 import React from 'react';
 import { Composition } from 'remotion';
-import { FieldToPayroll, PlansToProject, ProtectTheMargin } from './videos';
+import { FieldToPayroll, PlansToProject, PlanToPaid, ProtectTheMargin } from './videos';
 
 const video = {
   fps: 30,
@@ -24,6 +24,7 @@ export function AdsRoot() {
         }}
       />
       <Composition id="plans-to-project" component={PlansToProject} {...video} />
+      <Composition id="plan-to-paid" component={PlanToPaid} {...video} />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />
     </>
   );
