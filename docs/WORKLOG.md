@@ -6557,3 +6557,18 @@ expanded "View location" (only when clock coords exist) and the recently-approve
 "View on map". The reworked Location History modal is still reachable from the top button
 and the recently-approved button.
 Full verify green (server 1561, client build + i18n).
+
+## SEO: switch canonical host to bare opsfloa.com + noindex non-prod (2026-09-04)
+Search Console showed the main site "not indexed, page with redirect": the live domain
+redirects www → bare opsfloa.com, but the code declared www as canonical. Since the site
+redirects to bare, switched every SEO/marketing reference from www.opsfloa.com → opsfloa.com:
+client/index.html (canonical, alternate llms.txt, og:url, og:image, twitter:image, all 3
+JSON-LD url/logo), public/llms.txt, public/robots.txt (Sitemap:), public/sitemap.xml.
+Left two DEFENSIVE www refs intact (harmless post-redirect): server/index.js CORS allowlist
+and the SuperAdmin prod-host guard — both merely accept www; removing the CORS entry is the
+only change with any downside. (#3) Added a Vercel has-host header rule emitting
+`X-Robots-Tag: noindex, nofollow` on (dev|stage).opsfloa.com so non-prod can't be indexed;
+prod opsfloa.com is unaffected (preview *.vercel.app are auto-noindexed by Vercel). (#4) Landing
+is already lazy code-split with no heavy-lib imports — no change needed; measure real CWV via
+PageSpeed on the deploy, and the only bigger lever if needed is splitting i18n by language.
+After deploy: in Search Console, URL-inspect https://opsfloa.com/ and Request Indexing.
