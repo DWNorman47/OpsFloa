@@ -1,6 +1,6 @@
 import React from 'react';
 import { Composition } from 'remotion';
-import { FieldToPayroll, PlansToProject, ProtectTheMargin } from './videos';
+import { FieldToPayroll, PlansToProject, PlanToPaid, ProtectTheMargin } from './videos';
 
 const video = {
   fps: 30,
@@ -12,8 +12,37 @@ const video = {
 export function AdsRoot() {
   return (
     <>
-      <Composition id="field-to-payroll" component={FieldToPayroll} {...video} />
+      <Composition id="field-to-payroll" component={FieldToPayroll} {...video} durationInFrames={1740} />
+      <Composition
+        id="field-to-payroll-alt-music"
+        component={FieldToPayroll}
+        {...video}
+        durationInFrames={1740}
+        defaultProps={{
+          musicSrc: 'audio/field-payroll/music-alt.wav',
+          musicVolume: 0.32,
+        }}
+      />
       <Composition id="plans-to-project" component={PlansToProject} {...video} />
+      <Composition id="plan-to-paid" component={PlanToPaid} {...video} />
+      <Composition
+        id="plan-to-paid-original-music"
+        component={PlanToPaid}
+        {...video}
+        defaultProps={{
+          musicSrc: 'audio/field-payroll/music.wav',
+          musicVolume: 0.17,
+        }}
+      />
+      <Composition
+        id="plan-to-paid-slow-music"
+        component={PlanToPaid}
+        {...video}
+        defaultProps={{
+          musicSrc: 'audio/plan-to-paid/music-flow.wav',
+          musicVolume: 0.27,
+        }}
+      />
       <Composition id="protect-the-margin" component={ProtectTheMargin} {...video} />
     </>
   );

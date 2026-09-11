@@ -6,7 +6,7 @@
 > Companies can turn modules on or off, customize labels, and keep the daily
 > app simple while preserving deeper controls for admins.
 
-Website: https://www.opsfloa.com/
+Website: https://opsfloa.com/
 
 ## What OpsFloA does
 
@@ -71,10 +71,10 @@ may include a discount.
 
 ## Key links
 
-- [Landing / product overview](https://www.opsfloa.com/)
-- [Privacy policy](https://www.opsfloa.com/privacy)
-- [End-user license agreement](https://www.opsfloa.com/eula)
-- [Sitemap](https://www.opsfloa.com/sitemap.xml)
+- [Landing / product overview](https://opsfloa.com/)
+- [Privacy policy](https://opsfloa.com/privacy)
+- [End-user license agreement](https://opsfloa.com/eula)
+- [Sitemap](https://opsfloa.com/sitemap.xml)
 
 ## What OpsFloA is not
 

@@ -264,7 +264,7 @@ async function ensureDemoAdmin(client, companyId) {
   );
 }
 
-async function ensureDemoSettings(client, companyId) {
+async function ensureDemoSettings(client, companyId, workerRoleId) {
   const settings = {
     module_timeclock: '1',
     module_field: '1',
@@ -290,6 +290,47 @@ async function ensureDemoSettings(client, companyId) {
     feature_worker_edit_time: '1',
     show_worker_wages: '1',
     company_timezone: 'America/Phoenix',
+    week_start: '1',
+    work_week_end: '0',
+    overtime_rule: 'weekly',
+    overtime_threshold: '40',
+    overtime_multiplier: '1.5',
+    regular_shift_hours: '8',
+    deductions: JSON.stringify({
+      version: 1,
+      items: [
+        { id: 'demo_retirement', name: 'Retirement contribution', kind: 'percent', value: 3 },
+        { id: 'demo_health', name: 'Health plan', kind: 'fixed', value: 45 },
+      ],
+    }),
+    paycheck_rules: JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'demo_weekly_field',
+        name: 'Weekly Field Payroll',
+        roles: [workerRoleId],
+        schedule: {
+          frequency: 'weekly',
+          periodBasis: 'work_week',
+          payWeekday: 5,
+          anchorDate: null,
+          daysOfMonth: [],
+          dayOfMonth: 30,
+          weekendShift: 'before',
+        },
+        deductions: {
+          timing: 'every',
+          group: { by: 'pair', applyOn: 'second' },
+          combineGroup: true,
+          exemptAmountCents: 0,
+          cap: { type: 'none', valueCents: 0, valuePct: 0 },
+          minNetCents: 0,
+          scope: 'all',
+          selectedDeductionIds: [],
+        },
+        notes: 'Weekly Friday payroll for the prior completed Monday-Sunday work week.',
+      }],
+    }),
     setup_questionnaire_completed_at: new Date().toISOString(),
   };
   for (const [key, value] of Object.entries(settings)) {
@@ -366,7 +407,8 @@ async function main() {
 
     const company = await ensureDemoCompany(client);
     const companyId = company.id;
-    await ensureDemoSettings(client, companyId);
+    const { workerId, adminId } = await seedBuiltinRoles(client, companyId);
+    await ensureDemoSettings(client, companyId, workerId);
     await ensureDemoPublicProfile(client, companyId);
 
     const admin = await ensureDemoAdmin(client, companyId);
@@ -396,6 +438,7 @@ async function main() {
         {
           password_hash: 'demo-disabled-password',
           role,
+          role_id: role === 'worker' ? workerId : adminId,
           full_name: fullName,
           email,
           hourly_rate: rate,
@@ -1269,12 +1312,19 @@ async function main() {
          AND notes = ANY($2::text[])`,
       [companyId, demoTimeEntryNotes]
     );
+    await client.query('DELETE FROM location_pings WHERE company_id = $1', [companyId]);
     for (let day = -12; day <= -1; day++) {
       for (let i = 0; i < Math.min(8, workers.length); i++) {
         if ((day + i) % 5 === 0) continue;
         const startHour = 7 + (i % 3);
         const duration = 7 + ((i + Math.abs(day)) % 3);
         const status = (day + i) % 4 === 0 ? 'pending' : 'approved';
+        const clockInLat = 33.4484 + (i * 0.006) + (Math.abs(day) * 0.0002);
+        const clockInLng = -112.0740 - (i * 0.005) + (Math.abs(day) * 0.00015);
+        const clockOutLat = clockInLat + 0.0024;
+        const clockOutLng = clockInLng - 0.0018;
+        const startTs = isoTimestamp(day, startHour, 0);
+        const endTs = isoTimestamp(day, startHour + duration, 0);
         await ensureBy(
           client,
           'time_entries',
@@ -1292,11 +1342,31 @@ async function main() {
             mileage: i % 3 === 0 ? 12 + i : null,
             clock_source: i % 4 === 0 ? 'admin' : 'worker',
             clocked_in_by: i % 4 === 0 ? admin.id : null,
-            start_ts: isoTimestamp(day, startHour, 0),
-            end_ts: isoTimestamp(day, startHour + duration, 0),
+            clock_in_lat: clockInLat,
+            clock_in_lng: clockInLng,
+            clock_out_lat: clockOutLat,
+            clock_out_lng: clockOutLng,
+            timezone: DEMO_TIMEZONE,
+            start_ts: startTs,
+            end_ts: endTs,
           },
           '*'
         );
+        for (let pingIndex = 1; pingIndex <= 3; pingIndex++) {
+          const progress = pingIndex / 4;
+          const recordedAt = new Date(new Date(startTs).getTime() + duration * 60 * 60 * 1000 * progress);
+          await client.query(
+            `INSERT INTO location_pings (company_id, user_id, lat, lng, recorded_at)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [
+              companyId,
+              workers[i].id,
+              clockInLat + (clockOutLat - clockInLat) * progress,
+              clockInLng + (clockOutLng - clockInLng) * progress,
+              recordedAt.toISOString(),
+            ]
+          );
+        }
       }
     }
 

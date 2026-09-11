@@ -23,6 +23,64 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-09-06 — Mail page: sender-routed tabs
+
+Follow-up to the Mail page below: a tab bar (Inbox always first) where each
+added tab is a name + list of sender addresses/domains (`mailbox_tabs` table,
+migration `0198`). A tab's senders show in that tab instead of the inbox —
+inbox query excludes every tab's senders (`-from:`), tab query includes only
+its own (`from:(a OR b)`), all still server-side Gmail search. Folder filing
+wins over tabs (tabs show unfiled mail, same rule as inbox); deleting a tab
+returns its mail to the inbox. Edit via the ✎ on each tab; domains work
+(`acme.com` matches all its addresses). Migration renumbered 0125→0198 after
+the repo's migration set moved.
+
+Same day: **Archived + Trash default folders** — always present alongside Sent
+(reserved: can't be created/deleted), one-click Archive/Trash buttons on an
+open message. Trash is filing, not deletion — the message stays in Gmail; real
+IMAP delete remains parked in BACKLOG.
+
+Same day: **context menus** — right-click an email row for Mark read/unread,
+Move to folder, and Add sender to tab (routes that sender's mail to the tab
+from then on); right-click a tab for Edit/Delete (the ✎ affordance is gone).
+
+## 2026-09-06 — Super-admin Mail page (/mail): own interface over the forwarding Gmail
+
+New `/mail` page (super_admin only) that reads the Gmail account the opsfloa.com
+addresses forward into, over IMAP with an app password, and presents each address
+as an isolated mailbox: per-account inbox/folders/sent, search (Gmail syntax
+passes through), date sort, reply/compose (sent via Resend from the chosen
+address, copy APPENDed back to Gmail), attachments. `npm run verify` green
+(server 1561; one client smoke test — Analytics tab — timed out under full-suite
+load but passes in isolation, pre-existing flake).
+
+Findings / calls:
+- **Per-account isolation** rides Gmail's `deliveredto:` search operator
+  (X-GM-RAW), which survives forwarding — so mail addressed to the Gmail account
+  itself never appears, with zero config. Single-message reads re-verify the
+  address against parsed headers/labels so account switching can't read across.
+- **Folders are Gmail labels** under `OpsFloaMail/<localpart>/<Folder>` — state
+  lives in the mailbox (no parallel DB to drift; no migration needed at all).
+  Inbox = delivered-to minus that account's folder labels.
+- **Compose bypasses email.js on purpose**: sendEmail() forces the transactional
+  from-address and redirects recipients in non-prod (EMAIL_MODE). A hand-written
+  email goes to its real recipient in every environment; rationale commented in
+  `server/routes/mailbox.js`.
+- English-only UI, following the SuperAdmin.jsx precedent (single-user page, no
+  i18n keys).
+- Briefly gated production-only (`f46e82f3`), reverted the same day on David's
+  call: the page shows in **every** environment and always talks to the live
+  mailbox. Note the consequence: dev.opsfloa.com reads/sends the real opsfloa
+  mail once its Render env has the `MAILBOX_*` vars.
+- ⚠️ Needs env on Render + local: `MAILBOX_GMAIL_USER`, `MAILBOX_GMAIL_APP_PASSWORD`
+  (Google app password — requires 2FA), `MAILBOX_ACCOUNTS` (comma list, first =
+  default view). Page shows "not configured" until set.
+- ⚠️ To keep the Gmail *inbox* clean (opsfloa mail reachable but not shown):
+  Gmail → Settings → Filters → new filter, **To:** `@opsfloa.com` → "Skip the
+  Inbox (Archive it)". Mail stays in All Mail, where IMAP reads it.
+- Parked: sending attachments, HTML compose, delete-message, and threading UI —
+  see BACKLOG.
+
 ## 2026-08-20 — Field Work: individual-mode history, offline idempotency, shared-text conflicts
 
 Follow-up on the Field Work deep-audit findings — fixed the two big ones plus the shared-text
@@ -6499,3 +6557,18 @@ expanded "View location" (only when clock coords exist) and the recently-approve
 "View on map". The reworked Location History modal is still reachable from the top button
 and the recently-approved button.
 Full verify green (server 1561, client build + i18n).
+
+## SEO: switch canonical host to bare opsfloa.com + noindex non-prod (2026-09-04)
+Search Console showed the main site "not indexed, page with redirect": the live domain
+redirects www → bare opsfloa.com, but the code declared www as canonical. Since the site
+redirects to bare, switched every SEO/marketing reference from www.opsfloa.com → opsfloa.com:
+client/index.html (canonical, alternate llms.txt, og:url, og:image, twitter:image, all 3
+JSON-LD url/logo), public/llms.txt, public/robots.txt (Sitemap:), public/sitemap.xml.
+Left two DEFENSIVE www refs intact (harmless post-redirect): server/index.js CORS allowlist
+and the SuperAdmin prod-host guard — both merely accept www; removing the CORS entry is the
+only change with any downside. (#3) Added a Vercel has-host header rule emitting
+`X-Robots-Tag: noindex, nofollow` on (dev|stage).opsfloa.com so non-prod can't be indexed;
+prod opsfloa.com is unaffected (preview *.vercel.app are auto-noindexed by Vercel). (#4) Landing
+is already lazy code-split with no heavy-lib imports — no change needed; measure real CWV via
+PageSpeed on the deploy, and the only bigger lever if needed is splitting i18n by language.
+After deploy: in Search Console, URL-inspect https://opsfloa.com/ and Request Indexing.

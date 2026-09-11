@@ -72,6 +72,75 @@ export function Headline({ frame, eyebrow, title, body, align = 'left' }) {
   );
 }
 
+const openingSteps = [
+  [Clock3, 'FIELD', 'CLOCKED IN'],
+  [CheckCircle2, 'APPROVALS', 'CLEARED'],
+  [ReceiptText, 'PAYROLL', 'READY'],
+];
+
+export function OpeningBackdrop({ frame }) {
+  const { fps } = useVideoConfig();
+  const boardIn = spring({ frame, fps, config: { damping: 20, stiffness: 95 } });
+  const routeProgress = interpolate(frame, [10, 82], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.inOut(Easing.cubic),
+  });
+  const pulseY = interpolate(frame, [12, 92], [206, 706], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  return (
+    <div className="opening-backdrop" aria-hidden="true">
+      <div
+        className="opening-panel"
+        style={{ transform: `translateX(${(1 - boardIn) * 150}px)` }}
+      />
+      <div className="opening-grid" style={{ backgroundPosition: `${frame * 0.6}px ${frame * 0.28}px` }} />
+      <div className="opening-plan-lines">
+        {[0, 1, 2, 3].map(index => (
+          <i
+            key={index}
+            style={{
+              opacity: boardIn * (0.24 + index * 0.05),
+              transform: `rotate(${-14 + index * 11}deg) scaleX(${Math.min(1, routeProgress * 1.35)})`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="opening-route">
+        <div className="opening-route-track" />
+        <div className="opening-route-fill" style={{ height: `${routeProgress * 500}px` }} />
+        <div className="opening-route-pulse" style={{ top: pulseY }} />
+        {openingSteps.map(([Icon, label, value], index) => {
+          const cardIn = spring({
+            frame: Math.max(0, frame - 8 - index * 10),
+            fps,
+            config: { damping: 18, stiffness: 120 },
+          });
+          const isReached = routeProgress >= index / 2;
+          return (
+            <div
+              className="opening-step"
+              key={label}
+              style={{
+                top: 142 + index * 250,
+                opacity: cardIn,
+                transform: `translateX(${(1 - cardIn) * 90}px)`,
+              }}
+            >
+              <div className={`opening-step-icon ${isReached ? 'is-reached' : ''}`}><Icon size={26} /></div>
+              <div><span>{label}</span><strong>{value}</strong></div>
+              <b>{String(index + 1).padStart(2, '0')}</b>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function FootageSlot({ frame, number, title, direction, duration }) {
   const sweep = interpolate(frame, [0, Math.max(1, duration)], [-20, 120], { extrapolateRight: 'clamp' });
   return (
@@ -124,6 +193,99 @@ export function AppCapture({ frame, duration, src, focus = [50, 50], zoom = 1.05
         }}
       />
       {cursor && (
+        <div className="capture-cursor" style={{ left: cursorX, top: cursorY }}>
+          <i style={{ opacity: clickPulse, transform: `scale(${1 + clickPulse * 1.2})` }} />
+          <MousePointer2 size={34} fill="#ffffff" stroke="#0b1220" strokeWidth={2.2} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function guidedCursorPosition(frame, moves) {
+  if (!moves.length) return [0, 0];
+  const active = moves.find(move => frame >= move.start && frame <= move.end);
+  if (active) {
+    const progress = interpolate(frame, [active.start, active.end], [0, 1], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.inOut(Easing.cubic),
+    });
+    return [
+      interpolate(progress, [0, 1], [active.from[0], active.to[0]]),
+      interpolate(progress, [0, 1], [active.from[1], active.to[1]]),
+    ];
+  }
+  const completed = [...moves].reverse().find(move => frame > move.end);
+  return completed ? completed.to : moves[0].from;
+}
+
+export function GuidedCapture({ frame, states, moves, cursorWindows, highlights = [] }) {
+  const stateIndex = states.reduce((found, state, index) => frame >= state.at ? index : found, 0);
+  const current = states[stateIndex];
+  const previous = states[Math.max(0, stateIndex - 1)];
+  const scrollFrames = current.transitionFrames || 10;
+  const scrollDistance = current.scrollDistance || 180;
+  const isScrolling = current.transition === 'scroll' && frame < current.at + scrollFrames;
+  const scrollProgress = isScrolling
+    ? interpolate(frame, [current.at, current.at + scrollFrames], [0, 1], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+        easing: Easing.inOut(Easing.cubic),
+      })
+    : 1;
+  const [cursorX, cursorY] = guidedCursorPosition(frame, moves);
+  const cursorVisible = cursorWindows.some(([start, end]) => frame >= start && frame <= end);
+  const clickDistance = moves.reduce((nearest, move) => (
+    move.clickAt == null ? nearest : Math.min(nearest, Math.abs(frame - move.clickAt))
+  ), Number.POSITIVE_INFINITY);
+  const clickPulse = interpolate(clickDistance, [0, 10], [1, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  return (
+    <div className="app-capture guided-capture">
+      {isScrolling && (
+        <Img
+          src={staticFile(previous.src)}
+          style={{
+            zIndex: current.matchedScroll ? 1 : undefined,
+            transform: `translateY(${-scrollDistance * scrollProgress}px)`,
+          }}
+        />
+      )}
+      <Img
+        src={staticFile(current.src)}
+        style={isScrolling ? {
+          zIndex: current.matchedScroll ? 0 : undefined,
+          opacity: current.matchedScroll ? 1 : scrollProgress,
+          transform: `translateY(${scrollDistance * (1 - scrollProgress)}px)`,
+        } : undefined}
+      />
+      {highlights.flatMap((highlight, highlightIndex) => {
+        const opacity = interpolate(
+          frame,
+          [highlight.start, highlight.start + 5, highlight.end - 12, highlight.end],
+          [0, 1, 1, 0],
+          { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+        );
+        if (frame < highlight.start || frame > highlight.end) return [];
+        return highlight.boxes.map((box, boxIndex) => (
+          <div
+            className="capture-highlight"
+            key={`${highlightIndex}-${boxIndex}`}
+            style={{
+              left: box.x,
+              top: box.y,
+              width: box.width,
+              height: box.height,
+              opacity,
+            }}
+          />
+        ));
+      })}
+      {cursorVisible && (
         <div className="capture-cursor" style={{ left: cursorX, top: cursorY }}>
           <i style={{ opacity: clickPulse, transform: `scale(${1 + clickPulse * 1.2})` }} />
           <MousePointer2 size={34} fill="#ffffff" stroke="#0b1220" strokeWidth={2.2} />
@@ -287,9 +449,31 @@ export function MoneyFlow({ frame }) {
 }
 
 export function EndCard({ frame, line, subline }) {
+  const chevronDrift = interpolate(frame, [0, 230], [-20, 70], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const railProgress = interpolate(frame, [5, 120], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.out(Easing.cubic),
+  });
   return (
     <div className="end-card">
-      <div className="end-grid" />
+      <div className="end-grid" style={{ backgroundPosition: `${frame * 0.7}px ${frame * 0.35}px` }} />
+      <div className="end-chevrons" style={{ transform: `translateX(${chevronDrift}px)` }} aria-hidden="true">
+        <ChevronRight />
+        <ChevronRight />
+        <ChevronRight />
+      </div>
+      <div className="end-rails" aria-hidden="true">
+        {[0, 1, 2, 3].map(index => (
+          <div className="end-rail" key={index}>
+            <i style={{ width: `${Math.max(0, railProgress - index * 0.08) * 100}%` }} />
+            <span style={{ left: `${Math.max(0, railProgress - index * 0.08) * 100}%` }} />
+          </div>
+        ))}
+      </div>
       <Rise frame={frame}><Brand light /></Rise>
       <Rise frame={frame} delay={6}><h2>{line}</h2></Rise>
       <Rise frame={frame} delay={11}><p>{subline}</p></Rise>

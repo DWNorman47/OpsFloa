@@ -35,7 +35,7 @@ The footage placeholders are deliberately center-safe so the same source clips c
 
 ### Field to Payroll
 
-The job moved. Did the paperwork? With OpsFloa, crews clock in to the right project and complete required checklists before work begins. Operations sees who is working and where. Time moves into approval, every pay rule is applied, and payroll is ready. From field to payroll, one flow. OpsFloa.
+The job moved. Did the paperwork? With OpsFloa, crews clock in to the right project in seconds. Operations sees who's working, where, and how every hour should be assigned. Review, split, and approve time without chasing down the details. Before payroll, reports make every hour explainable. Choose a team member and last week, then generate the entry report. Open the overtime date to see the rule that was applied, then preview the bill. With the Payroll add-on, pay rules and deductions are applied automatically. From field to payroll, one flow. OpsFloa.
 
 ### Plans to Project
 
@@ -52,17 +52,38 @@ Margin does not disappear all at once. It leaks through disconnected labor, mate
 - Mix: Voice dominant, music about 16 dB below narration, subtle interface taps only.
 - End card: Let the music resolve cleanly beneath `opsfloa.com`.
 
+The `field-to-payroll` composition currently includes a generated 110 BPM original music bed and scene-timed Juniper narration generated with ElevenLabs at 0.85 speed and elevated stability. The `field-to-payroll-alt-music` composition uses a warmer 104 BPM original bed with the same narration and edit for A/B review, mixed at `0.32` to compensate for its softer arrangement. The narration is split into nine clips so individual lines can be replaced without changing the edit. Regenerate the original music with `npm run audio:field-payroll`, or the alternate with `npm run audio:field-payroll:alternate`. For temporary local drafts only, replace the narration with the Windows system voice by running `npm run audio:field-payroll:system-voice`.
+
 ## Working with the compositions
 
 ```powershell
 cd C:\Users\davno\Projects\OpsFloa\marketing\ads
 npm install
 npm run capture:stage
+npm run capture:field-payroll
 npm run studio
 npm run render
 ```
 
+## Plan to Paid AI previsualization
+
+The `plan-to-paid` composition is a complete 30-second image-based concept ad using four center-safe placeholder frames, real OpsFloa captures, a moderate 92 BPM cinematic music bed, and a free local draft voice. Regenerate the draft voice with `npm run audio:plan-to-paid` and the music with `npm run audio:plan-to-paid:balanced`. The prior 110 BPM bed remains available in `plan-to-paid-original-music`, while the slower ambient experiment is available in `plan-to-paid-slow-music` for A/B comparison.
+
+The reference frames and optional motion prompts live under `public/footage/plan-to-paid`. Generate one five-second Runway take at a time so costs stay explicit:
+
+```powershell
+$env:RUNWAYML_API_SECRET = '<Runway Dev API key>'
+npm run runway:plan-to-paid -- opening --confirm-cost
+npm run runway:plan-to-paid -- paperwork --confirm-cost
+npm run runway:plan-to-paid -- superintendent --confirm-cost
+npm run runway:plan-to-paid -- closing --confirm-cost
+```
+
+Each call uses `gen4_turbo` at 1280x720 and is expected to cost about 25 Runway credits. Existing outputs are protected; pass `--force` only when intentionally purchasing another take. The API key must stay in the environment and must never be committed.
+
 `npm run capture:stage` signs in to the public Demo Operations account on `stage.opsfloa.com` and refreshes the source images in `public/captures/`. Those images are tracked so the campaign renders consistently without requiring a live connection. The Plan Room capture uses a locally generated sample grading sheet and does not share or publish it to staging.
+
+`npm run capture:field-payroll` is intentionally limited to the staging Demo Operations workspace. It creates or reuses the fictional `Jordan Lee` walkthrough worker, records a located shift, configures the demo's weekly payroll rules, and captures the real clock-in, map, split, approval, and payroll-run states used by the first ad.
 
 Rendered MP4 files are written to `marketing/ads/renders/` and intentionally excluded from Git. Replace each `FootageSlot` component in `src/videos.jsx` with the final clip once footage is available.
 
@@ -71,8 +92,8 @@ On Windows ARM64, the render script automatically uses installed Google Chrome o
 ## Delivery checklist
 
 - Replace the two footage slates.
-- Record final voiceover using the scripts above.
-- License and add one music track across the campaign.
+- Replace the local draft narration with the final recorded or licensed voice.
+- Extend the original music bed to the other campaign compositions, or replace it with one licensed track across the campaign.
 - Verify all claims against the release being advertised.
 - Export 1920x1080 masters.
 - Create 1080x1920 and 1080x1080 reframes.

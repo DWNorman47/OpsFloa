@@ -29,6 +29,7 @@ const FieldPage         = lazy(() => import('./pages/FieldPage'));
 const ProjectsPage      = lazy(() => import('./pages/ProjectsPage'));
 const AdministrationPage = lazy(() => import('./pages/AdministrationPage'));
 const SuperAdmin        = lazy(() => import('./pages/SuperAdmin'));
+const MailPage          = lazy(() => import('./pages/MailPage'));
 const InventoryPage     = lazy(() => import('./pages/InventoryPage'));
 const ToolsPage         = lazy(() => import('./pages/ToolsPage'));
 const AccountPage       = lazy(() => import('./pages/AccountPage'));
@@ -209,6 +210,7 @@ function AppRoutes() {
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />
       <Route path="/help" element={<PrivateRoute><HelpPage /></PrivateRoute>} />
       <Route path="/superadmin" element={<PrivateRoute superAdminOnly><SuperAdmin /></PrivateRoute>} />
+      <Route path="/mail" element={<PrivateRoute superAdminOnly><MailPage /></PrivateRoute>} />
       <Route path="/" element={user ? <Navigate to={landingFor(user)} replace /> : <Landing />} />
       <Route path="*" element={<Navigate to={user ? landingFor(user) : '/'} replace />} />
     </Routes>
