@@ -73,11 +73,22 @@ function tag(bg, color) {
 
 const STATUSES = ['trial','active','past_due','canceled','trial_expired','exempt'];
 const PLANS    = ['free','starter','business'];
+const ACTIVATION_STEPS = [
+  ['signed_up', 'Signed up'],
+  ['confirmed', 'Confirmed email'],
+  ['project_created', 'Created a project'],
+  ['clocked_in', 'Clocked in'],
+  ['approved_time', 'Approved time'],
+];
 
 export default function SuperAdmin() {
   const { logout, user } = useAuth();
   const locale = langToLocale(user?.language);
   const [tab, setTab] = useState('companies');
+  const [funnelDays, setFunnelDays] = useState(30);
+  const [funnel, setFunnel] = useState(null);
+  const [funnelLoading, setFunnelLoading] = useState(false);
+  const [funnelError, setFunnelError] = useState('');
 
   // ── Companies state ──
   const [companies, setCompanies]   = useState([]);
@@ -185,6 +196,19 @@ export default function SuperAdmin() {
     if (tab === 'errors') loadClientErrors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, errSinceHours]);
+
+  useEffect(() => {
+    if (tab !== 'activation') return undefined;
+    let active = true;
+    setFunnel(null);
+    setFunnelLoading(true);
+    setFunnelError('');
+    api.get('/superadmin/activation-funnel', { params: { days: funnelDays } })
+      .then(r => { if (active) setFunnel(r.data); })
+      .catch(e => { if (active) setFunnelError(e.response?.data?.error || 'Could not load activation data'); })
+      .finally(() => { if (active) setFunnelLoading(false); });
+    return () => { active = false; };
+  }, [tab, funnelDays]);
 
   const resetDemoWorkspace = async () => {
     setDemoWorking(true);
@@ -456,6 +480,9 @@ export default function SuperAdmin() {
           <button aria-current={tab === 'companies' ? 'page' : undefined} style={{ ...styles.tabBtn, ...(tab === 'companies' ? styles.tabActive : {}) }} onClick={() => setTab('companies')}>
             Companies {companies.length > 0 && <span style={styles.tabCount}>{companies.length}</span>}
           </button>
+          <button aria-current={tab === 'activation' ? 'page' : undefined} style={{ ...styles.tabBtn, ...(tab === 'activation' ? styles.tabActive : {}) }} onClick={() => setTab('activation')}>
+            Activation
+          </button>
           <button aria-current={tab === 'affiliates' ? 'page' : undefined} style={{ ...styles.tabBtn, ...(tab === 'affiliates' ? styles.tabActive : {}) }} onClick={() => setTab('affiliates')}>
             Affiliates {afList.length > 0 && <span style={styles.tabCount}>{afList.length}</span>}
           </button>
@@ -466,6 +493,51 @@ export default function SuperAdmin() {
             Demo Workspace
           </button>
         </div>
+
+        {tab === 'activation' && (
+          <section style={styles.funnelSection}>
+            <div style={styles.funnelHeader}>
+              <h2 style={styles.title}>Signup activation</h2>
+              <div role="group" aria-label="Signup period" style={styles.funnelRanges}>
+                {[30, 90, 365].map(days => (
+                  <button key={days} type="button" aria-pressed={funnelDays === days}
+                    style={{ ...styles.funnelRange, ...(funnelDays === days ? styles.funnelRangeActive : {}) }}
+                    onClick={() => setFunnelDays(days)}>
+                    {days} days
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p style={styles.funnelNote}>
+              Companies that signed up in this period, excluding demos. Each count includes only companies that currently meet this and all earlier milestones. Milestones may have occurred after the period ended.
+            </p>
+            {funnelLoading && <p role="status" style={styles.funnelNote}>Loading activation data...</p>}
+            {funnelError && <p role="alert" style={styles.deleteErrorBox}>{funnelError}</p>}
+            {!funnelLoading && funnel && funnel.counts.signed_up === 0 && (
+              <p style={styles.funnelNote}>No signups in this period.</p>
+            )}
+            {!funnelLoading && funnel && funnel.counts.signed_up > 0 && (
+              <div style={styles.funnelList}>
+                {ACTIVATION_STEPS.map(([key, label]) => {
+                  const count = funnel.counts[key];
+                  const percent = Math.round(count / funnel.counts.signed_up * 100);
+                  return (
+                    <div key={key} style={styles.funnelRow}>
+                      <div style={styles.funnelRowTop}>
+                        <span>{label}</span>
+                        <span><strong>{count.toLocaleString(locale)}</strong> <span style={styles.funnelPercent}>{percent}% of signups</span></span>
+                      </div>
+                      <div style={styles.funnelTrack} aria-hidden="true">
+                        <div style={{ ...styles.funnelFill, width: `${percent}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <p style={styles.funnelFooter}>Website visits are tracked separately in Vercel Web Analytics.</p>
+          </section>
+        )}
 
         {/* ── Demo Workspace tab ── */}
         {tab === 'demo' && (
@@ -1298,10 +1370,23 @@ const styles = {
   userName: { fontSize: 14, opacity: 0.8 },
   headerBtn: { background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 6, fontWeight: 600, cursor: 'pointer' },
   main: { maxWidth: 960, margin: '32px auto', padding: '0 16px' },
-  tabs: { display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #e5e7eb', paddingBottom: 0 },
+  tabs: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 24, borderBottom: '2px solid #e5e7eb', paddingBottom: 0 },
   tabBtn: { padding: '10px 20px', background: 'none', border: 'none', fontSize: 14, fontWeight: 600, color: '#6b7280', cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: -2, display: 'flex', alignItems: 'center', gap: 6 },
   tabActive: { color: 'var(--ops-page-accent)', borderBottomColor: 'var(--ops-page-accent)' },
   tabCount: { background: '#e5e7eb', color: '#374151', fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 10 },
+  funnelSection: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '22px 24px' },
+  funnelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' },
+  funnelRanges: { display: 'flex', border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden' },
+  funnelRange: { border: 'none', borderRight: '1px solid #d1d5db', background: '#fff', color: '#374151', padding: '7px 12px', fontSize: 13, cursor: 'pointer' },
+  funnelRangeActive: { background: '#e7f4ec', color: '#14532d', fontWeight: 700 },
+  funnelNote: { color: '#64748b', fontSize: 13, lineHeight: 1.5, margin: '12px 0 20px' },
+  funnelList: { borderTop: '1px solid #e5e7eb' },
+  funnelRow: { padding: '15px 0', borderBottom: '1px solid #e5e7eb' },
+  funnelRowTop: { display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', fontSize: 14, color: '#1f2937', marginBottom: 8 },
+  funnelPercent: { color: '#64748b', fontSize: 12, marginLeft: 8 },
+  funnelTrack: { height: 6, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' },
+  funnelFill: { height: '100%', background: '#16a34a' },
+  funnelFooter: { color: '#64748b', fontSize: 12, margin: '20px 0 0' },
   titleRow: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 },
   title: { fontSize: 22, fontWeight: 700, margin: 0 },
   newBtn: { marginLeft: 'auto', padding: '8px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer' },

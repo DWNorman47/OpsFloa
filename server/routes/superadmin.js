@@ -336,6 +336,64 @@ router.get('/client-errors', requireSuperAdmin, async (req, res) => {
   }
 });
 
+// Milestones reached by companies that signed up within the selected window.
+router.get('/activation-funnel', requireSuperAdmin, async (req, res) => {
+  const days = String(req.query.days ?? '30');
+  if (!['30', '90', '365'].includes(days)) {
+    return res.status(400).json({ error: 'Invalid date range' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `WITH signup_cohort AS (
+         SELECT c.id
+         FROM companies c
+         WHERE c.created_at >= NOW() - ($1::integer * INTERVAL '1 day')
+           AND c.is_demo = false
+           AND EXISTS (
+             SELECT 1 FROM legal_acceptances la
+             WHERE la.company_id = c.id AND la.context = 'signup'
+           )
+       ), milestones AS (
+         SELECT c.id,
+           EXISTS (
+             SELECT 1 FROM legal_acceptances la
+             JOIN users u ON u.id = la.user_id
+             WHERE la.company_id = c.id AND la.context = 'signup' AND u.email_confirmed = true
+           ) AS confirmed,
+           EXISTS (SELECT 1 FROM projects p WHERE p.company_id = c.id) AS has_project,
+           (EXISTS (
+             SELECT 1 FROM active_clock ac
+             WHERE ac.company_id = c.id AND ac.clock_source IN ('worker', 'admin')
+           ) OR EXISTS (
+             SELECT 1 FROM time_entries te
+             WHERE te.company_id = c.id AND te.clock_source IN ('worker', 'admin')
+               AND te.start_time <> te.end_time
+           )) AS has_clock_in,
+           EXISTS (
+             SELECT 1 FROM time_entries te
+             WHERE te.company_id = c.id AND te.status = 'approved' AND te.approved_at IS NOT NULL
+           ) AS has_approval
+         FROM signup_cohort c
+       )
+       SELECT COUNT(*) AS signed_up,
+              COUNT(*) FILTER (WHERE confirmed) AS confirmed,
+              COUNT(*) FILTER (WHERE confirmed AND has_project) AS project_created,
+              COUNT(*) FILTER (WHERE confirmed AND has_project AND has_clock_in) AS clocked_in,
+              COUNT(*) FILTER (WHERE confirmed AND has_project AND has_clock_in AND has_approval) AS approved_time
+       FROM milestones`,
+      [Number(days)]
+    );
+    const counts = Object.fromEntries(
+      Object.entries(rows[0]).map(([key, value]) => [key, Number(value)])
+    );
+    res.json({ days: Number(days), counts });
+  } catch (err) {
+    logger.error({ err }, 'activation funnel query failed');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /superadmin/companies — all companies with usage stats
 router.get('/companies', requireSuperAdmin, async (req, res) => {
   try {
