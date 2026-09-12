@@ -237,6 +237,7 @@ app.get('/api/qbo/callback', qboRouter.oauthCallback);
 app.use('/api/qbo', requireAuth, requireProAddon, qboRouter);
 app.use('/api/clock', require('./routes/clock'));
 app.use('/api/superadmin', require('./routes/superadmin'));
+app.use('/api/mailbox', require('./routes/mailbox')); // super-admin Mail page (gated inside the router)
 app.use('/api/shifts', require('./routes/shifts'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/stripe', require('./routes/stripe'));

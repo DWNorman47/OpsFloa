@@ -63,12 +63,24 @@ describe('GET /admin/worker-locations', () => {
     expect(res.body.entries[0].id).toBe(10);
     expect(res.body.pings).toHaveLength(1);
     const [eSql, eParams] = pool.query.mock.calls[0];
-    expect(eSql).toMatch(/clock_in_lat IS NOT NULL OR te\.clock_out_lat IS NOT NULL/);
-    expect(eSql).toMatch(/EXISTS \(SELECT 1 FROM location_pings/);
+    // Returns ALL entries in range now (no location-data filter), so the day's dropdown
+    // can list every entry.
+    expect(eSql).toMatch(/FROM time_entries te/);
+    expect(eSql).not.toMatch(/EXISTS \(SELECT 1 FROM location_pings/);
     expect(eParams).toEqual(['co-1', 5, '2026-08-01', '2026-08-07']);
     const [pSql, pParams] = pool.query.mock.calls[1];
     expect(pSql).toMatch(/FROM location_pings/);
     expect(pParams).toEqual(['co-1', 5, '2026-08-01', '2026-08-07']);
+  });
+
+  test('latest=1 returns the worker\'s most recent work_date', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ d: '2026-08-30' }] });
+    const res = await request(makeApp()).get('/api/admin/worker-locations?user_id=5&latest=1');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ latest_date: '2026-08-30' });
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/MAX\(work_date\)/);
+    expect(params).toEqual(['co-1', 5]);
   });
 
   test('worker_access_ids scoping: a worker outside the caller\'s scope returns empty without querying', async () => {

@@ -3216,14 +3216,23 @@ router.get('/worker-locations', requireAdmin, requirePerm('approve_entries'), as
   const userId = parseInt(req.query.user_id, 10);
   const { from, to } = req.query;
   if (!userId) return res.status(400).json({ error: 'user_id required' });
-  if (accessIds && accessIds.length && !accessIds.includes(userId)) return res.json({ entries: [], pings: [] });
+  if (accessIds && accessIds.length && !accessIds.includes(userId)) {
+    return res.json(req.query.latest ? { latest_date: null } : { entries: [], pings: [] });
+  }
   try {
+    // Cheap lookup for the modal's default: the worker's most recent worked day (used when
+    // they have nothing in the pending Approvals queue to default to).
+    if (req.query.latest) {
+      const r = await pool.query(
+        `SELECT MAX(work_date) AS d FROM time_entries WHERE company_id = $1 AND user_id = $2`,
+        [companyId, userId]
+      );
+      return res.json({ latest_date: r.rows[0]?.d || null });
+    }
+    // ALL of the worker's entries in the range (not only ones with location), so the day's
+    // entries dropdown can list every entry; entries with no GPS just render nothing on the map.
     const eParams = [companyId, userId];
-    let eWhere = `te.company_id = $1 AND te.user_id = $2
-                  AND (te.clock_in_lat IS NOT NULL OR te.clock_out_lat IS NOT NULL
-                       OR EXISTS (SELECT 1 FROM location_pings lp
-                                   WHERE lp.user_id = te.user_id
-                                     AND lp.recorded_at BETWEEN te.start_ts AND te.end_ts))`;
+    let eWhere = `te.company_id = $1 AND te.user_id = $2`;
     if (from) { eParams.push(from); eWhere += ` AND te.work_date >= $${eParams.length}::date`; }
     if (to)   { eParams.push(to);   eWhere += ` AND te.work_date <= $${eParams.length}::date`; }
     const entries = await pool.query(

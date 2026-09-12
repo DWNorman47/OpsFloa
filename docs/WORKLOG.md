@@ -23,6 +23,64 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-09-06 — Mail page: sender-routed tabs
+
+Follow-up to the Mail page below: a tab bar (Inbox always first) where each
+added tab is a name + list of sender addresses/domains (`mailbox_tabs` table,
+migration `0198`). A tab's senders show in that tab instead of the inbox —
+inbox query excludes every tab's senders (`-from:`), tab query includes only
+its own (`from:(a OR b)`), all still server-side Gmail search. Folder filing
+wins over tabs (tabs show unfiled mail, same rule as inbox); deleting a tab
+returns its mail to the inbox. Edit via the ✎ on each tab; domains work
+(`acme.com` matches all its addresses). Migration renumbered 0125→0198 after
+the repo's migration set moved.
+
+Same day: **Archived + Trash default folders** — always present alongside Sent
+(reserved: can't be created/deleted), one-click Archive/Trash buttons on an
+open message. Trash is filing, not deletion — the message stays in Gmail; real
+IMAP delete remains parked in BACKLOG.
+
+Same day: **context menus** — right-click an email row for Mark read/unread,
+Move to folder, and Add sender to tab (routes that sender's mail to the tab
+from then on); right-click a tab for Edit/Delete (the ✎ affordance is gone).
+
+## 2026-09-06 — Super-admin Mail page (/mail): own interface over the forwarding Gmail
+
+New `/mail` page (super_admin only) that reads the Gmail account the opsfloa.com
+addresses forward into, over IMAP with an app password, and presents each address
+as an isolated mailbox: per-account inbox/folders/sent, search (Gmail syntax
+passes through), date sort, reply/compose (sent via Resend from the chosen
+address, copy APPENDed back to Gmail), attachments. `npm run verify` green
+(server 1561; one client smoke test — Analytics tab — timed out under full-suite
+load but passes in isolation, pre-existing flake).
+
+Findings / calls:
+- **Per-account isolation** rides Gmail's `deliveredto:` search operator
+  (X-GM-RAW), which survives forwarding — so mail addressed to the Gmail account
+  itself never appears, with zero config. Single-message reads re-verify the
+  address against parsed headers/labels so account switching can't read across.
+- **Folders are Gmail labels** under `OpsFloaMail/<localpart>/<Folder>` — state
+  lives in the mailbox (no parallel DB to drift; no migration needed at all).
+  Inbox = delivered-to minus that account's folder labels.
+- **Compose bypasses email.js on purpose**: sendEmail() forces the transactional
+  from-address and redirects recipients in non-prod (EMAIL_MODE). A hand-written
+  email goes to its real recipient in every environment; rationale commented in
+  `server/routes/mailbox.js`.
+- English-only UI, following the SuperAdmin.jsx precedent (single-user page, no
+  i18n keys).
+- Briefly gated production-only (`f46e82f3`), reverted the same day on David's
+  call: the page shows in **every** environment and always talks to the live
+  mailbox. Note the consequence: dev.opsfloa.com reads/sends the real opsfloa
+  mail once its Render env has the `MAILBOX_*` vars.
+- ⚠️ Needs env on Render + local: `MAILBOX_GMAIL_USER`, `MAILBOX_GMAIL_APP_PASSWORD`
+  (Google app password — requires 2FA), `MAILBOX_ACCOUNTS` (comma list, first =
+  default view). Page shows "not configured" until set.
+- ⚠️ To keep the Gmail *inbox* clean (opsfloa mail reachable but not shown):
+  Gmail → Settings → Filters → new filter, **To:** `@opsfloa.com` → "Skip the
+  Inbox (Archive it)". Mail stays in All Mail, where IMAP reads it.
+- Parked: sending attachments, HTML compose, delete-message, and threading UI —
+  see BACKLOG.
+
 ## 2026-08-20 — Field Work: individual-mode history, offline idempotency, shared-text conflicts
 
 Follow-up on the Field Work deep-audit findings — fixed the two big ones plus the shared-text
@@ -6451,3 +6509,66 @@ error persists, warn-and-skip (exit 0); genuine high/critical vulnerabilities st
 build. Network-error signatures matched: 503 / Service Unavailable / audit endpoint returned
 an error / ECONNRESET / ETIMEDOUT / EAI_AGAIN / ENOTFOUND / ENETUNREACH / socket hang up /
 Too Many Requests.
+
+## Split time punch: chained, mostly-derived segment times (2026-09-04)
+The Approval Queue "Split entry" editor (ApprovalQueue.jsx) now treats the segments as a
+contiguous chain over the original punch:
+- Every segment's START is disabled (derived): segment 1 = the punch start; each later start
+  = the previous segment's end.
+- The LAST segment's END is disabled (= the fixed punch-out).
+- Only the intermediate ends are editable; changing one flows into the next segment's start
+  (rechainSegments re-derives starts + pins the two fixed bounds after any change).
+- "Add segment" carves a new final segment out of the current last one (split at its
+  midpoint): the new last's end is the fixed punch-out (disabled) and the previously-last
+  segment's end becomes editable. Remove also re-chains.
+Stored the fixed punch bounds in splitBounds. Contiguity is now guaranteed by construction.
+Full verify green (server 1560, client build + i18n).
+
+## Approvals: per-entry Location history button (2026-09-04)
+Each pending entry in the Approval Queue now has a 📍 button (in the always-visible actions
+row, next to ✓/✕) that opens the existing LocationHistoryModal seeded to that entry's worker
+and work_date — showing the breadcrumb path + clock-in/out points for that shift. Reuses the
+`/admin/worker-locations` endpoint and the existing modal; new `locHistoryIconBtn` style,
+reused `t.aqLocationHistory`. (Recent/approved entries already had an equivalent "View on map";
+this brings the same to the pending queue on every row.)
+Full verify green (server 1560, client build + i18n).
+
+## Location History modal: worker-first, day/range/entry scopes (2026-09-04)
+Reworked the Approval Queue Location History popup per spec:
+- Requires picking a team member first (prompt until then).
+- From date (white) defaults to the worker's last day in the pending queue, else their most
+  recent worked day (new `?latest=1` branch on /admin/worker-locations). Dash + a gray To
+  box follow; a "All / <entries>" dropdown of that day's entries on the next line.
+- Three scopes: single day (default) → per-day first clock-in (green) + last clock-out (red)
+  + breadcrumb path; date range (set the To date → it turns white, dropdown hides) → same per
+  day; single entry (pick from dropdown → dash + To hide) → the entry's first/last recorded
+  location + path (one marker if only one location, none if none). Picking "All" returns to
+  day mode; clearing To returns from range to day.
+- /admin/worker-locations now returns ALL entries in range (not only located ones) so the
+  dropdown lists every entry; added the `latest` lookup. Test updated + latest case added.
+- Every per-entry 📍 (pending + recently-approved) now seeds { user_id, date, entry_id } →
+  opens straight into that entry (entry mode).
+Full verify green (server 1561, client build + i18n).
+
+## Revert always-on per-entry location button (2026-09-04)
+Removed the 📍 button that was added to every pending entry's actions row (+ its
+locHistoryIconBtn style). The pre-existing location affordances stay: the pending entry's
+expanded "View location" (only when clock coords exist) and the recently-approved
+"View on map". The reworked Location History modal is still reachable from the top button
+and the recently-approved button.
+Full verify green (server 1561, client build + i18n).
+
+## SEO: switch canonical host to bare opsfloa.com + noindex non-prod (2026-09-04)
+Search Console showed the main site "not indexed, page with redirect": the live domain
+redirects www → bare opsfloa.com, but the code declared www as canonical. Since the site
+redirects to bare, switched every SEO/marketing reference from www.opsfloa.com → opsfloa.com:
+client/index.html (canonical, alternate llms.txt, og:url, og:image, twitter:image, all 3
+JSON-LD url/logo), public/llms.txt, public/robots.txt (Sitemap:), public/sitemap.xml.
+Left two DEFENSIVE www refs intact (harmless post-redirect): server/index.js CORS allowlist
+and the SuperAdmin prod-host guard — both merely accept www; removing the CORS entry is the
+only change with any downside. (#3) Added a Vercel has-host header rule emitting
+`X-Robots-Tag: noindex, nofollow` on (dev|stage).opsfloa.com so non-prod can't be indexed;
+prod opsfloa.com is unaffected (preview *.vercel.app are auto-noindexed by Vercel). (#4) Landing
+is already lazy code-split with no heavy-lib imports — no change needed; measure real CWV via
+PageSpeed on the deploy, and the only bigger lever if needed is splitting i18n by language.
+After deploy: in Search Console, URL-inspect https://opsfloa.com/ and Request Indexing.

@@ -121,4 +121,4 @@ Disallow: /
 User-agent: Meta-ExternalAgent
 Disallow: /
 
-Sitemap: https://www.opsfloa.com/sitemap.xml
+Sitemap: https://opsfloa.com/sitemap.xml

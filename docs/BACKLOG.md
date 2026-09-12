@@ -658,6 +658,13 @@ that holds the exhaustive detail.
 
 ## ✨ Ideas — improvements
 
+- **Mail page (/mail) — parked follow-ups from the 2026-09-06 build.** Sending
+  attachments; HTML compose (currently plain text); delete/trash a message;
+  conversation-thread grouping in the list; unread counts in the folder sidebar;
+  a "move to folder" action directly from the list view (today it's only in the
+  open message). All in `server/routes/mailbox.js` /
+  `server/services/gmailMailbox.js` / `MailPage.jsx`. (2026-09-06)
+
 - **Project Daily — two follow-ups from the 2026-08-13 build.** (1) *Clock-in
   prompt gap:* the post-clock-in "start your day" prompt flags a project as startable
   only from its *per-project recurring* template — a project seeded purely by a

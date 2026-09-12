@@ -44,6 +44,13 @@ role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder
 `computeGuaranteeShortfall`) · `paidHours.js` (`computePaid`, `computeWorker/CompanyLeave`,
 `leaveRateMultipliers`, `loadSettings`) · `deductions.js` (`payStubTotals`).
 
+## Super-admin Mail page
+- `/mail` (super_admin only) — own interface over the Gmail account the opsfloa
+  addresses forward into. IMAP read via `server/services/gmailMailbox.js`
+  (per-address isolation via Gmail `deliveredto:`; folders = labels under
+  `OpsFloaMail/<localpart>/`), API `server/routes/mailbox.js`, UI
+  `client/src/pages/MailPage.jsx`. Sends via Resend. Env: `MAILBOX_*`.
+
 ## Settings
 - Defaults + coercion: `server/settingsDefaults.js` (`SETTINGS_DEFAULTS`, `ADMIN_SETTINGS_DEFAULTS`, `applySettingsRows`). Stored in the `settings` key/value table per company.
 - Read: `getSettings` (admin.js) / `loadSettings` (paidHours.js) — both apply defaults.
