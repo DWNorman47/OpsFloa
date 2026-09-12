@@ -4,10 +4,13 @@ import * as Sentry from '@sentry/react';
 import App from './App';
 import './index.css';
 import { SpeedInsights } from '@vercel/speed-insights/react';
+import { Analytics } from '@vercel/analytics/react';
 import ErrorBoundary from './components/ErrorBoundary';
 import { installGlobalErrorHandlers, silentError } from './errorReporter';
+import { redactAnalyticsEvent } from './analytics';
 
 const enableSpeedInsights = import.meta.env.PROD || import.meta.env.VITE_ENABLE_SPEED_INSIGHTS === 'true';
+const enableAnalytics = import.meta.env.PROD || import.meta.env.VITE_ENABLE_ANALYTICS === 'true';
 const enableServiceWorker = import.meta.env.PROD || import.meta.env.VITE_ENABLE_SERVICE_WORKER === 'true';
 
 // Absent DSN = Sentry is a no-op.
@@ -32,6 +35,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <App />
     </ErrorBoundary>
     {enableSpeedInsights && <SpeedInsights />}
+    {enableAnalytics && <Analytics beforeSend={redactAnalyticsEvent} />}
   </React.StrictMode>
 );
 
