@@ -58,8 +58,9 @@ export default function InstallPrompt() {
   useEffect(() => {
     setPlatform(getPlatform());
 
-    // Android Chrome fires this when installable
+    // Only defer the browser prompt when our Android install button can show it.
     const handler = e => {
+      if (getPlatform() !== 'android') return;
       e.preventDefault();
       setDeferredPrompt(e);
     };
