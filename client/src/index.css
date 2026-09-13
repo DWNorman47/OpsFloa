@@ -2305,6 +2305,7 @@ input, select, textarea {
   display: flex; align-items: center; gap: 10px; width: 100%;
   background: none; border: none; text-align: left; cursor: pointer;
   padding: 9px 10px; border-radius: 8px; font-size: 13.5px; font-weight: 600; color: #334155;
+  text-decoration: none;
 }
 .account-menu-item:hover { background: #f1f5f9; }
 .account-menu-item .ami-icon {

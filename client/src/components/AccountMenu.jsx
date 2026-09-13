@@ -83,6 +83,9 @@ export default function AccountMenu({ onOpenGuide }) {
           </div>
 
           <div className="account-menu-divider" />
+          <a href="/welcome" target="_blank" rel="noopener noreferrer" role="menuitem" className="account-menu-item" onClick={() => setOpen(false)}>
+            <span className="ami-icon" aria-hidden="true">↗</span>{t.viewWebsite || 'View website'}
+          </a>
           <button type="button" role="menuitem" className="account-menu-item" onClick={() => { setOpen(false); onOpenGuide?.(); }}>
             <span className="ami-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="15" height="15">

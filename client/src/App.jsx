@@ -172,6 +172,7 @@ function AppRoutes() {
       <Route path="/book/:companySlug" element={<PublicBookingPage />} />
       <Route path="/book/:companySlug/:typeSlug" element={<PublicBookingPage />} />
       <Route path="/book/manage/:token" element={<PublicBookingManagePage />} />
+      <Route path="/welcome" element={<Landing />} />
       <Route path="/team" element={<PrivateRoute moduleId="team"><TeamPage /></PrivateRoute>} />
       <Route path="/home" element={<PrivateRoute><HomePage /></PrivateRoute>} />
       <Route path="/__tests__" element={<Tests />} />
