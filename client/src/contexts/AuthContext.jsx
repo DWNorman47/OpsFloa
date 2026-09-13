@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../api';
 import { clearCache, clearPendingSyncs, currentOfflineScope } from '../offlineDb';
 import { safeSession, safeLocal } from '../utils/safeStorage';
+import { excludeProspectVisit } from '../prospectVisit';
 
 export const AuthContext = createContext(null);
 
@@ -53,6 +54,10 @@ export function AuthProvider({ children }) {
   });
   const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
+
+  useEffect(() => {
+    if (!loading && user) excludeProspectVisit();
+  }, [loading, user]);
 
   useEffect(() => {
     // sessionStorage takes precedence: impersonation tabs have their own

@@ -337,6 +337,26 @@ router.get('/client-errors', requireSuperAdmin, async (req, res) => {
 });
 
 // Milestones reached by companies that signed up within the selected window.
+router.get('/public-visits', requireSuperAdmin, async (req, res) => {
+  const days = String(req.query.days ?? '30');
+  if (!['30', '90', '365'].includes(days)) return res.status(400).json({ error: 'Invalid date range' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT first_seen, last_seen, landing_path, referrer_host, utm_source, utm_medium,
+              utm_campaign, device, viewed_pricing, clicked_register,
+              COUNT(*) OVER () AS total
+       FROM public_visits
+       WHERE first_seen >= NOW() - ($1::integer * INTERVAL '1 day')
+       ORDER BY first_seen DESC LIMIT 100`,
+      [Number(days)]
+    );
+    res.json({ total: Number(rows[0]?.total || 0), visits: rows.map(({ total, ...visit }) => visit) });
+  } catch (err) {
+    logger.error({ err }, 'public visits query failed');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/activation-funnel', requireSuperAdmin, async (req, res) => {
   const days = String(req.query.days ?? '30');
   if (!['30', '90', '365'].includes(days)) {

@@ -150,6 +150,7 @@ app.use('/api/auth', express.json({ limit: '256kb' }));
 app.use('/api/client-errors', express.json({ limit: '256kb' }));
 app.use('/api/sendgrid-events', express.json({ limit: '1mb' }));
 app.use('/api/public', express.json({ limit: '1mb' }));
+app.use('/api/public-visits', express.json({ limit: '2kb' }));
 // Company-shared takeoffs embed the whole plan PDF as base64 (≈+33%), so they
 // need a bigger body than the 20 MB app-wide cap. Runs first, so it wins.
 app.use('/api/takeoffs', express.json({ limit: '64mb' }));
@@ -218,6 +219,7 @@ app.use('/api', demoContextMiddleware);
 refreshDemoCompanies(); // prime the demo-company cache at startup
 
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/public-visits', require('./routes/publicVisits'));
 const projectsRouter = require('./routes/projects');
 app.use('/api/work', projectsRouter);        // renamed home for the core Work/Projects resource
 app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
@@ -455,6 +457,8 @@ app.listen(PORT, () => {
     startBidDueReminderJob();
     const { startMediaRetentionJob } = require('./jobs/mediaRetention');
     startMediaRetentionJob();
+    const { startPublicVisitRetentionJob } = require('./jobs/publicVisitRetention');
+    startPublicVisitRetentionJob();
     const { startScheduledReportsJob } = require('./jobs/scheduledReports');
     startScheduledReportsJob();
     const { startTranscriptionPollerJob } = require('./jobs/transcriptionPoller'); // AssemblyAI result sweep

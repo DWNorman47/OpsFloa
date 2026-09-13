@@ -21,6 +21,7 @@ export default function PrivacyPolicy() {
         <p style={styles.p}><strong>Usage data:</strong> Time entries, work assignments, clock-in/out records, GPS coordinates (when location features are used), and reports submitted through the app.</p>
         <p style={styles.p}><strong>Employee location:</strong> If your employer enables location features, we record your device's GPS coordinates at clock-in and clock-out to verify where work was performed — only at those moments, not continuously. Employers are responsible for notifying their workers about location collection and obtaining any consent required by local law.</p>
         <p style={styles.p}><strong>Device and browser data:</strong> IP address, browser type, and device identifiers for security and session management.</p>
+        <p style={styles.p}><strong>Public website visits:</strong> When an unsigned visitor opens our welcome page, we may record the visit time, referring website, campaign parameters, general device category, and whether the visitor viewed pricing or selected registration. We use a tab-session identifier to avoid duplicate records and remove the visit record if the visitor signs in or registers in that session. We do not store IP addresses or full referring URLs in these visit records; unidentified visits expire after 30 days.</p>
         <p style={styles.p}><strong>Payment information:</strong> Billing is processed by Stripe. We do not store your credit card numbers. We receive billing status and subscription metadata from Stripe.</p>
         <p style={styles.p}><strong>QuickBooks data:</strong> If you connect QuickBooks Online, we store OAuth tokens (encrypted) to sync time entries on your behalf. We only access the data necessary to push time activities.</p>
 
@@ -56,7 +57,7 @@ export default function PrivacyPolicy() {
         <p style={styles.p}>You may access, correct, or request deletion of your personal data by contacting us. If you are in the EU/EEA, you have additional rights under GDPR including portability and the right to object to processing.</p>
 
         <h2 style={styles.h2}>7. Cookies</h2>
-        <p style={styles.p}>We use essential session cookies and local storage tokens for authentication. We do not use advertising or tracking cookies.</p>
+        <p style={styles.p}>We use essential session cookies and local storage tokens for authentication. The public welcome page uses a tab-scoped session storage identifier for the visit records described above; it is cleared when the tab closes. We do not use advertising or tracking cookies.</p>
 
         <h2 style={styles.h2}>8. Children's Privacy</h2>
         <p style={styles.p}>OpsFloa is not directed at children under 13. We do not knowingly collect data from children.</p>

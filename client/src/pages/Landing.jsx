@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { recordWelcomeAction, recordWelcomeVisit } from '../prospectVisit';
 import { useDocumentMeta } from '../hooks/useDocumentMeta';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
@@ -106,6 +108,21 @@ function MiniDashboard({ t }) {
 
 export default function Landing() {
   const [openFaq, setOpenFaq] = useState(null);
+  const { user, loading } = useAuth();
+  useEffect(() => {
+    if (loading || user) return undefined;
+    recordWelcomeVisit();
+    const pricing = document.getElementById('pricing');
+    if (!pricing || !('IntersectionObserver' in window)) return undefined;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        recordWelcomeAction('pricing');
+        observer.disconnect();
+      }
+    }, { threshold: 0.15 });
+    observer.observe(pricing);
+    return () => observer.disconnect();
+  }, [loading, user]);
   const t = getT(detectLanguage());
   const workflows = buildWorkflows(t);
   const differences = buildDifferences(t);
@@ -139,7 +156,7 @@ export default function Landing() {
         </nav>
         <div className="landing-actions">
           <Link to="/login">{t.lpLogIn}</Link>
-          <Link to="/register" className="landing-btn landing-btn-small">{t.lpStartFree}</Link>
+          <Link to="/register" onClick={() => recordWelcomeAction('register')} className="landing-btn landing-btn-small">{t.lpStartFree}</Link>
         </div>
       </header>
 
@@ -163,7 +180,7 @@ export default function Landing() {
                 <span>{t.lpHeroProof3}</span>
               </div>
               <div className="landing-hero-buttons">
-                <Link to="/register" className="landing-btn">{t.lpHeroCtaPrimary}</Link>
+                <Link to="/register" onClick={() => recordWelcomeAction('register')} className="landing-btn">{t.lpHeroCtaPrimary}</Link>
                 <a href="#workflows" className="landing-ghost-btn">{t.lpHeroCtaSecondary}</a>
               </div>
               <p className="landing-trust">{t.lpHeroTrust}</p>
@@ -209,7 +226,7 @@ export default function Landing() {
             </div>
             <div className="landing-operator-copy">
               <p>{t.lpOperatorCopy}</p>
-              <Link to="/register" className="landing-inline-link">{t.lpOperatorLink}</Link>
+              <Link to="/register" onClick={() => recordWelcomeAction('register')} className="landing-inline-link">{t.lpOperatorLink}</Link>
             </div>
           </div>
         </section>
@@ -246,7 +263,7 @@ export default function Landing() {
                   <h3>{plan.name}</h3>
                   <div className="landing-price">{plan.price}<small>{t.lpPerMonth}</small></div>
                   <p>{plan.detail}</p>
-                  <Link to="/register" className={plan.featured ? 'landing-btn' : 'landing-ghost-btn dark'}>{t.lpStartFree}</Link>
+                  <Link to="/register" onClick={() => recordWelcomeAction('register')} className={plan.featured ? 'landing-btn' : 'landing-ghost-btn dark'}>{t.lpStartFree}</Link>
                 </article>
               ))}
             </div>
@@ -275,7 +292,7 @@ export default function Landing() {
           <div className="landing-shell landing-final-content">
             <p className="landing-kicker">OpsFloa</p>
             <h2>{t.lpFinalHeading}</h2>
-            <Link to="/register" className="landing-btn">{t.lpStartFree}</Link>
+            <Link to="/register" onClick={() => recordWelcomeAction('register')} className="landing-btn">{t.lpStartFree}</Link>
           </div>
         </section>
       </main>

@@ -6,6 +6,7 @@ import { useT } from '../hooks/useT';
 import api from '../api';
 import LegalFooter from '../components/LegalFooter';
 import { safeLocal } from '../utils/safeStorage';
+import { excludeProspectVisit } from '../prospectVisit';
 
 export default function Register() {
   const { loginWithToken } = useAuth();
@@ -42,6 +43,7 @@ export default function Register() {
     const full_name = [form.first_name, form.middle_name, form.last_name].filter(Boolean).join(' ');
     try {
       const r = await api.post('/auth/register', { ...form, full_name, accepted_terms: accepted, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, { suppressToast: true });
+      excludeProspectVisit();
       if (r.data.pending_confirmation) { setConfirming(r.data.email); return; }
       await loginWithToken(r.data.token);
       try { const saved = JSON.parse(safeLocal.getItem('tc_companies') || '[]'); safeLocal.setItem('tc_companies', JSON.stringify([form.company_name.trim(), ...saved.filter(c => c.toLowerCase() !== form.company_name.trim().toLowerCase())])); } catch {}

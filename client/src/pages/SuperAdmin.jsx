@@ -89,6 +89,10 @@ export default function SuperAdmin() {
   const [funnel, setFunnel] = useState(null);
   const [funnelLoading, setFunnelLoading] = useState(false);
   const [funnelError, setFunnelError] = useState('');
+  const [visitDays, setVisitDays] = useState(30);
+  const [visitData, setVisitData] = useState(null);
+  const [visitLoading, setVisitLoading] = useState(false);
+  const [visitError, setVisitError] = useState('');
 
   // ── Companies state ──
   const [companies, setCompanies]   = useState([]);
@@ -209,6 +213,19 @@ export default function SuperAdmin() {
       .finally(() => { if (active) setFunnelLoading(false); });
     return () => { active = false; };
   }, [tab, funnelDays]);
+
+  useEffect(() => {
+    if (tab !== 'activation') return undefined;
+    let active = true;
+    setVisitData(null);
+    setVisitLoading(true);
+    setVisitError('');
+    api.get('/superadmin/public-visits', { params: { days: visitDays } })
+      .then(r => { if (active) setVisitData(r.data); })
+      .catch(e => { if (active) setVisitError(e.response?.data?.error || 'Could not load visits'); })
+      .finally(() => { if (active) setVisitLoading(false); });
+    return () => { active = false; };
+  }, [tab, visitDays]);
 
   const resetDemoWorkspace = async () => {
     setDemoWorking(true);
@@ -495,7 +512,38 @@ export default function SuperAdmin() {
           </button>
         </div>
 
-        {tab === 'activation' && (
+        {tab === 'activation' && <>
+          <section style={{ ...styles.funnelSection, marginBottom: 20 }}>
+            <div style={styles.funnelHeader}>
+              <h2 style={styles.title}>Unidentified welcome visits</h2>
+              <div role="group" aria-label="Visit period" style={styles.funnelRanges}>
+                {[7, 30].map(days => (
+                  <button key={days} type="button" aria-pressed={visitDays === days}
+                    style={{ ...styles.funnelRange, ...(visitDays === days ? styles.funnelRangeActive : {}) }}
+                    onClick={() => setVisitDays(days)}>{days} days</button>
+                ))}
+              </div>
+            </div>
+            <p style={styles.funnelNote}>Anonymous tab sessions on the welcome page. Sign-ins and registrations in the same session are removed. Existing customers on another browser may still appear; visit records contain no names or IP addresses. Records expire after 30 days.</p>
+            {visitLoading && <p role="status" style={styles.funnelNote}>Loading visits...</p>}
+            {visitError && <p role="alert" style={styles.deleteErrorBox}>{visitError}</p>}
+            {!visitLoading && visitData && <>
+              <p style={styles.funnelNote}><strong>{visitData.total.toLocaleString(locale)}</strong> visits{visitData.total > 100 ? ' (latest 100 shown)' : ''}</p>
+              <div style={styles.funnelList}>
+                {visitData.visits.map((visit, index) => (
+                  <div key={`${visit.first_seen}-${index}`} style={styles.funnelRow}>
+                    <div style={styles.funnelRowTop}>
+                      <strong>{visit.utm_source || visit.referrer_host || 'Direct / unknown'}</strong>
+                      <time dateTime={visit.first_seen}>{new Date(visit.first_seen).toLocaleString(locale)}</time>
+                    </div>
+                    <span style={styles.funnelPercent}>
+                      {[visit.utm_medium, visit.utm_campaign, visit.device, visit.viewed_pricing && 'Viewed pricing', visit.clicked_register && 'Selected registration'].filter(Boolean).join(' · ') || 'Welcome page only'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>}
+          </section>
           <section style={styles.funnelSection}>
             <div style={styles.funnelHeader}>
               <h2 style={styles.title}>Signup activation</h2>
@@ -536,9 +584,9 @@ export default function SuperAdmin() {
                 })}
               </div>
             )}
-            <p style={styles.funnelFooter}>Website visits are tracked separately in Vercel Web Analytics.</p>
+            <p style={styles.funnelFooter}>All website traffic remains available in Vercel Web Analytics.</p>
           </section>
-        )}
+        </>}
 
         {/* ── Demo Workspace tab ── */}
         {tab === 'demo' && (
