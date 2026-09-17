@@ -1,5 +1,15 @@
 # OpsFloa — Claude Instructions
 
+## Restoring Claude's memory (read this FIRST on a new machine)
+- Long-term memory (David's preferences, past feedback, project decisions) is
+  backed up in the repo at **`docs/claude-memory/`** but the *live* memory lives
+  outside the repo under `~/.claude/projects/<hash>/memory/`.
+- **If your loaded memory index (`MEMORY.md`) is empty or missing** — i.e. this is
+  a fresh checkout/machine — the backup has NOT been restored yet. Restore it:
+  follow **`docs/claude-memory/README.md`** (copy every `*.md` except `README.md`
+  into the live memory folder), then you'll have the full context. Offer to do
+  this for David proactively; don't make him remember the steps.
+
 ## Branching Rules
 - **Always work on the `dev` branch.** Never commit or push directly to `main`.
 - All changes go to `dev` first. Merges to `main` are done by the user via pull request.
