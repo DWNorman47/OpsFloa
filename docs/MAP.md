@@ -34,17 +34,20 @@ engine, not here:
 | Overtime report | `admin.js` `GET /overtime-report` → `OvertimeReport.jsx` | `companyStatements` |
 | Payroll CSV | `admin.js` `GET /payroll-export` | `companyStatements` |
 | Pay stubs | `timeEntries.js` `GET /pay-stubs` → `PayStubView.jsx` | `workerPeriodStatements` |
-`GET /export/worker-hours` (admin.js) is a lean hours-only export; it shares the OT
-engine (`computeOT` + role tiered config) but not the full statement.
+`GET /export/worker-hours` (admin.js) is a lean hours-only export built from
+`companyStatements` (same full-week loading + OT overrides as payroll), no pay columns.
 
-**Rates are effective-dated** (migration 0209): `utils/rateHistory.js` is the resolver
+**Rates are effective-dated** (migrations 0209, 0210): `utils/rateHistory.js` is the resolver
 (rate for an entry = history row with the greatest `effective_date <= work_date`; own rate
-0/missing → company default that day) + `loadRateBook` (batched, one query per history).
-Loaders pass `rateBook` to `buildPayStatement`; `laborCostCents` takes `opts.rateBook`
-(`loadRateBookForLaborRows`). `users.hourly_rate/rate_type`, `projects.prevailing_wage_rate`,
-setting `default_hourly_rate` are only the CURRENT-rate cache. Writes: `utils/rateHistoryStore.js`
-(baseline, locked-period check, cache refresh) · API `routes/rateHistory.js` · hourly cache
-job `jobs/rateCacheRefresh.js` · UI `client/src/components/RateHistory.jsx`.
+0/missing → company default that day; prevailing entry on a project with no rate → the company
+prevailing fallback that day, `companyPrevailingRateOn`) + `loadRateBook` (batched, one query per
+history — four histories). Loaders pass `rateBook` to `buildPayStatement`; `laborCostCents` takes
+`opts.rateBook` + `opts.dayContext` (use `loadLaborCostOpts` — a daily-rate day shared across
+projects is costed once, split by hours). `users.hourly_rate/rate_type`, `projects.prevailing_wage_rate`,
+settings `default_hourly_rate` / `prevailing_wage_rate` are only the CURRENT-rate cache. Writes:
+`utils/rateHistoryStore.js` (baseline, locked-period check — widened to whole pay weeks, and back to
+1900 when a row is/becomes the earliest — cache refresh, `companyToday`) · API `routes/rateHistory.js` ·
+hourly cache job `jobs/rateCacheRefresh.js` · UI `client/src/components/RateHistory.jsx`.
 
 **Engine internals** (`server/utils/`): `hoursRules.js` (the policy: parse, rounding,
 role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder's

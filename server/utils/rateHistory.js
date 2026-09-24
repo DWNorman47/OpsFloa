@@ -1,12 +1,14 @@
 const pool = require('../db');
+const { normWeekStart } = require('./weekBounds');
 
 /**
  * Effective-dated pay rates — the ONE place that answers "what rate did this
  * entry earn?" (migration 0209).
  *
- * Three histories: a worker's own rate + rate type (worker_rate_history), a
- * project's prevailing rate (project_prevailing_rate_history) and the company
- * default rate (company_default_rate_history).
+ * Four histories: a worker's own rate + rate type (worker_rate_history), a
+ * project's prevailing rate (project_prevailing_rate_history), the company
+ * default rate (company_default_rate_history) and the company prevailing-wage
+ * fallback (company_prevailing_rate_history, 0210).
  *
  * RESOLUTION RULE: the rate for a date is the history row with the greatest
  * effective_date <= that date. A change dated on the entry's own work_date
@@ -72,7 +74,7 @@ function rowInEffect(sortedRows, date) {
 }
 
 /** Build the in-memory book from raw rows (any order). Keys are stringified ids. */
-function makeRateBook({ workerRows = [], projectRows = [], defaultRows = [] } = {}) {
+function makeRateBook({ workerRows = [], projectRows = [], defaultRows = [], prevailingDefaultRows = [] } = {}) {
   const group = (rows, key) => {
     const m = new Map();
     for (const r of rows || []) {
@@ -87,7 +89,21 @@ function makeRateBook({ workerRows = [], projectRows = [], defaultRows = [] } = 
     workers: group(workerRows, 'user_id'),
     projects: group(projectRows, 'project_id'),
     defaults: sortRows(defaultRows),
+    // Company prevailing-wage fallback (company_prevailing_rate_history, 0210).
+    prevailingDefaults: sortRows(prevailingDefaultRows),
   };
+}
+
+/**
+ * The company prevailing-wage fallback on `date` (what a prevailing entry earns
+ * when its project has no prevailing rate of its own). No history →
+ * settings.prevailing_wage_rate (the current-rate cache, i.e. the old behaviour).
+ * Returns the raw number (may be 0/null); the engine applies its own default.
+ */
+function companyPrevailingRateOn(book, date, settings = {}) {
+  const row = book && book.prevailingDefaults ? rowInEffect(book.prevailingDefaults, date) : null;
+  if (row) return num(row.rate);
+  return num(settings && settings.prevailing_wage_rate);
 }
 
 /** Company default rate on `date`; no history → settings.default_hourly_rate. */
@@ -132,15 +148,41 @@ function prevailingRateOn(book, projectId, date, fallbackMap = {}) {
  * The date span a history row governs: [effective_date, next row's date − 1],
  * `to` null = open-ended. Used to find locked pay periods a change reaches.
  * `rows` are the OTHER rows of the same history (sorted or not).
+ *
+ * A row that is (or, once added, becomes) the EARLIEST row also governs every
+ * date before it (rowInEffect's earliest-row rule), so its span starts at
+ * FAR_PAST: adding a row before every other row, or deleting the earliest one,
+ * re-prices those earlier dates too.
  */
 function governedSpan(rows, effectiveDate) {
   const d = dayKey(effectiveDate);
-  const later = sortRows(rows).map(r => r.effective_date).filter(x => x > d);
-  if (!later.length) return { from: d, to: null };
-  const next = later[0];
-  const m = next.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const prev = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]) - 86400000).toISOString().substring(0, 10);
-  return { from: d, to: prev };
+  const dates = sortRows(rows).map(r => r.effective_date);
+  const from = dates.some(x => x < d) ? d : FAR_PAST;
+  const later = dates.filter(x => x > d);
+  if (!later.length) return { from, to: null };
+  return { from, to: shiftDay(later[0], -1) };
+}
+
+// 'YYYY-MM-DD' ± k days (UTC, TZ-independent).
+function shiftDay(dk, k) {
+  const m = String(dk).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return dk;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]) + k * 86400000).toISOString().substring(0, 10);
+}
+
+/**
+ * Widen a span to whole week_start-aligned weeks. Weekly OT (and the weighted-
+ * average regular rate) is a whole-week fact: a locked period that ends mid-week
+ * is priced with the rest of that week as context, so a rate change later in the
+ * SAME week still changes the locked period's pay. `to` null stays open-ended.
+ */
+function widenSpanToWeeks(span, weekStart = 1) {
+  if (!span || !span.from) return span;
+  const ws = normWeekStart(weekStart);
+  const dow = dk => { const m = dk.match(/^(\d{4})-(\d{2})-(\d{2})$/); return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay(); };
+  const from = span.from <= FAR_PAST ? span.from : shiftDay(span.from, -((dow(span.from) - ws + 7) % 7));
+  const to = span.to == null ? null : shiftDay(span.to, 6 - ((dow(span.to) - ws + 7) % 7));
+  return { from, to };
 }
 
 /**
@@ -191,7 +233,7 @@ async function loadRateBook({ companyId, userIds = null, projectIds = null, to =
   const toKey = dayKey(to);
   const uids = Array.isArray(userIds) ? [...new Set(userIds.filter(x => x != null).map(Number))] : null;
   const pids = Array.isArray(projectIds) ? [...new Set(projectIds.filter(x => x != null).map(Number))] : null;
-  const [w, p, d] = await Promise.all([
+  const [w, p, d, pd] = await Promise.all([
     uids && uids.length === 0 ? { rows: [] } : db.query(
       `SELECT user_id, hourly_rate, rate_type, to_char(effective_date, 'YYYY-MM-DD') AS effective_date
          FROM worker_rate_history
@@ -217,8 +259,18 @@ async function loadRateBook({ companyId, userIds = null, projectIds = null, to =
         ORDER BY effective_date`,
       [companyId, toKey]
     ),
+    db.query(
+      `SELECT rate, to_char(effective_date, 'YYYY-MM-DD') AS effective_date
+         FROM company_prevailing_rate_history
+        WHERE company_id = $1 AND ($2::date IS NULL OR effective_date <= $2::date)
+        ORDER BY effective_date`,
+      [companyId, toKey]
+    ),
   ]);
-  return makeRateBook({ workerRows: (w && w.rows) || [], projectRows: (p && p.rows) || [], defaultRows: (d && d.rows) || [] });
+  return makeRateBook({
+    workerRows: (w && w.rows) || [], projectRows: (p && p.rows) || [], defaultRows: (d && d.rows) || [],
+    prevailingDefaultRows: (pd && pd.rows) || [],
+  });
 }
 
 /** loadRateBook for a set of entry rows (user_id / project_id / work_date). */
@@ -252,7 +304,10 @@ module.exports = {
   defaultRateOn,
   workerRateOn,
   prevailingRateOn,
+  companyPrevailingRateOn,
   governedSpan,
+  widenSpanToWeeks,
+  shiftDay,
   lockedPeriodsInSpan,
   isValidDate,
   blendRate,

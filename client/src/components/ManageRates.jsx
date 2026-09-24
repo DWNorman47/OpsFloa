@@ -178,6 +178,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
   // Company default rate is effective-dated: a changed default applies from this
   // date (default today; untouched → the server's company-local today).
   const [defaultEff, setDefaultEff] = useState({ date: localToday(), touched: false });
+  // The company prevailing fallback is effective-dated too (0210).
+  const [prevailingEff, setPrevailingEff] = useState({ date: localToday(), touched: false });
   const [rateHistoryKey, setRateHistoryKey] = useState(0);
   const { confirm: confirmLocked, dialog: lockedDialog } = useConfirm();
   const [error, setError] = useState('');
@@ -271,8 +273,10 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     setSaving(section); setError('');
     try {
       const defaultChanged = parseFloat(form.default_hourly_rate) !== parseFloat(settings?.default_hourly_rate);
+      const prevailingChanged = parseFloat(form.prevailing_wage_rate) !== parseFloat(settings?.prevailing_wage_rate);
       const payload = {
         ...(defaultChanged && defaultEff.touched && defaultEff.date ? { default_rate_effective_date: defaultEff.date } : {}),
+        ...(prevailingChanged && prevailingEff.touched && prevailingEff.date ? { prevailing_rate_effective_date: prevailingEff.date } : {}),
         prevailing_wage_rate: parseFloat(form.prevailing_wage_rate),
         default_hourly_rate: parseFloat(form.default_hourly_rate),
         labor_burden_pct: parseFloat(form.labor_burden_pct) || 0,
@@ -351,11 +355,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         report_monthly_valuation: form.report_monthly_valuation,
       };
       // A default-rate change backdated into LOCKED pay periods → 409 → confirm → resend.
-      const r = await withLockedConfirm(c => api.patch('/admin/settings', { ...payload, confirm_locked: c }), confirmLocked, t);
+      const r = await withLockedConfirm((c, opts) => api.patch('/admin/settings', { ...payload, confirm_locked: c }, opts), confirmLocked, t);
       if (!r) return; // cancelled at the locked-period confirm
       onSettingsUpdated(r.data);
       setRateHistoryKey(k => k + 1);
       setDefaultEff({ date: localToday(), touched: false });
+      setPrevailingEff({ date: localToday(), touched: false });
       // Bust the worker-facing settings cache so gating toggles (Project
       // Integration, modules, etc.) take effect on the next request instead of
       // the next TTL window.
@@ -974,6 +979,29 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
                 </div>
             }
           </div>
+          {prevailingEnabled && parseFloat(form.prevailing_wage_rate) !== parseFloat(settings?.prevailing_wage_rate) && (
+            <div style={styles.row}>
+              <EffectiveDateField
+                id="rates-prevailing-eff"
+                value={prevailingEff.date}
+                today={localToday()}
+                onChange={v => setPrevailingEff({ date: v, touched: true })}
+                style={{ maxWidth: 340 }}
+              />
+            </div>
+          )}
+          {prevailingEnabled && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginTop: 8 }}>{t.ratesPrevailingHistoryLabel}</div>
+              <RateHistory
+                kind="company_prevailing"
+                ownerId={null}
+                currency={form.currency}
+                reloadKey={rateHistoryKey}
+                onChanged={cur => { if (cur) { onSettingsUpdated({ ...settings, prevailing_wage_rate: cur.rate }); set('prevailing_wage_rate', String(cur.rate)); } }}
+              />
+            </div>
+          )}
           <div style={styles.row}>
             <label style={styles.label}>{t.ratesDefaultWage}</label>
             <div style={styles.inputGroup}>

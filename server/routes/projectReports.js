@@ -10,8 +10,7 @@ const {
   requireFinancialReportsAccess,
 } = require('../middleware/financialAccess');
 const { csvCell } = require('../utils/csv');
-const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
-const { loadRateBookForLaborRows } = require('../utils/rateHistory');
+const { loadSettings, laborCostCents, loadLaborCostOpts, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
 const { equipmentUsageCents, manualExpensesByStatus, materialsCents, sumMap } = require('../utils/projectCost');
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -133,7 +132,7 @@ async function spendTotals(projectId, settings) {
           AND te.end_time IS NOT NULL`,
       [projectId]
     );
-    labor = laborCostCents(r.rows, settings, { includeBurden: true, rateBook: await loadRateBookForLaborRows(r.rows) });
+    labor = laborCostCents(r.rows, settings, { includeBurden: true, ...(await loadLaborCostOpts(r.rows, settings, { includePending: true })) });
   } catch { /* time_entries shape may differ */ }
   // Manual expenses, split actual (spent) vs planned (committed forecast).
   try {
@@ -270,9 +269,10 @@ async function loadPortfolioFinancials(projectIds, companyId, settings) {
   const subsPaidMap = byProject(subsPaidRows);
   const subsCommittedMap = byProject(subsCommittedRows);
   const laborByProject = new Map();
-  // One effective-dated rate book for every project's labor rows (batched).
-  let laborRateBook = null;
-  try { laborRateBook = laborRows && laborRows.length ? await loadRateBookForLaborRows(laborRows) : null; } catch { laborRateBook = null; }
+  // One effective-dated rate book + daily-rate day context for every project's
+  // labor rows (batched: one query each, shared by every project below).
+  let laborOpts = { rateBook: null, dayContext: [] };
+  try { if (laborRows && laborRows.length) laborOpts = await loadLaborCostOpts(laborRows, settings, { includePending: true }); } catch { laborOpts = { rateBook: null, dayContext: [] }; }
   for (const r of laborRows || []) {
     const k = String(r.project_id);
     if (!laborByProject.has(k)) laborByProject.set(k, []);
@@ -294,7 +294,7 @@ async function loadPortfolioFinancials(projectIds, companyId, settings) {
     // exactly as spendTotals calls it (OT is computed within one project's rows).
     let labor = 0;
     if (laborRows) {
-      try { labor = laborCostCents(laborByProject.get(k) || [], settings, { includeBurden: true, rateBook: laborRateBook }); } catch { labor = 0; }
+      try { labor = laborCostCents(laborByProject.get(k) || [], settings, { includeBurden: true, ...laborOpts }); } catch { labor = 0; }
     }
     let manualExpenses = 0, manualCommitted = 0;
     try {

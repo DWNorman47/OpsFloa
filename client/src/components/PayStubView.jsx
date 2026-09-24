@@ -59,7 +59,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
   // that day, so list the rates instead of one "× rate" that wouldn't reconcile.
   const rateChanges = Array.isArray(rate_changes) && rate_changes.length > 1 ? rate_changes : null;
   const regularPayLabel = rateChanges
-    ? `${t.regularPay} (${rateChanges.map(c => `${fmtMoney(c.rate)}${c.rateType === 'daily' ? t.rhPerDay : '/hr'} ${t.rhFromShort} ${c.from}`).join(' → ')})`
+    ? `${t.regularPay} (${rateChanges.map(c => `${fmtMoney(c.rate)}${c.rateType === 'daily' ? t.rhPerDay : t.rhPerHour} ${t.rhFromShort} ${c.from}`).join(' → ')})`
     : isDaily
     // Days-form when regular pay is purely worked days × rate; plain label when it also
     // includes guaranteed extra hours (priced at daily ÷ 8), so "/hr" is never shown for a daily worker.
@@ -67,7 +67,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
         ? (t.regularPayDaily || 'Regular Pay ({days} days × {rate}/day)')
             .replace('{days}', regular_days).replace('{rate}', fmtMoney(workerRate))
         : t.regularPay)
-    : `${t.regularPay} (${fmtMoney(workerRate)}/hr)`;
+    : `${t.regularPay} (${fmtMoney(workerRate)}${t.rhPerHour})`;
   const totalHours = regular_hours + overtime_hours + prevailing_hours;
   const overtimeEnabled = settings?.feature_overtime !== false;
   const hasDeductions = Array.isArray(deductions) && deductions.length > 0;
@@ -248,7 +248,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                   )}
                   {prevailing_hours > 0 && prevailing_cost > 0 && (
                     <div style={s.sumRow}>
-                      <span>{t.prevailingPay} ({fmtMoney(prevRate)}/hr)</span>
+                      <span>{t.prevailingPay} ({fmtMoney(prevRate)}{t.rhPerHour})</span>
                       <span>{fmtMoney(prevailing_cost)}</span>
                     </div>
                   )}
@@ -260,7 +260,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                   )}
                   {guarantee_shortfall_hours > 0 && guarantee_cost > 0 && (
                     <div style={{ ...s.sumRow, color: '#2563eb' }}>
-                      <span>{t.minimumGuaranteePay.replace('{hours}', fmtH(guarantee_shortfall_hours)).replace('{rate}', `${fmtMoney(guaranteeRate)}/hr`)}</span>
+                      <span>{t.minimumGuaranteePay.replace('{hours}', fmtH(guarantee_shortfall_hours)).replace('{rate}', `${fmtMoney(guaranteeRate)}${t.rhPerHour}`)}</span>
                       <span>{fmtMoney(guarantee_cost)}</span>
                     </div>
                   )}

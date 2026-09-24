@@ -240,9 +240,17 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
   // `leaveByDate` maps every YMD → paid-leave hours that day (sick + vacation),
   // always and cheaply, so a no-clock-in daily guarantee only tops the day UP TO its
   // floor counting the leave already paid — never double-paying it. See computeOT.
-  const totals = { sick: 0, vacation: 0, leaveByDate: new Map() };
+  // `sickByDate` / `vacationByDate` split the same hours by type, so the pay engine
+  // prices sick and vacation each at the rate of their OWN days (they can carry
+  // different pay % and fall on either side of a raise).
+  const totals = { sick: 0, vacation: 0, leaveByDate: new Map(), sickByDate: new Map(), vacationByDate: new Map() };
   if (!from || !to) return totals;
-  const addLeaveDay = (dk, h) => { if (dk != null) totals.leaveByDate.set(dk, (totals.leaveByDate.get(dk) || 0) + h); };
+  const addLeaveDay = (dk, h, type) => {
+    if (dk == null) return;
+    totals.leaveByDate.set(dk, (totals.leaveByDate.get(dk) || 0) + h);
+    const m = type === 'vacation' ? totals.vacationByDate : totals.sickByDate;
+    m.set(dk, (m.get(dk) || 0) + h);
+  };
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
   const rules = Array.isArray(leaveRules) ? leaveRules : [];
   const def = parseFloat(regularShiftHours) || 0;
@@ -269,7 +277,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
-      addLeaveDay(anchor, h);
+      addLeaveDay(anchor, h, type);
       if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
       continue;
     }
@@ -280,7 +288,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       seen[type].add(dk);
       const v = dayValue(dk, type);
       totals[type] += v.hours;
-      addLeaveDay(dk, v.hours);
+      addLeaveDay(dk, v.hours, type);
       if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
     }
   }

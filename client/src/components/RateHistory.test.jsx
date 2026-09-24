@@ -21,7 +21,7 @@ describe('withLockedConfirm', () => {
     const send = vi.fn().mockResolvedValue({ data: 1 });
     const confirm = vi.fn();
     await expect(withLockedConfirm(send, confirm, T)).resolves.toEqual({ data: 1 });
-    expect(send).toHaveBeenCalledWith(false);
+    expect(send).toHaveBeenCalledWith(false, { suppressToast: true }); // no red toast behind the confirm
     expect(confirm).not.toHaveBeenCalled();
   });
   test('409 locked_periods → asks, names the periods, resends with confirm_locked', async () => {
@@ -76,7 +76,7 @@ describe('<RateHistory>', () => {
     fireEvent.change(screen.getByLabelText('rhEffectiveFrom'), { target: { value: '2026-09-01' } });
     fireEvent.click(screen.getByText('rhAdd'));
     await waitFor(() => expect(api.post).toHaveBeenCalled());
-    expect(api.post).toHaveBeenCalledWith('/admin/projects/30/prevailing-rate-history', expect.objectContaining({ rate: 50, effective_date: '2026-09-01', confirm_locked: false }));
+    expect(api.post).toHaveBeenCalledWith('/admin/projects/30/prevailing-rate-history', expect.objectContaining({ rate: 50, effective_date: '2026-09-01', confirm_locked: false }), { suppressToast: true });
     await waitFor(() => expect(onChanged).toHaveBeenCalledWith({ rate: 50 }));
   });
 });

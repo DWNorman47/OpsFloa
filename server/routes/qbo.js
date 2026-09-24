@@ -7,12 +7,13 @@ const { requireAuth, requireAdmin, requirePerm } = require('../middleware/auth')
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
 const { USER_WORKER_TYPES } = require('../constants/userEnums');
+const { QBO_BILL_RANGE_PAY_KINDS } = require('../constants/qboEnums');
 // Every punch this file bills or syncs is the PAID punch (hours-rules rounding),
 // and every labor dollar on a bill comes from the pay engine (buildPayStatement),
 // so OpsFloa's own pay surfaces and QuickBooks can't disagree about the same day.
-const { loadSettings, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
-const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
-const { entryDuration } = require('../utils/payCalculations');
+const { loadSettings, otRuleFromSettings, otThreshold, leaveRateMultipliers } = require('../utils/paidHours');
+const { roundEntriesFromSettings, otConfigFromSettings, sickRulesFromSettings } = require('../utils/hoursRules');
+const { entryDuration, computeLeaveHours, shiftHoursByDate } = require('../utils/payCalculations');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { companyStatements, buildPayStatement } = require('../utils/payStatement');
 const { loadRateBookForEntries, workerRateOn } = require('../utils/rateHistory');
@@ -802,19 +803,39 @@ router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), 
 // leave) as their own lines. The OT line is the remainder that makes the bill
 // equal the statement to the cent.
 //
+// A bill is INCREMENTAL. Worked pay (straight time, OT, night) bills
+//   statement(already-billed + new in-range rows) − statement(already-billed rows)
+// so a late approval gets the OT / day-rate its week and day really earned: a
+// late Saturday after a billed 40h week is all overtime, and a second entry on a
+// daily-rate day that was already billed adds no second day rate. (Before, the
+// already-billed rows were dropped entirely — not even week context.)
+//
 // Range-level pay (floors, weekly guarantee, leave) isn't tied to one entry, so
-// it's billed only on the FIRST bill for a worker+range (nothing in range billed
-// yet) or a forced re-push — a re-push after late approvals bills only the new
-// entries, and can't bill a guarantee twice.
+// it's ledgered in qbo_bill_range_pay (0211) per worker + kind + date (the
+// week's start for the guarantee): each bill posts current − already billed and
+// records the new amount. Leave and floors bill for the days in [from,to]; a
+// week's guarantee bills on the bill whose range holds the week's LAST day
+// (priced over the whole week). Before, this was billed only on the "first bill
+// for a worker+range" heuristic: Sep 1–15 then Sep 1–30 never billed Sep 16–30,
+// and Sep 1–7 then Sep 3–14 billed Sep 3–7 again. A forced re-push re-bills the
+// full current amounts.
 
 const toCents = n => Math.round((Number(n) || 0) * 100);
 const RANGE_LEVEL_KINDS = new Set(['weekly_guarantee', 'sick', 'vacation']);
 const NO_LEAVE = { sick: 0, vacation: 0 };
+const copyRow = e => ({ ...e });
 
 function isoDate(d) {
   if (!d) return null;
   if (typeof d === 'string') return d.substring(0, 10);
   try { return d.toISOString().substring(0, 10); } catch { return String(d).substring(0, 10); }
+}
+
+// 'YYYY-MM-DD' ± n days (UTC arithmetic on a date string — no DST drift).
+function addDaysYmd(s, n) {
+  const d = new Date(`${s}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().substring(0, 10);
 }
 
 // The week_start-aligned full weeks touching [from,to], so weekly OT sees the
@@ -828,6 +849,72 @@ function billWeekSpan(from, to, weekStart) {
 
 function badRange(from, to) {
   return (from && !isValidIsoDate(from)) || (to && !isValidIsoDate(to)) || (from && to && from > to);
+}
+
+// Paid leave per worker per day over [from,to]: Map(userId → Map(date → {sick, vacation})).
+// Same valuation as computeCompanyLeave (schedule → leave rule → regular shift,
+// partial requests on their start date), kept per day so the bill can ledger it.
+async function loadLeaveDays(companyId, workers, settings, from, to) {
+  const out = new Map();
+  if (!from || !to || !workers.length) return out;
+  const ids = workers.map(w => w.id);
+  const [reqs, shifts] = await Promise.all([
+    pool.query(
+      `SELECT user_id, type, hours, start_date, end_date FROM time_off_requests
+        WHERE company_id = $1 AND type IN ('sick','vacation') AND status = 'approved'
+          AND start_date <= $3::date AND end_date >= $2::date AND user_id = ANY($4::int[])`,
+      [companyId, from, to, ids]
+    ),
+    pool.query(
+      `SELECT user_id, shift_date, start_time, end_time FROM shifts
+        WHERE company_id = $1 AND shift_date >= $2::date AND shift_date <= $3::date AND user_id = ANY($4::int[])`,
+      [companyId, from, to, ids]
+    ),
+  ]);
+  for (const w of workers) {
+    const detail = [];
+    computeLeaveHours(
+      (reqs.rows || []).filter(r => r.user_id === w.id),
+      shiftHoursByDate((shifts.rows || []).filter(s => s.user_id === w.id)),
+      sickRulesFromSettings(settings, w.role_id ?? null, w.id),
+      settings.regular_shift_hours, from, to, detail
+    );
+    const days = new Map();
+    for (const d of detail) {
+      const v = days.get(d.date) || { sick: 0, vacation: 0 };
+      v[d.type === 'vacation' ? 'vacation' : 'sick'] += parseFloat(d.hours) || 0;
+      days.set(d.date, v);
+    }
+    out.set(w.id, days);
+  }
+  return out;
+}
+
+// { sick, vacation, leaveByDate } for the leave days inside [a,b].
+function leaveBetween(days, a, b) {
+  const out = { sick: 0, vacation: 0, leaveByDate: new Map() };
+  for (const [d, v] of days || []) {
+    if (d < a || d > b) continue;
+    out.sick += v.sick; out.vacation += v.vacation;
+    out.leaveByDate.set(d, v.sick + v.vacation);
+  }
+  return out;
+}
+
+// What range-level pay is already on a bill: Map('uid|kind|date' → {amountC, hours}).
+async function loadRangePayLedger(companyId, userIds, from, to) {
+  const out = new Map();
+  if (!userIds.length || !from || !to) return out;
+  const r = await pool.query(
+    `SELECT user_id, kind, to_char(pay_date, 'YYYY-MM-DD') AS pay_date, amount_cents, hours
+       FROM qbo_bill_range_pay
+      WHERE company_id = $1 AND user_id = ANY($2::int[]) AND pay_date >= $3::date AND pay_date <= $4::date`,
+    [companyId, userIds, from, to]
+  );
+  for (const row of r.rows || []) {
+    out.set(`${row.user_id}|${row.kind}|${isoDate(row.pay_date)}`, { amountC: Number(row.amount_cents) || 0, hours: parseFloat(row.hours) || 0 });
+  }
+  return out;
 }
 
 async function gatherBillData(companyId, { from, to, workerIds, force }, settings) {
@@ -894,12 +981,13 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     if (!byUser.has(uid)) {
       byUser.set(uid, {
         userId: uid, fullName: row.full_name, vendorId: row.qbo_vendor_id, worker: null,
-        billable: [], context: [], alreadyBilled: 0, workedDates: new Set(), reimbursements: [],
+        billable: [], billed: [], context: [], workedDates: new Set(), reimbursements: [],
       });
     }
     return byUser.get(uid);
   };
   const inRange = d => (!from || d >= from) && (!to || d <= to);
+  let minDate = null, maxDate = null;
   for (const te of paidRows) {
     const g = get(te.user_id, te);
     g.worker = g.worker || {
@@ -909,7 +997,11 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     };
     if (te.wage_type === 'regular') g.workedDates.add(te.work_date);
     if (!inRange(te.work_date)) { g.context.push(te); continue; }
-    if (te.qbo_bill_id && !force) { g.alreadyBilled++; continue; }
+    if (!minDate || te.work_date < minDate) minDate = te.work_date;
+    if (!maxDate || te.work_date > maxDate) maxDate = te.work_date;
+    // Already on a bill: not billed again, but still the week/day context the new
+    // rows' OT and day-rate are priced against (see header).
+    if (te.qbo_bill_id && !force) { g.billed.push(te); continue; }
     g.billable.push(te);
   }
   for (const r of reimbRows.rows) {
@@ -924,38 +1016,44 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
       description: r.description || r.category || '',
     });
   }
-  const groups = Array.from(byUser.values()).filter(g => g.billable.length || g.reimbursements.length);
 
-  // Paid leave for the workers whose FIRST bill for this range this is (see header).
-  const firstBill = g => !!force || g.alreadyBilled === 0;
-  const leaveWorkers = groups.filter(g => g.worker && g.billable.length && firstBill(g)).map(g => g.worker);
-  const leaveByUser = (from && to && leaveWorkers.length)
-    ? await computeCompanyLeave({ companyId, workers: leaveWorkers, settings, from, to })
-    : new Map();
+  // Range-level pay: per-day leave over the whole weeks (the guarantee is priced
+  // per week) + what's already billed. Without a full range only floors apply.
+  const workerGroups = Array.from(byUser.values()).filter(g => g.worker);
+  const ledgerSpan = span || (minDate ? { from: minDate, to: maxDate } : null);
+  const [leaveDays, ledger] = await Promise.all([
+    span ? loadLeaveDays(companyId, workerGroups.map(g => g.worker), settings, span.from, span.to) : new Map(),
+    ledgerSpan ? loadRangePayLedger(companyId, workerGroups.map(g => g.userId), ledgerSpan.from, ledgerSpan.to) : new Map(),
+  ]);
 
-  for (const g of groups) {
-    g.labor = g.worker && g.billable.length
-      ? billLabor(g, { settings, projectRateMap, rateBook, from, to, includeRangeLevel: firstBill(g), leave: leaveByUser.get(g.worker.id) || NO_LEAVE })
-      : null;
+  for (const g of byUser.values()) {
+    const L = g.worker ? billLabor(g, { settings, projectRateMap, rateBook, from, to, span, leaveDays, ledger, force }) : null;
+    g.labor = L && (g.billable.length || L.rangeLines.length) ? L : null;
   }
-  return groups;
+  return Array.from(byUser.values()).filter(g => g.billable.length || g.reimbursements.length || g.labor);
 }
 
 /**
- * Price one worker's billable entries with the pay engine and split the result
- * into bill lines (amounts in integer cents). Sum of every line === the
- * statement's labor pay (minus range-level pay when it's excluded).
+ * Price one worker's NEW entries (+ unbilled range-level pay) with the pay engine
+ * and split the result into bill lines (amounts in integer cents). Worked pay is
+ * statement(billed + new) − statement(billed); range-level pay is current −
+ * ledgered. Sum of every line === totalC.
  */
-function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, includeRangeLevel, leave }) {
-  const worker = includeRangeLevel ? g.worker : { ...g.worker, guaranteed_weekly_hours: 0 };
-  const stmt = buildPayStatement({
+function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, span = null, leaveDays = null, ledger = new Map(), force = false }) {
+  // The weekly guarantee is priced per week below, not over the range.
+  const worker = { ...g.worker, guaranteed_weekly_hours: 0 };
+  const otConfig = otConfigFromSettings(settings, worker.role_id ?? null, worker.id);
+  const leaveDaysOf = (leaveDays && leaveDays.get(worker.id)) || new Map();
+  const fullRange = !!(from && to);
+  const rangeLeave = fullRange ? leaveBetween(leaveDaysOf, from, to) : NO_LEAVE;
+  const statement = entries => buildPayStatement({
     worker,
-    entries: g.billable,
-    weekContextEntries: g.context,
+    entries,
+    weekContextEntries: g.context.map(copyRow),
     reimbursements: [],
-    leave: includeRangeLevel ? leave : NO_LEAVE,
+    leave: rangeLeave, // only so no-clock-in floors count leave; leave $ is ledgered below
     deductions: [], // a bill is gross pay; deductions are the payer's side
-    otConfig: otConfigFromSettings(settings, worker.role_id ?? null, worker.id),
+    otConfig,
     projectRateMap,
     rateBook,
     settings,
@@ -963,6 +1061,10 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, inc
     to: to || null,
     weekWorkedDays: g.workedDates,
   });
+  const billedIds = new Set(g.billed.map(e => e.id));
+  const stmt = statement([...g.billed, ...g.billable].map(copyRow));
+  const prev = g.billed.length ? statement(g.billed.map(copyRow)) : null;
+
   const { rate, rateType, prevailingWageRate } = stmt.rates;
   const shiftHours = parseFloat(settings.regular_shift_hours) || 8;
   const paidHoursOf = entryDuration; // the engine's paid hours (DST-corrected) — lines must reconcile to the statement
@@ -974,21 +1076,41 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, inc
   const rateTypeOf = e => e.pay_rate_type || rateType;
   // Rule-generated hours on date d: the worker's rate in effect that day.
   const rateOnDate = d => (rateBook ? workerRateOn(rateBook, worker, d, settings) : { rate, rateType });
+  const hourlyOn = d => { const r = rateOnDate(d); return r.rateType === 'daily' ? (shiftHours > 0 ? r.rate / shiftHours : 0) : r.rate; };
 
-  const real = stmt.entries.filter(e => !e.synthetic);
-  // Daily-rate workers: each worked day pays the daily rate once — split it across
-  // that day's entries by hours so every project still gets its share.
+  // Rule-generated hours (min-daily floor top-ups, no-clock-in guarantee days) are
+  // inside the statement's regular pay; priced out as their own (ledgered) lines.
+  const floorsOf = s => s.entries
+    .filter(e => e.synthetic && !RANGE_LEVEL_KINDS.has(e.kind))
+    .map(f => {
+      const r = rateOnDate(f.work_date);
+      const fHourly = r.rateType === 'daily' ? (shiftHours > 0 ? r.rate / shiftHours : 0) : r.rate;
+      const perHour = r.rateType === 'daily' ? (f.kind === 'guarantee' ? fHourly : 0) : r.rate;
+      const hours = parseFloat(f.hours) || 0;
+      return { date: isoDate(f.work_date), kind: f.kind, hours, amountC: toCents(hours * perHour) };
+    });
+  const workedC = s => {
+    const c = s.cost;
+    return toCents(c.regular) + toCents(c.overtime) + toCents(c.prevailing) + toCents(c.night)
+      - floorsOf(s).reduce((sum, f) => sum + f.amountC, 0);
+  };
+
+  // Straight time for the NEW entries only. Daily-rate workers: each worked day
+  // pays the daily rate once — a day already on a bill adds nothing; a new day's
+  // rate is split across its entries by hours so every project gets its share.
+  const real = stmt.entries.filter(e => !e.synthetic && !billedIds.has(e.id));
+  const isDailyReg = e => e.wage_type === 'regular' && rateTypeOf(e) === 'daily';
+  const billedDays = new Set(stmt.entries.filter(e => !e.synthetic && billedIds.has(e.id) && isDailyReg(e)).map(e => e.work_date));
   const dayHours = new Map(), dayCount = new Map();
-  {
-    for (const e of real) {
-      if (e.wage_type !== 'regular' || rateTypeOf(e) !== 'daily') continue;
-      dayHours.set(e.work_date, (dayHours.get(e.work_date) || 0) + paidHoursOf(e));
-      dayCount.set(e.work_date, (dayCount.get(e.work_date) || 0) + 1);
-    }
+  for (const e of real) {
+    if (!isDailyReg(e)) continue;
+    dayHours.set(e.work_date, (dayHours.get(e.work_date) || 0) + paidHoursOf(e));
+    dayCount.set(e.work_date, (dayCount.get(e.work_date) || 0) + 1);
   }
   const entryLines = real.map(e => {
     const hours = paidHoursOf(e);
-    if (rateTypeOf(e) === 'daily' && e.wage_type === 'regular') {
+    if (isDailyReg(e)) {
+      if (billedDays.has(e.work_date)) return { entry: e, hours, unitPrice: 0, amountC: 0 };
       const dh = dayHours.get(e.work_date) || 0;
       const share = dh > 0 ? hours / dh : 1 / (dayCount.get(e.work_date) || 1);
       const amount = baseRateOf(e) * share; // that day's daily rate, split by hours
@@ -998,48 +1120,108 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, inc
     return { entry: e, hours, unitPrice: base, amountC: toCents(hours * base) };
   });
 
-  // Rule-generated hours (min-daily floor top-ups, no-clock-in guarantee days) are
-  // inside the statement's regular pay; price them out as their own lines.
-  const floorLines = stmt.entries
-    .filter(e => e.synthetic && !RANGE_LEVEL_KINDS.has(e.kind))
-    .map(f => {
-      const r = rateOnDate(f.work_date);
-      const fHourly = r.rateType === 'daily' ? (shiftHours > 0 ? r.rate / shiftHours : 0) : r.rate;
-      const perHour = r.rateType === 'daily' ? (f.kind === 'guarantee' ? fHourly : 0) : r.rate;
-      return {
-        hours: parseFloat(f.hours) || 0,
-        amountC: toCents((parseFloat(f.hours) || 0) * perHour),
-        description: `${isoDate(f.work_date)} · ${f.kind === 'guarantee' ? 'Guaranteed hours (no clock-in)' : 'Minimum daily hours top-up'}`,
-      };
-    })
-    .filter(l => l.amountC !== 0);
-  const floorC = floorLines.reduce((s, l) => s + l.amountC, 0);
-
-  const c = stmt.cost;
-  let targetC = toCents(c.regular) + toCents(c.overtime) + toCents(c.prevailing) + toCents(c.night)
-    + toCents(c.guarantee) + toCents(c.sick) + toCents(c.vacation);
-  const rangeLines = [];
-  if (includeRangeLevel) {
-    rangeLines.push(...floorLines);
-    if (toCents(c.guarantee)) rangeLines.push({ hours: stmt.hours.guaranteeShortfall, amountC: toCents(c.guarantee), description: 'Weekly guaranteed-hours top-up' });
-    if (toCents(c.sick)) rangeLines.push({ hours: stmt.hours.sick, amountC: toCents(c.sick), description: 'Paid sick leave' });
-    if (toCents(c.vacation)) rangeLines.push({ hours: stmt.hours.vacation, amountC: toCents(c.vacation), description: 'Paid vacation' });
-  } else {
-    targetC -= floorC; // not billed on a follow-up bill (see header)
+  // ── Range-level pay: current amounts, keyed like the ledger ──
+  const inRange = d => (!from || d >= from) && (!to || d <= to);
+  const current = new Map();
+  const put = (kind, date, hours, amountC, label) => {
+    if (!amountC) return;
+    const k = `${kind}|${date}`;
+    const cur = current.get(k) || { kind, date, hours: 0, amountC: 0, label };
+    cur.hours += hours; cur.amountC += amountC;
+    current.set(k, cur);
+  };
+  for (const f of floorsOf(stmt)) {
+    if (inRange(f.date)) put('daily_floor', f.date, f.hours, f.amountC, f.kind === 'guarantee' ? 'Guaranteed hours (no clock-in)' : 'Minimum daily hours top-up');
   }
-  const nightC = toCents(c.night);
+  if (fullRange) {
+    const mult = leaveRateMultipliers(settings);
+    for (const [d, v] of leaveDaysOf) {
+      if (!inRange(d)) continue;
+      if (v.sick) put('sick', d, v.sick, toCents(v.sick * hourlyOn(d) * mult.sick));
+      if (v.vacation) put('vacation', d, v.vacation, toCents(v.vacation * hourlyOn(d) * mult.vacation));
+    }
+    // Weekly guarantee: one engine statement per whole week whose LAST day is in
+    // the range (every entry of that week, billed or not, + that week's leave).
+    if (span && parseFloat(g.worker.guaranteed_weekly_hours) > 0) {
+      const all = [...g.context, ...g.billed, ...g.billable];
+      for (let ws = span.from; ws <= span.to; ws = addDaysYmd(ws, 7)) {
+        const we = addDaysYmd(ws, 6);
+        if (!inRange(we)) continue;
+        const wk = buildPayStatement({
+          worker: g.worker,
+          entries: all.filter(e => e.work_date >= ws && e.work_date <= we).map(copyRow),
+          reimbursements: [], deductions: [],
+          leave: leaveBetween(leaveDaysOf, ws, we),
+          otConfig, projectRateMap, rateBook, settings, from: ws, to: we,
+          weekWorkedDays: g.workedDates,
+        });
+        put('weekly_guarantee', ws, wk.hours.guaranteeShortfall || 0, toCents(wk.cost.guarantee));
+      }
+    }
+  }
+
+  // ── Diff against the ledger ──
+  const inScope = (kind, date) => (kind === 'weekly_guarantee'
+    ? fullRange && inRange(addDaysYmd(date, 6))
+    : (kind === 'daily_floor' || fullRange) && inRange(date));
+  const keys = new Set(current.keys());
+  const prefix = `${worker.id}|`;
+  for (const k of ledger.keys()) {
+    if (!k.startsWith(prefix)) continue;
+    const [kind, date] = k.slice(prefix.length).split('|');
+    if (inScope(kind, date)) keys.add(`${kind}|${date}`);
+  }
+  const deltas = [], ledgerWrites = [];
+  for (const k of [...keys].sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1]) || a.localeCompare(b))) {
+    const [kind, date] = k.split('|');
+    const cur = current.get(k) || { kind, date, hours: 0, amountC: 0, label: null };
+    const stored = ledger.get(`${prefix}${k}`) || null;
+    const was = force || !stored ? { amountC: 0, hours: 0 } : stored;
+    const deltaC = cur.amountC - was.amountC;
+    if (deltaC !== 0) deltas.push({ ...cur, deltaC, deltaHours: +(cur.hours - was.hours).toFixed(2), adjustment: was.amountC !== 0 });
+    if (!stored ? cur.amountC !== 0 : (stored.amountC !== cur.amountC || force)) {
+      ledgerWrites.push({ kind, date, amountC: cur.amountC, hours: +cur.hours.toFixed(2) });
+    }
+  }
+  const rangeLines = [];
+  for (const d of deltas.filter(x => x.kind === 'daily_floor')) {
+    rangeLines.push({ key: `daily_floor|${d.date}`, hours: d.deltaHours, amountC: d.deltaC, description: `${d.date} · ${d.label || 'Minimum daily hours'}${d.adjustment ? ' (adjustment)' : ''}` });
+  }
+  for (const d of deltas.filter(x => x.kind === 'weekly_guarantee')) {
+    rangeLines.push({ key: `weekly_guarantee|${d.date}`, hours: d.deltaHours, amountC: d.deltaC, description: `Weekly guaranteed-hours top-up — week of ${d.date}${d.adjustment ? ' (adjustment)' : ''}` });
+  }
+  for (const [kind, label] of [['sick', 'Paid sick leave'], ['vacation', 'Paid vacation']]) {
+    const ds = deltas.filter(x => x.kind === kind);
+    if (!ds.length) continue;
+    const amountC = ds.reduce((s, x) => s + x.deltaC, 0);
+    if (!amountC) continue;
+    const dates = ds.map(x => x.date);
+    const shown = dates.length > 10 ? `${dates.slice(0, 10).join(', ')} +${dates.length - 10} more` : dates.join(', ');
+    rangeLines.push({
+      key: `${kind}|${dates.join(',')}`,
+      hours: +ds.reduce((s, x) => s + x.deltaHours, 0).toFixed(2),
+      amountC,
+      description: `${label}${ds.some(x => x.adjustment) ? ' adjustment' : ''} — ${shown}`,
+    });
+  }
+
+  const nightC = toCents(stmt.cost.night) - (prev ? toCents(prev.cost.night) : 0);
+  const nightHours = (stmt.hours.night || 0) - (prev ? (prev.hours.night || 0) : 0);
+  const workedTargetC = workedC(stmt) - (prev ? workedC(prev) : 0);
   const straightC = entryLines.reduce((s, l) => s + l.amountC, 0);
   const rangeC = rangeLines.reduce((s, l) => s + l.amountC, 0);
   // The OT premium is what the engine paid beyond straight time — tiers, rest-day,
-  // 7th-day, weighted-average and prevailing OT all land here at their real price.
-  const premiumC = targetC - straightC - nightC - rangeC;
-  const overtimeHours = stmt.hours.overtime || 0;
-  const bands = (stmt.hours.overtimeBands || []).map(b => `${Number(b.hours).toFixed(2)} h @ ${b.mult}×`).join(', ');
+  // 7th-day, weighted-average and prevailing OT all land here at their real price
+  // (and, on a follow-up bill, the OT the new rows added to the week).
+  const premiumC = workedTargetC - straightC - nightC;
+  const overtimeHours = +((stmt.hours.overtime || 0) - (prev ? (prev.hours.overtime || 0) : 0)).toFixed(2);
+  const bands = prev ? '' : (stmt.hours.overtimeBands || []).map(b => `${Number(b.hours).toFixed(2)} h @ ${b.mult}×`).join(', ');
   const rule = otRuleFromSettings(settings, worker.overtime_rule);
 
   return {
     entryLines,
     rangeLines,
+    ledgerWrites,
     premium: {
       hours: overtimeHours,
       amountC: premiumC,
@@ -1047,11 +1229,11 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, inc
         ? `Overtime premium — ${bands || `${overtimeHours.toFixed(2)} h`} (${rule}${rule === 'none' ? '' : `, threshold ${otThreshold(settings, rule)} h`})`
         : 'Pay rounding adjustment',
     },
-    night: { hours: stmt.hours.night || 0, amountC: nightC },
+    night: { hours: nightHours, amountC: nightC },
     hours: entryLines.reduce((s, l) => s + l.hours, 0),
     rate,
-    totalC: targetC,
-    includeRangeLevel,
+    totalC: workedTargetC + rangeC,
+    includeRangeLevel: rangeLines.length > 0,
   };
 }
 
@@ -1104,10 +1286,11 @@ function billLinesFor(g, { laborItemId, expenseAccountId }) {
 function billRequestId(companyId, g, { from, to, force, totalC }) {
   const te = (g.labor ? g.labor.entryLines : []).map(l => `${l.entry.id}:${l.amountC}`).sort().join(',');
   const rb = g.reimbursements.map(r => `${r.id}:${toCents(r.amount)}`).sort().join(',');
+  const rl = (g.labor ? g.labor.rangeLines : []).map(l => `${l.key}:${l.amountC}`).sort().join(',');
   const prior = force
     ? [...new Set([...g.billable.map(e => e.qbo_bill_id), ...g.reimbursements.map(r => r.qboBillId)].filter(Boolean))].sort().join(',')
     : '';
-  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, `t:${totalC}`, force ? `f:${prior}` : ''].join('|'))}`;
+  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, ...(rl ? [`rl:${rl}`] : []), `t:${totalC}`, force ? `f:${prior}` : ''].join('|'))}`;
 }
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
@@ -1210,6 +1393,13 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
       const lines = billLinesFor(g, { laborItemId, expenseAccountId });
       if (!lines.length) continue;
       const totalC = lines.reduce((s, l) => s + toCents(l.amount != null ? l.amount : l.qty * l.unitPrice), 0);
+      // A follow-up bill can net out negative (e.g. leave revoked after it was
+      // billed). QuickBooks can't take a negative bill — that's a vendor credit.
+      if (totalC < 0) {
+        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: `Net adjustment is −$${(-totalC / 100).toFixed(2)} (pay already billed was reduced) — record a vendor credit in QuickBooks.` });
+        continue;
+      }
+      if (totalC === 0 && !g.billable.length && !g.reimbursements.length) continue;
 
       try {
         const bill = await qbo.createBill(companyId, {
@@ -1243,6 +1433,23 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
             "UPDATE reimbursements SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])",
             [billId, reimbIds]
           );
+        }
+        // Record the range-level pay this bill carries (current amounts), so the
+        // next bill for an overlapping range posts only the difference.
+        const lw = (g.labor ? g.labor.ledgerWrites : []).filter(w => QBO_BILL_RANGE_PAY_KINDS.includes(w.kind));
+        if (lw.length) {
+          // The bill exists and its rows are stamped — a failed ledger write must
+          // not report it as skipped; log it (the next push would re-bill the diff).
+          await pool.query(
+            `INSERT INTO qbo_bill_range_pay (company_id, user_id, kind, pay_date, amount_cents, hours, qbo_bill_id)
+             SELECT $1, t.user_id, t.kind, t.pay_date::date, t.amount_cents, t.hours, $7
+               FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::numeric[])
+                    AS t(user_id, kind, pay_date, amount_cents, hours)
+             ON CONFLICT (company_id, user_id, kind, pay_date)
+             DO UPDATE SET amount_cents = EXCLUDED.amount_cents, hours = EXCLUDED.hours,
+                           qbo_bill_id = EXCLUDED.qbo_bill_id, updated_at = NOW()`,
+            [companyId, lw.map(() => g.userId), lw.map(w => w.kind), lw.map(w => w.date), lw.map(w => w.amountC), lw.map(w => w.hours), billId]
+          ).catch(ledgerErr => logger.error({ err: ledgerErr, billId, userId: g.userId }, 'push-bills: range-pay ledger write failed'));
         }
         pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: timeIds.length, reimbursements: reimbIds.length, total: totalC / 100 });
       } catch (pushErr) {
@@ -1290,13 +1497,25 @@ router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), r
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
     const payrollSettings = await loadSettings(companyId);
+    // Everyone with pay in the range, NOT just today's active workers: a corrected
+    // re-push after a worker was deactivated (or who logs time without the worker
+    // role) used to drop them from the total and post a diff reversing their wages.
+    // Active workers stay in for range-level pay (weekly guarantee) with no entries.
     const workers = await pool.query(
-      `SELECT id, full_name, invoice_name, hourly_rate, rate_type, overtime_rule,
-              role_id, guaranteed_weekly_hours
-         FROM users
-        WHERE company_id = $1 AND role = 'worker' AND active = true AND worker_type <> 'unpaid'
-        ORDER BY full_name`,
-      [companyId]
+      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule,
+              u.role_id, u.guaranteed_weekly_hours
+         FROM users u
+        WHERE u.company_id = $1 AND u.worker_type <> 'unpaid'
+          AND ((u.role = 'worker' AND u.active = true)
+               OR EXISTS (SELECT 1 FROM time_entries te
+                           WHERE te.user_id = u.id AND te.company_id = $1 AND te.status = 'approved'
+                             AND te.work_date >= $2::date AND te.work_date <= $3::date)
+               OR EXISTS (SELECT 1 FROM time_off_requests r
+                           WHERE r.user_id = u.id AND r.company_id = $1 AND r.status = 'approved'
+                             AND r.type IN ('sick','vacation')
+                             AND r.start_date <= $3::date AND r.end_date >= $2::date))
+        ORDER BY u.full_name`,
+      [companyId, from, to]
     );
     const statements = await companyStatements({
       companyId,

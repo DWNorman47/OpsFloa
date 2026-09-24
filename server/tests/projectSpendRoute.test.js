@@ -134,6 +134,24 @@ describe('GET /api/projects/:id/spend', () => {
     expect(res.body.totals.pct_used).toBe(58);
   });
 
+  test('a daily-rate worker splitting a day across two projects costs this project only its share', async () => {
+    // $200/day worker: 4h here (entry 1) + 4h on project 43 (entry 2) the same day.
+    const base = { company_id: 'co-1', user_id: 7, work_date: '2026-04-01', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '200', rate_type: 'daily', ot_rule: 'none', worker_type: 'employee' };
+    const here = { ...base, id: 1, project_id: 42, start_time: '08:00:00', end_time: '12:00:00' };
+    const there = { ...base, id: 2, project_id: 43, start_time: '12:00:00', end_time: '16:00:00' };
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] });
+      if (/FROM time_entries/i.test(sql) && /unnest/i.test(sql)) return Promise.resolve({ rows: [here, there] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [here] });
+      if (/information_schema/i.test(sql)) return Promise.resolve({ rowCount: 0, rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const byCat = Object.fromEntries(res.body.categories.map(c => [c.category, c]));
+    expect(byCat.labor.spent_cents).toBe(10000); // half the $200 day, not the whole day
+  });
+
   test('adds equipment usage (hours × hourly operating rate) to the equipment category', async () => {
     pool.query.mockImplementation((sql) => {
       if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {

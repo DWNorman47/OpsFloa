@@ -30,9 +30,9 @@ const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, entryDuration, dstAdjustHours, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, nightHoursForEntry, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
-const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
+const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings, otThreshold, loadLaborDayContext } = require('../utils/paidHours');
 const { workerStatement, companyStatements, buildPayStatement } = require('../utils/payStatement');
-const { loadRateBook, loadRateBookForEntries, workerRateOn, prevailingRateOn, blendRate } = require('../utils/rateHistory');
+const { loadRateBook, loadRateBookForEntries, workerRateOn, prevailingRateOn, companyPrevailingRateOn, blendRate } = require('../utils/rateHistory');
 const rateStore = require('../utils/rateHistoryStore');
 const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
@@ -266,25 +266,33 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
     // `default_rate_effective_date` may backdate it) and the setting is refreshed as
     // the current-rate cache — so a new default never re-prices past pay. Validated
     // + locked-period-checked BEFORE any setting is written; recorded after the loop.
-    let defaultRateChange = null;
-    if (req.body.default_hourly_rate !== undefined || req.body.default_rate_effective_date) {
-      const val = parseFloat(req.body.default_hourly_rate !== undefined ? req.body.default_hourly_rate : current.default_hourly_rate);
-      if (!Number.isFinite(val) || val <= 0) return res.status(400).json({ error: 'Invalid value for default_hourly_rate' });
+    // prevailing_wage_rate (the company prevailing fallback) works the same way since
+    // 0210 (company_prevailing_rate_history; `prevailing_rate_effective_date`), except
+    // 0 is allowed — changing it used to re-price every past prevailing hour.
+    const datedRateKeys = [
+      { key: 'default_hourly_rate', kind: 'company', effKey: 'default_rate_effective_date', noteKey: 'default_rate_note', allowZero: false },
+      { key: 'prevailing_wage_rate', kind: 'company_prevailing', effKey: 'prevailing_rate_effective_date', noteKey: 'prevailing_rate_note', allowZero: true },
+    ];
+    const datedRateChanges = [];
+    for (const dk of datedRateKeys) {
+      if (req.body[dk.key] === undefined && !req.body[dk.effKey]) continue;
+      const val = parseFloat(req.body[dk.key] !== undefined ? req.body[dk.key] : current[dk.key]);
+      if (!Number.isFinite(val) || (dk.allowZero ? val < 0 : val <= 0)) return res.status(400).json({ error: `Invalid value for ${dk.key}` });
       const r2 = x => Math.round(parseFloat(x) * 100) / 100;
-      const eff = req.body.default_rate_effective_date || null;
-      if (eff || r2(val) !== r2(current.default_hourly_rate)) {
+      const eff = req.body[dk.effKey] || null;
+      if (eff || r2(val) !== r2(current[dk.key])) {
         const today = await rateStore.companyToday(companyId);
-        const v = rateStore.validateChange('company', { rate: r2(val), effective_date: eff || today, note: req.body.default_rate_note }, today);
+        const v = rateStore.validateChange(dk.kind, { rate: r2(val), effective_date: eff || today, note: req.body[dk.noteKey] }, today);
         if (v.error) return res.status(400).json({ error: v.error });
-        const locked = await rateStore.checkLocked('company', companyId, companyId, v.value.effectiveDate);
+        const locked = await rateStore.checkLocked(dk.kind, companyId, companyId, v.value.effectiveDate);
         if (locked.length && !(req.body.confirm_locked === true || req.body.confirm_locked === 'true')) {
           return res.status(409).json(rateStore.lockedConflict(locked));
         }
-        defaultRateChange = { change: v.value, today };
+        datedRateChanges.push({ ...dk, change: v.value, today });
       }
     }
     for (const key of allowed) {
-      if (key === 'default_hourly_rate') continue; // effective-dated — handled above/below
+      if (datedRateKeys.some(dk => dk.key === key)) continue; // effective-dated — handled above/below
       if (req.body[key] !== undefined) {
         if (FEATURE_KEYS.includes(key)) {
           const val = req.body[key] ? '1' : '0';
@@ -416,6 +424,8 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
           const allowZero = ['prevailing_wage_rate', 'overtime_multiplier'];
           if (rateKeys.includes(key) && (allowZero.includes(key) ? val < 0 : val <= 0)) return res.status(400).json({ error: `Invalid value for ${key}` });
           if ([...notifKeys, 'overtime_threshold'].includes(key) && val < 0) return res.status(400).json({ error: `Invalid value for ${key}` });
+          // Day count read by jobs/inactiveWorkers.js — must be a positive whole number.
+          if (key === 'notification_inactive_days' && (!Number.isInteger(val) || val < 1)) return res.status(400).json({ error: 'notification_inactive_days must be a whole number of days (1 or more)' });
           await pool.query(
             'INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (company_id, key) DO UPDATE SET value = $3',
             [companyId, key, val]
@@ -424,17 +434,18 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
         }
       }
     }
-    if (defaultRateChange) {
-      const out = await rateStore.addChange('company', {
-        companyId, ownerId: companyId, change: defaultRateChange.change, today: defaultRateChange.today,
+    for (const rc of datedRateChanges) {
+      const out = await rateStore.addChange(rc.kind, {
+        companyId, ownerId: companyId, change: rc.change, today: rc.today,
         confirmLocked: true, createdBy: req.user.id, // locked periods were checked (and confirmed) above
       });
-      await logAudit(companyId, req.user.id, req.user.full_name, 'settings.default_rate_history.added', 'settings', null, 'Company default rate', {
-        rate: defaultRateChange.change.rate, effective_date: defaultRateChange.change.effectiveDate, note: defaultRateChange.change.note,
-        previous: out.previous, backdated: defaultRateChange.change.effectiveDate < defaultRateChange.today,
-        locked_periods_affected: out.lockedPeriods.length,
-      });
-      if (out.cache && out.cache.rate !== current.default_hourly_rate) changed.default_hourly_rate = out.cache.rate;
+      await logAudit(companyId, req.user.id, req.user.full_name, `${rateStore.KINDS[rc.kind].auditAction}.added`, 'settings', null,
+        rc.kind === 'company' ? 'Company default rate' : 'Company prevailing wage rate', {
+          rate: rc.change.rate, effective_date: rc.change.effectiveDate, note: rc.change.note,
+          previous: out.previous, backdated: rc.change.effectiveDate < rc.today,
+          locked_periods_affected: out.lockedPeriods.length,
+        });
+      if (out.cache && out.cache.rate !== current[rc.key]) changed[rc.key] = out.cache.rate;
     }
     if (Object.keys(changed).length === 0) { const s = await getSettings(companyId); return res.json(s); }
     await logAudit(companyId, req.user.id, req.user.full_name, 'settings.updated', 'settings', null, 'Settings', changed);
@@ -1487,6 +1498,14 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
     const defaultName = assignedRole === 'admin' ? 'Admin' : 'Worker';
     const def = await pool.query('SELECT id FROM roles WHERE company_id = $1 AND is_builtin = true AND name = $2', [companyId, defaultName]);
     if (def.rowCount > 0) resolvedRoleId = def.rows[0].id;
+    // Same escalation guard for the legacy role:'admin' shortcut: inviting an
+    // Admin must not hand out permissions the inviter doesn't hold.
+    if (assignedRole === 'admin' && resolvedRoleId != null) {
+      const defPerms = await pool.query('SELECT permission FROM role_permissions WHERE role_id = $1', [resolvedRoleId]);
+      const reqPerms = await getUserPermissions(req.user);
+      const over = defPerms.rows.map(r => r.permission).find(p => !reqPerms.has(p));
+      if (over) return res.status(403).json({ error: `Cannot assign a role granting "${over}" — you don't have it yourself`, code: 'permission_escalation', required: over });
+    }
   }
 
   const token = crypto.randomBytes(32).toString('hex');
@@ -1527,8 +1546,8 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
         html: `
           <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
             <h2 style="color:#1a56db;margin-bottom:8px">You're invited!</h2>
-            <p style="color:#444;margin-bottom:8px">Hi ${full_name}, ${req.user.full_name} has invited you to join OpsFloA.</p>
-            <p style="color:#444;margin-bottom:24px">Your username is: <strong>${username}</strong></p>
+            <p style="color:#444;margin-bottom:8px">Hi ${escapeHtml(full_name)}, ${escapeHtml(req.user.full_name)} has invited you to join OpsFloA.</p>
+            <p style="color:#444;margin-bottom:24px">Your username is: <strong>${escapeHtml(username)}</strong></p>
             <a href="${inviteUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Set your password</a>
             <p style="color:#999;font-size:13px;margin-top:24px">This invite expires in 7 days.</p>
           </div>
@@ -1550,19 +1569,23 @@ router.post('/workers/:id/send-invite', requireAdmin, requirePerm('manage_worker
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
-      'SELECT id, full_name, username, email, must_change_password FROM users WHERE id = $1 AND company_id = $2 AND active = true',
+      'SELECT id, full_name, username, email, must_change_password, invite_pending FROM users WHERE id = $1 AND company_id = $2 AND active = true',
       [req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
     const worker = result.rows[0];
     if (!worker.email) return res.status(400).json({ error: 'Worker has no email address' });
-    if (!worker.must_change_password) return res.status(400).json({ error: 'Worker has already signed in' });
+    if (!worker.must_change_password && !worker.invite_pending) return res.status(400).json({ error: 'Worker has already signed in' });
 
     const token = crypto.randomBytes(32).toString('hex');
+    // Store only sha256(token) — /auth/accept-invite looks the invite up by the
+    // hash. Storing the raw token (as this used to) meant every RE-SENT invite
+    // link was dead on arrival, and left a usable credential sitting in the DB.
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
     await pool.query(
       'UPDATE users SET invite_token = $1, invite_token_expires = $2, invite_pending = true WHERE id = $3',
-      [token, expires, worker.id]
+      [tokenHash, expires, worker.id]
     );
     const inviteUrl = `${process.env.APP_URL}/accept-invite?token=${token}`;
     let emailSent = true;
@@ -1573,8 +1596,8 @@ router.post('/workers/:id/send-invite', requireAdmin, requirePerm('manage_worker
         html: `
           <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
             <h2 style="color:#1a56db;margin-bottom:8px">You're invited!</h2>
-            <p style="color:#444;margin-bottom:8px">Hi ${worker.full_name}, ${req.user.full_name} has invited you to join OpsFloA.</p>
-            <p style="color:#444;margin-bottom:24px">Your username is: <strong>${worker.username}</strong></p>
+            <p style="color:#444;margin-bottom:8px">Hi ${escapeHtml(worker.full_name)}, ${escapeHtml(req.user.full_name)} has invited you to join OpsFloA.</p>
+            <p style="color:#444;margin-bottom:24px">Your username is: <strong>${escapeHtml(worker.username)}</strong></p>
             <a href="${inviteUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Set your password</a>
             <p style="color:#999;font-size:13px;margin-top:24px">This invite expires in 7 days.</p>
           </div>
@@ -1700,7 +1723,100 @@ router.post('/workers', requireAdmin, requirePerm('manage_workers'),
 // computeGuaranteeShortfall now lives in utils/payCalculations.js (shared by the
 // pay-statement engine and every pay surface). Imported at the top of this file.
 
+// Does `perms` (a Set) hold every Owner permission? = Owner-tier caller.
+const holdsOwnerTier = (user, perms) =>
+  user.role === 'super_admin' || BUILTIN_ROLES.owner.permissions.every(p => perms.has(p));
+
+// Assign role `roleId` to user `targetUserId` — THE role-change path, shared by
+// PATCH /workers/:id/role and the legacy `role` field of PATCH /workers/:id so
+// both enforce the same guards:
+//   - escalation: the granted role's permissions must be a subset of the caller's;
+//   - a super_admin account's role is never changed from a tenant screen;
+//   - only an Owner-tier caller may move someone OFF the Owner role;
+//   - last-Owner: a company always keeps at least one active Owner.
+// Returns null on success, or { status, body } to send.
+async function assignRoleToUser(req, targetUserId, roleId) {
+  const companyId = req.user.company_id;
+  const targetRole = await pool.query(
+    'SELECT id, name, parent_role, is_builtin FROM roles WHERE id = $1 AND company_id = $2',
+    [roleId, companyId]
+  );
+  if (targetRole.rowCount === 0) return { status: 404, body: { error: 'Role not found' } };
+
+  // Privilege-escalation guard: a user may only grant a role whose
+  // permission set is a SUBSET of their own. Without this, anyone with
+  // `assign_roles` could grant themselves (or a confederate) the built-in
+  // Owner role — or a hand-crafted custom role carrying manage_billing /
+  // manage_roles / delete_company — and escalate past their own tier.
+  const [granterPerms, targetRolePermsRes] = await Promise.all([
+    getUserPermissions(req.user),
+    pool.query('SELECT permission FROM role_permissions WHERE role_id = $1', [roleId]),
+  ]);
+  const exceeded = targetRolePermsRes.rows
+    .map(r => r.permission)
+    .filter(p => !granterPerms.has(p));
+  if (exceeded.length > 0) {
+    return { status: 403, body: { error: 'You cannot grant a role with more permissions than you hold.', code: 'role_exceeds_granter' } };
+  }
+
+  const targetUser = await pool.query(
+    `SELECT u.id, u.full_name, u.role AS current_legacy_role, u.role_id AS current_role_id,
+            r.name AS current_role_name, r.is_builtin AS current_role_builtin
+       FROM users u LEFT JOIN roles r ON r.id = u.role_id
+       WHERE u.id = $1 AND u.company_id = $2 AND u.active = true`,
+    [targetUserId, companyId]
+  );
+  if (targetUser.rowCount === 0) return { status: 404, body: { error: 'Worker not found' } };
+  const user = targetUser.rows[0];
+
+  if (user.current_legacy_role === 'super_admin' && req.user.role !== 'super_admin') {
+    return { status: 403, body: { error: 'This account\'s role cannot be changed here.', code: 'protected_account' } };
+  }
+
+  const isOwner = user.current_role_name === 'Owner' && user.current_role_builtin !== false;
+  if (isOwner && targetRole.rows[0].name !== 'Owner') {
+    // Demoting an Owner is an Owner decision — an Admin holding assign_roles
+    // could otherwise strip the Owner and take the company over.
+    if (!holdsOwnerTier(req.user, granterPerms)) {
+      return { status: 403, body: { error: 'Only an Owner can change another Owner\'s role.', code: 'owner_protected' } };
+    }
+    // Last-Owner guard: if changing AWAY from Owner, ensure ≥1 other Owner
+    // remains in the company. Built-in Owner role has name 'Owner'.
+    const otherOwners = await pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM users u
+         JOIN roles r ON r.id = u.role_id
+         WHERE u.company_id = $1 AND r.is_builtin = true AND r.name = 'Owner'
+           AND u.id != $2 AND u.active = true`,
+      [companyId, user.id]
+    );
+    if (otherOwners.rows[0].cnt === 0) {
+      return { status: 400, body: { error: 'Cannot remove the only Owner. Promote another user to Owner first.', code: 'last_owner' } };
+    }
+  }
+
+  // Update both columns + bump token_version. users.role is the legacy
+  // parent role; role_id is the new authoritative reference. Bumping
+  // token_version invalidates the user's existing JWT (which carries
+  // the old role_id) so the next request 401s and they re-auth, picking
+  // up a fresh token + permission set.
+  await pool.query(
+    'UPDATE users SET role_id = $1, role = $2, token_version = COALESCE(token_version, 0) + 1 WHERE id = $3',
+    [roleId, targetRole.rows[0].parent_role, user.id]
+  );
+  return null;
+}
+
 // Update a worker (full_name, first_name, middle_name, last_name, username, role, language, hourly_rate, rate_type, email, worker_type)
+//
+// Security (review): this route only needs manage_workers, so it must not become
+// a side door around assign_roles or an account-takeover path:
+//   - a legacy `role` CHANGE requires assign_roles and goes through
+//     assignRoleToUser (escalation / Owner / last-Owner guards) — resending the
+//     current role (the edit form sends the whole row) is a no-op;
+//   - the email of someone who outranks the caller (incl. any Owner / the
+//     super_admin) can't be changed — the new address would receive that
+//     account's password-reset link;
+//   - an email change notifies the OLD address.
 router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
   coerceBody({ float: ['hourly_rate', 'guaranteed_weekly_hours'] }),
   async (req, res) => {
@@ -1749,13 +1865,52 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
     if (first_name !== undefined) { fields.push(`first_name = $${idx++}`); values.push(first_name || null); }
     if (middle_name !== undefined) { fields.push(`middle_name = $${idx++}`); values.push(middle_name || null); }
     if (last_name !== undefined) { fields.push(`last_name = $${idx++}`); values.push(last_name || null); }
-    if (username) { fields.push(`username = $${idx++}`); values.push(username.toLowerCase().trim()); }
-    if (assignedRole !== undefined) {
-      fields.push(`role = $${idx++}`); values.push(assignedRole);
-      // A role change alters the authorization claims baked into the user's
-      // JWT — bump token_version so the stale token is rejected next request.
-      fields.push(`token_version = COALESCE(token_version, 0) + 1`);
+    // Target row — only needed (and only fetched) for the role / email guards.
+    let target = null;
+    if (assignedRole !== undefined || email !== undefined) {
+      const t = await pool.query(
+        `SELECT u.id, u.role, u.role_id, u.email, u.full_name, u.username, u.admin_permissions
+           FROM users u WHERE u.id = $1 AND u.company_id = $2`,
+        [req.params.id, companyId]
+      );
+      if (!t.rows.length) return res.status(404).json({ error: 'Worker not found' });
+      target = t.rows[0];
     }
+    let callerPerms = null;
+    const getCallerPerms = async () => (callerPerms = callerPerms || await getUserPermissions(req.user));
+
+    // Legacy role field: a real change is a role assignment.
+    let roleAssignId = null;
+    const roleChanging = assignedRole !== undefined && target && target.role !== 'super_admin' && assignedRole !== target.role;
+    if (roleChanging) {
+      if (!(await getCallerPerms()).has('assign_roles')) {
+        return res.status(403).json({ error: 'Changing a role requires the assign_roles permission', code: 'permission_denied', required: 'assign_roles' });
+      }
+      const builtin = await pool.query(
+        'SELECT id FROM roles WHERE company_id = $1 AND is_builtin = true AND name = $2',
+        [companyId, assignedRole === 'admin' ? 'Admin' : 'Worker']
+      );
+      if (!builtin.rows.length) return res.status(400).json({ error: 'Role not found' });
+      roleAssignId = builtin.rows[0].id;
+    }
+
+    // Email: can't re-point the address of someone who outranks you.
+    const emailChanging = email !== undefined && target &&
+      String(email || '').toLowerCase() !== String(target.email || '').toLowerCase();
+    if (emailChanging) {
+      const mine = await getCallerPerms();
+      const theirs = target.role === 'super_admin'
+        ? null
+        : await getUserPermissions({ role: target.role, role_id: target.role_id, admin_permissions: target.admin_permissions });
+      const outranks = theirs === null
+        ? req.user.role !== 'super_admin'
+        : [...theirs].some(p => !mine.has(p));
+      if (outranks && String(target.id) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You cannot change the email of a user with more permissions than you (e.g. an Owner).', code: 'email_change_forbidden' });
+      }
+    }
+
+    if (username) { fields.push(`username = $${idx++}`); values.push(username.toLowerCase().trim()); }
     if (language) { fields.push(`language = $${idx++}`); values.push(language); }
     // hourly_rate / rate_type are NOT written to the columns directly any more: a
     // change becomes an effective-dated rate-history row (default: from today in the
@@ -1839,6 +1994,12 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
       // Backdated into locked pay periods → nothing saved; the UI confirms and resends.
       if (rateOut.conflict) return res.status(409).json(rateOut.conflict);
     }
+    // Role change last among the checks (all validation above has passed), via
+    // the shared role-assignment path. It bumps token_version itself.
+    if (roleAssignId != null) {
+      const fail = await assignRoleToUser(req, req.params.id, roleAssignId);
+      if (fail) return res.status(fail.status).json(fail.body);
+    }
     fields.push(`updated_at = NOW()`);
     values.push(req.params.id);
     values.push(companyId);
@@ -1854,7 +2015,23 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
         locked_periods_affected: rateOut.lockedPeriods.length,
       });
     }
-    await logAudit(companyId, req.user.id, req.user.full_name, 'worker.updated', 'worker', result.rows[0].id, result.rows[0].full_name);
+    await logAudit(companyId, req.user.id, req.user.full_name, 'worker.updated', 'worker', result.rows[0].id, result.rows[0].full_name,
+      emailChanging ? { email_changed: true } : undefined);
+    // Tell the OLD address its account email was changed — the only signal the
+    // real owner gets if someone re-points it to take the account over.
+    if (emailChanging && target.email) {
+      sgMail.send({
+        to: target.email,
+        subject: 'The email on your OpsFloA account was changed',
+        html: `
+          <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+            <h2 style="color:#1a56db;margin-bottom:8px">Your account email was changed</h2>
+            <p style="color:#444">Hi ${escapeHtml(target.full_name || '')}, the email address on your OpsFloA account (username <strong>${escapeHtml(target.username || '')}</strong>${req.user.company_name ? ` at ${escapeHtml(req.user.company_name)}` : ''}) was changed by ${escapeHtml(req.user.full_name || 'an administrator')}.</p>
+            <p style="color:#444">Password-reset and account emails now go to the new address. If you didn't expect this, contact your company administrator right away.</p>
+          </div>
+        `,
+      }).catch(err => logger.warn({ err }, 'email-change notice to old address failed'));
+    }
     res.json(rateOut ? { ...result.rows[0], rate_history: rateOut.rows, locked_periods: rateOut.lockedPeriods } : result.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');
@@ -2070,6 +2247,39 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       });
       regularHours += st.hours.regular; overtimeHours += st.hours.overtime; prevailingHours += st.hours.prevailing; nightHours += st.hours.night;
       regularCost += st.cost.regular; overtimeCost += st.cost.overtime; prevailingCost += st.cost.prevailing; nightCost += st.cost.night;
+    }
+
+    // Daily-rate days shared with OTHER projects: the statement above paid this
+    // project a whole day rate. Keep only this project's share by hours — same rule
+    // as laborCostCents (job cost / P&L), so the project bill and P&L agree and a
+    // $200 day split 4h/4h costs $100 here, not $200 on each project.
+    const dayContext = entries.length
+      ? await loadLaborDayContext(entries.map(e => ({ ...e, rate: e.hourly_rate })), { rateBook, settings })
+      : [];
+    if (dayContext.length) {
+      const ownIds = new Set(entries.map(e => String(e.id)));
+      const hoursByWorkerDay = (list) => {
+        const m = new Map();
+        for (const e of list) {
+          if (e.wage_type !== 'regular') continue;
+          const k = `${e.user_id}|${String(e.work_date).substring(0, 10)}`;
+          m.set(k, (m.get(k) || 0) + entryDuration(e));
+        }
+        return m;
+      };
+      const own = hoursByWorkerDay(entries);
+      const other = hoursByWorkerDay(roundEntriesFromSettings(
+        dayContext.filter(c => !ownIds.has(String(c.id))), settings, { workerRoleById }));
+      for (const [k, ownH] of own) {
+        const otherH = other.get(k) || 0;
+        if (!(otherH > 0)) continue;
+        const [uid, d] = k.split('|');
+        const f = workerEntries.get(Number(uid))?.[0] || workerEntries.get(uid)?.[0];
+        if (!f) continue;
+        const r = workerRateOn(rateBook, { id: f.user_id, hourly_rate: f.hourly_rate, rate_type: f.rate_type }, d, settings);
+        if (r.rateType !== 'daily') continue;
+        regularCost -= (r.rate || 0) * otherH / (ownH + otherH);
+      }
     }
 
     const totalHours = regularHours + overtimeHours + prevailingHours;
@@ -4380,52 +4590,49 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
 // hours (Regular / OT / Total + days worked) over a date range. A leaner sibling
 // of /payroll-export (no pay/rate columns). Honors the acting admin's
 // worker_access_ids scope.
+//
+// Hours come from the SAME loader as payroll (companyStatements): full-week
+// loading (weekly OT sees the days of a clipped week outside the range), admin
+// overtime_hours_override, rate-aware OT across regular + prevailing, role
+// configs — so this export can't disagree with the payroll CSV / OT report.
+// "Regular Hrs" = straight-time hours worked (regular + prevailing); the
+// no-clock-in guarantee fill is excluded (hours WORKED, not paid).
 router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), requirePlan('starter'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  if (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Export range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
   const companyId = req.user.company_id;
   const accessIds = req.user.worker_access_ids;
   try {
     const s = await getSettings(companyId);
-    const weekStart = s.week_start;
 
     const wConds = ['company_id = $1', "role = 'worker'", 'active = true'];
     const wVals = [companyId];
     if (accessIds && accessIds.length) { wVals.push(accessIds); wConds.push(`id = ANY($${wVals.length})`); }
     const workers = await pool.query(
-      `SELECT id, full_name, invoice_name, overtime_rule, role_id FROM users WHERE ${wConds.join(' AND ')} ORDER BY full_name`,
+      `SELECT id, full_name, invoice_name, overtime_rule, role_id, hourly_rate, rate_type, guaranteed_weekly_hours, worker_type
+         FROM users WHERE ${wConds.join(' AND ')} ORDER BY full_name`,
       wVals
     );
-
-    const eConds = ['company_id = $1', 'work_date >= $2', 'work_date <= $3', "status = 'approved'"];
-    const eVals = [companyId, from, to];
-    if (accessIds && accessIds.length) { eVals.push(accessIds); eConds.push(`user_id = ANY($${eVals.length})`); }
-    const entries = await pool.query(
-      `SELECT user_id, start_time, end_time, work_date, break_minutes, start_ts, end_ts, timezone FROM time_entries WHERE ${eConds.join(' AND ')}`,
-      eVals
-    );
-
-    const whRoleById = {};
-    workers.rows.forEach(w => { whRoleById[w.id] = w.role_id; });
-    const paidRows = roundEntriesFromSettings(entries.rows, s, { workerRoleById: whRoleById });
-    const byWorker = {};
-    paidRows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
-
-    const dayKey = d => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
-    const otConfigByRole = otConfigByRoleFactory(s);
+    // Only the scoped workers are priced (companyStatements builds one per worker given).
+    const statements = await companyStatements({ companyId, workers: workers.rows, settings: s, from, to });
 
     const lines = [['Worker', 'Regular Hrs', 'OT Hrs', 'Total Hrs', 'Days Worked'].join(',')];
     let tReg = 0, tOt = 0, tTot = 0, tDays = 0;
     for (const w of workers.rows) {
-      const we = byWorker[w.id] || [];
-      // Regular/OT from the shared OT engine (role-aware tiered config) so this
-      // export's split matches the invoice/report/stub instead of its own math.
-      // No `range` passed: this is an hours-WORKED report, so it excludes the
-      // min-daily "no clock-in" guarantee fill the pay surfaces include.
-      const wRule = otRuleFromSettings(s, w.overtime_rule);
-      const { regularHours, overtimeHours } = computeOT(we, wRule, otThreshold(s, wRule), weekStart, otConfigByRole(w.role_id, w.id));
+      const st = statements.get(w.id);
+      const worked = st ? st.entries.filter(e => !e.synthetic) : [];
+      // No-clock-in guarantee days are paid, not worked.
+      const guaranteeFill = st ? st.entries.filter(e => e.synthetic && e.kind === 'guarantee').reduce((x, e) => x + (parseFloat(e.hours) || 0), 0) : 0;
+      const regularHours = st ? Math.max(0, st.hours.regular + st.hours.prevailing - guaranteeFill) : 0;
+      const overtimeHours = st ? st.hours.overtime : 0;
       const total = regularHours + overtimeHours;
-      const days = new Set(we.map(e => dayKey(e.work_date))).size;
+      const days = new Set(worked.map(e => String(e.work_date).slice(0, 10))).size;
       tReg += regularHours; tOt += overtimeHours; tTot += total; tDays += days;
       lines.push([csvCell(w.invoice_name || w.full_name), regularHours.toFixed(2), overtimeHours.toFixed(2), total.toFixed(2), days].join(','));
     }
@@ -4665,7 +4872,8 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // on that day — never today's rate. One batched load for the report's rows.
     const cpRateBook = result.rows.length ? await loadRateBookForEntries(companyId, result.rows) : null;
     const cpSettings = { ...s, default_hourly_rate: defaultRate };
-    const companyPrevRate = parseFloat(s.prevailing_wage_rate) || 45;
+    const companyPrevAtWeekEnd = cpRateBook ? companyPrevailingRateOn(cpRateBook, week_end, s) : null;
+    const companyPrevRate = (Number.isFinite(companyPrevAtWeekEnd) && companyPrevAtWeekEnd > 0 ? companyPrevAtWeekEnd : parseFloat(s.prevailing_wage_rate)) || 45;
     if (projectId && cpRateBook) {
       const atWeekEnd = prevailingRateOn(cpRateBook, projectId, week_end, { [projectId]: projectPrevRate });
       projectPrevRate = atWeekEnd != null ? atWeekEnd : projectPrevRate;
@@ -4730,7 +4938,11 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
       const prevailingRateOf = e => {
         const cur = parseFloat(e.project_prevailing_wage_rate);
         const dated = prevailingRateOn(cpRateBook, e.project_id, e.work_date, Number.isFinite(cur) ? { [e.project_id]: cur } : {});
-        return dated != null ? dated : prevRate;
+        if (dated != null) return dated;
+        // No project rate → the COMPANY prevailing fallback in effect that day (dated,
+        // 0210), not today's setting — a later change must not rewrite a filed WH-347.
+        const companyDated = companyPrevailingRateOn(cpRateBook, e.work_date, s);
+        return Number.isFinite(companyDated) && companyDated > 0 ? companyDated : prevRate;
       };
       const classMap = new Map();
       const classRow = e => {
@@ -5511,68 +5723,10 @@ router.patch('/workers/:id/role', requireAdmin, requirePerm('assign_roles'), asy
   const { role_id } = req.body || {};
   if (!role_id) return res.status(400).json({ error: 'role_id is required' });
   try {
-    const targetRole = await pool.query(
-      'SELECT id, name, parent_role, is_builtin FROM roles WHERE id = $1 AND company_id = $2',
-      [role_id, req.user.company_id]
-    );
-    if (targetRole.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
-
-    // Privilege-escalation guard: a user may only grant a role whose
-    // permission set is a SUBSET of their own. Without this, anyone with
-    // `assign_roles` could grant themselves (or a confederate) the built-in
-    // Owner role — or a hand-crafted custom role carrying manage_billing /
-    // manage_roles / delete_company — and escalate past their own tier.
-    const [granterPerms, targetRolePermsRes] = await Promise.all([
-      getUserPermissions(req.user),
-      pool.query('SELECT permission FROM role_permissions WHERE role_id = $1', [role_id]),
-    ]);
-    const exceeded = targetRolePermsRes.rows
-      .map(r => r.permission)
-      .filter(p => !granterPerms.has(p));
-    if (exceeded.length > 0) {
-      return res.status(403).json({
-        error: 'You cannot grant a role with more permissions than you hold.',
-        code: 'role_exceeds_granter',
-      });
-    }
-
-    const targetUser = await pool.query(
-      `SELECT u.id, u.full_name, u.role_id AS current_role_id, r.name AS current_role_name
-         FROM users u LEFT JOIN roles r ON r.id = u.role_id
-         WHERE u.id = $1 AND u.company_id = $2 AND u.active = true`,
-      [req.params.id, req.user.company_id]
-    );
-    if (targetUser.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
-    const user = targetUser.rows[0];
-
-    // Last-Owner guard: if changing AWAY from Owner, ensure ≥1 other Owner
-    // remains in the company. Built-in Owner role has name 'Owner'.
-    if (user.current_role_name === 'Owner' && targetRole.rows[0].name !== 'Owner') {
-      const otherOwners = await pool.query(
-        `SELECT COUNT(*)::int AS cnt FROM users u
-           JOIN roles r ON r.id = u.role_id
-           WHERE u.company_id = $1 AND r.is_builtin = true AND r.name = 'Owner'
-             AND u.id != $2 AND u.active = true`,
-        [req.user.company_id, user.id]
-      );
-      if (otherOwners.rows[0].cnt === 0) {
-        return res.status(400).json({
-          error: 'Cannot remove the only Owner. Promote another user to Owner first.',
-          code: 'last_owner',
-        });
-      }
-    }
-
-    // Update both columns + bump token_version. users.role is the legacy
-    // parent role; role_id is the new authoritative reference. Bumping
-    // token_version invalidates the user's existing JWT (which carries
-    // the old role_id) so the next request 401s and they re-auth, picking
-    // up a fresh token + permission set. Without this, they'd walk around
-    // with stale permissions until their JWT expires (8h).
-    await pool.query(
-      'UPDATE users SET role_id = $1, role = $2, token_version = COALESCE(token_version, 0) + 1 WHERE id = $3',
-      [role_id, targetRole.rows[0].parent_role, user.id]
-    );
+    // All guards (escalation, protected super_admin, Owner-only demotion of an
+    // Owner, last-Owner) live in assignRoleToUser, shared with PATCH /workers/:id.
+    const fail = await assignRoleToUser(req, req.params.id, role_id);
+    if (fail) return res.status(fail.status).json(fail.body);
     res.json({ updated: true });
   } catch (err) {
     req.log.error({ err }, 'route error');

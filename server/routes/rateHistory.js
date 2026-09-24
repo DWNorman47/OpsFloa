@@ -5,7 +5,7 @@
  *   POST   /workers/:id/rate-history                  add { rate, rate_type?, effective_date?, note?, confirm_locked? }
  *   DELETE /workers/:id/rate-history/:rowId           delete (never the last row)
  *   … the same under /projects/:id/prevailing-rate-history and
- *   /company/default-rate-history.
+ *   /company/default-rate-history and /company/prevailing-rate-history (0210).
  *
  * Editing a row = delete + add (an add on an existing date replaces that row).
  * Permissions match editing that rate today: manage_workers (+ the admin's worker
@@ -35,6 +35,7 @@ const confirmFlag = req => truthy(req.body && req.body.confirm_locked) || truthy
 async function resolveOwner(kind, req) {
   const companyId = req.user.company_id;
   if (kind === 'company') return { ownerId: companyId, name: 'Company default rate' };
+  if (kind === 'company_prevailing') return { ownerId: companyId, name: 'Company prevailing wage rate' };
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) return { status: 400, error: 'Invalid id' };
   if (kind === 'worker') {
@@ -80,7 +81,7 @@ function mount(kind, path, perm, { readPerm = null } = {}) {
       if (v.error) return res.status(400).json({ error: v.error });
       const out = await store.addChange(kind, { companyId, ownerId: o.ownerId, change: v.value, confirmLocked: confirmFlag(req), createdBy: req.user.id, today });
       if (out.conflict) return res.status(409).json(out.conflict);
-      await logAudit(companyId, req.user.id, req.user.full_name, `${k.auditAction}.added`, k.entityType, kind === 'company' ? null : o.ownerId, o.name, {
+      await logAudit(companyId, req.user.id, req.user.full_name, `${k.auditAction}.added`, k.entityType, store.isCompanyKind(kind) ? null : o.ownerId, o.name, {
         rate: v.value.rate, ...(kind === 'worker' ? { rate_type: out.rows.find(r => r.effective_date === v.value.effectiveDate)?.rate_type } : {}),
         effective_date: v.value.effectiveDate, note: v.value.note, previous: out.previous,
         backdated: v.value.effectiveDate < today, locked_periods_affected: out.lockedPeriods.length,
@@ -104,7 +105,7 @@ function mount(kind, path, perm, { readPerm = null } = {}) {
       if (out.notFound) return res.status(404).json({ error: 'Rate history row not found' });
       if (out.lastRow) return res.status(409).json({ error: 'Cannot delete the only rate on record — add a new rate instead.', code: 'last_rate_row' });
       if (out.conflict) return res.status(409).json(out.conflict);
-      await logAudit(companyId, req.user.id, req.user.full_name, `${k.auditAction}.deleted`, k.entityType, kind === 'company' ? null : o.ownerId, o.name, {
+      await logAudit(companyId, req.user.id, req.user.full_name, `${k.auditAction}.deleted`, k.entityType, store.isCompanyKind(kind) ? null : o.ownerId, o.name, {
         deleted: { rate: out.deleted.rate, rate_type: out.deleted.rate_type, effective_date: out.deleted.effective_date, note: out.deleted.note },
         locked_periods_affected: out.lockedPeriods.length,
       });
@@ -119,5 +120,6 @@ function mount(kind, path, perm, { readPerm = null } = {}) {
 mount('worker', '/workers/:id/rate-history', 'manage_workers', { readPerm: 'view_worker_wages' });
 mount('project', '/projects/:id/prevailing-rate-history', 'manage_projects');
 mount('company', '/company/default-rate-history', 'manage_settings');
+mount('company_prevailing', '/company/prevailing-rate-history', 'manage_settings');
 
 module.exports = router;

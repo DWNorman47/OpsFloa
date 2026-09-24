@@ -68,10 +68,11 @@ function resetDb() {
     worker_rate_history: [{ id: 1, company_id: CO, user_id: 5, hourly_rate: '20.00', rate_type: 'hourly', effective_date: '1900-01-01', note: 'Backfilled', created_by: null }],
     project_prevailing_rate_history: [{ id: 1, company_id: CO, project_id: 30, rate: '45.00', effective_date: '1900-01-01', note: null, created_by: null }],
     company_default_rate_history: [{ id: 1, company_id: CO, rate: '30.00', effective_date: '1900-01-01', note: null, created_by: null }],
+    company_prevailing_rate_history: [],
     seq: 100,
   };
 }
-const HIST = { worker_rate_history: 'user_id', project_prevailing_rate_history: 'project_id', company_default_rate_history: 'company_id' };
+const HIST = { worker_rate_history: 'user_id', project_prevailing_rate_history: 'project_id', company_default_rate_history: 'company_id', company_prevailing_rate_history: 'company_id' };
 const rowsRes = rows => ({ rows, rowCount: rows.length });
 
 async function fakeQuery(sql, p = []) {
@@ -80,19 +81,19 @@ async function fakeQuery(sql, p = []) {
   if (/FROM settings WHERE company_id = \$1 AND key = 'company_timezone'/.test(s)) {
     return rowsRes(db.settings.filter(r => r.company_id === p[0] && r.key === 'company_timezone'));
   }
-  if (/SELECT value FROM settings WHERE company_id = \$1 AND key = 'default_hourly_rate'/.test(s)) {
-    return rowsRes(db.settings.filter(r => r.company_id === p[0] && r.key === 'default_hourly_rate'));
+  if ((m = s.match(/^SELECT value FROM settings WHERE company_id = \$1 AND key = '(default_hourly_rate|prevailing_wage_rate)'$/))) {
+    return rowsRes(db.settings.filter(r => r.company_id === p[0] && r.key === m[1]));
   }
   if (/^SELECT key, value FROM settings WHERE company_id = \$1$/.test(s)) {
     return rowsRes(db.settings.filter(r => r.company_id === p[0]).map(r => ({ key: r.key, value: r.value })));
   }
-  if ((m = s.match(/FROM (worker_rate_history|project_prevailing_rate_history|company_default_rate_history) h LEFT JOIN users/))) {
+  if ((m = s.match(/FROM (worker_rate_history|project_prevailing_rate_history|company_default_rate_history|company_prevailing_rate_history) h LEFT JOIN users/))) {
     const t = m[1];
-    return rowsRes(db[t].filter(r => r.company_id === p[0] && (t === 'company_default_rate_history' || String(r[HIST[t]]) === String(p[1])))
+    return rowsRes(db[t].filter(r => r.company_id === p[0] && (HIST[t] === 'company_id' || String(r[HIST[t]]) === String(p[1])))
       .sort((a, b) => a.effective_date.localeCompare(b.effective_date) || a.id - b.id)
       .map(r => ({ ...r, rate: t === 'worker_rate_history' ? r.hourly_rate : r.rate, created_by_name: null, created_at: new Date() })));
   }
-  if ((m = s.match(/^INSERT INTO (worker_rate_history|project_prevailing_rate_history|company_default_rate_history)/))) {
+  if ((m = s.match(/^INSERT INTO (worker_rate_history|project_prevailing_rate_history|company_default_rate_history|company_prevailing_rate_history)/))) {
     const t = m[1];
     let row;
     if (t === 'worker_rate_history') row = { company_id: p[0], user_id: Number(p[1]), hourly_rate: p[2] == null ? null : String(p[2]), rate_type: p[3], effective_date: p[4], note: /'Initial rate'/.test(s) ? 'Initial rate' : p[5], created_by: /'Initial rate'/.test(s) ? p[5] : p[6] };
@@ -109,7 +110,7 @@ async function fakeQuery(sql, p = []) {
     db[t].push(row);
     return rowsRes([{ id: row.id }]);
   }
-  if ((m = s.match(/^DELETE FROM (worker_rate_history|project_prevailing_rate_history|company_default_rate_history) h WHERE h.id = \$(\d)/))) {
+  if ((m = s.match(/^DELETE FROM (worker_rate_history|project_prevailing_rate_history|company_default_rate_history|company_prevailing_rate_history) h WHERE h.id = \$(\d)/))) {
     const t = m[1], id = p[Number(m[2]) - 1];
     const before = db[t].length;
     db[t] = db[t].filter(r => !(r.id === id && r.company_id === p[0]));
@@ -125,9 +126,10 @@ async function fakeQuery(sql, p = []) {
     if (pr) pr.prevailing_wage_rate = p[0] == null ? null : String(p[0]);
     return { rows: [], rowCount: pr ? 1 : 0 };
   }
-  if (/^INSERT INTO settings \(company_id, key, value\) VALUES \(\$1, 'default_hourly_rate', \$2\)/.test(s)) {
-    const r = db.settings.find(x => x.company_id === p[0] && x.key === 'default_hourly_rate');
-    if (r) r.value = p[1]; else db.settings.push({ company_id: p[0], key: 'default_hourly_rate', value: p[1] });
+  if ((m = s.match(/^INSERT INTO settings \(company_id, key, value\) VALUES \(\$1, '(default_hourly_rate|prevailing_wage_rate)', \$2\)/))) {
+    const key = m[1];
+    const r = db.settings.find(x => x.company_id === p[0] && x.key === key);
+    if (r) r.value = p[1]; else db.settings.push({ company_id: p[0], key, value: p[1] });
     return rowsRes([]);
   }
   if (/^INSERT INTO settings \(company_id, key, value\) VALUES \(\$1, \$2, \$3\) ON CONFLICT/.test(s)) {
@@ -392,6 +394,50 @@ describe('existing endpoints write history instead of the raw column', () => {
   });
 });
 
+describe('company prevailing fallback history (0210)', () => {
+  beforeEach(() => { db.settings.push({ company_id: CO, key: 'prevailing_wage_rate', value: '45' }); });
+
+  test('PATCH /settings prevailing_wage_rate → dated history from today (1900 baseline first), setting = cache', async () => {
+    const res = await request(app).patch('/api/admin/settings').send({ prevailing_wage_rate: 60 });
+    expect(res.status).toBe(200);
+    expect(db.company_prevailing_rate_history.map(r => [r.effective_date, r.rate])).toEqual([['1900-01-01', '45'], [TODAY, '60']]);
+    expect(db.settings.find(s => s.key === 'prevailing_wage_rate').value).toBe('60');
+    expect(logAudit.mock.calls.some(c => c[3] === 'settings.prevailing_rate_history.added')).toBe(true);
+  });
+
+  test('re-sending the SAME prevailing rate records nothing', async () => {
+    const res = await request(app).patch('/api/admin/settings').send({ prevailing_wage_rate: 45, overtime_multiplier: 1.5 });
+    expect(res.status).toBe(200);
+    expect(db.company_prevailing_rate_history).toHaveLength(0);
+  });
+
+  test('backdated into a locked period → 409 until confirmed; nothing written first', async () => {
+    db.pay_periods.push({ id: 7, company_id: CO, period_start: '2026-06-01', period_end: '2026-06-14' });
+    const locked = await request(app).patch('/api/admin/settings').send({ prevailing_wage_rate: 50, prevailing_rate_effective_date: '2026-06-01', overtime_multiplier: 2 });
+    expect(locked.status).toBe(409);
+    expect(locked.body.code).toBe('locked_periods');
+    expect(db.settings.find(s => s.key === 'overtime_multiplier')).toBeUndefined();
+    expect(db.company_prevailing_rate_history).toHaveLength(0);
+    const ok = await request(app).patch('/api/admin/settings').send({ prevailing_wage_rate: 50, prevailing_rate_effective_date: '2026-06-01', confirm_locked: true });
+    expect(ok.status).toBe(200);
+    expect(db.company_prevailing_rate_history.map(r => r.effective_date)).toEqual(['1900-01-01', '2026-06-01']);
+  });
+
+  test('API: GET / POST / DELETE /company/prevailing-rate-history (0 allowed, needs manage_settings)', async () => {
+    const add = await request(app).post('/api/admin/company/prevailing-rate-history').send({ rate: 0, effective_date: addDays(TODAY, -2) });
+    expect(add.status).toBe(201);
+    expect(db.settings.find(s => s.key === 'prevailing_wage_rate').value).toBe('0');
+    const list = await request(app).get('/api/admin/company/prevailing-rate-history');
+    expect(list.status).toBe(200);
+    expect(list.body.history.map(r => r.rate)).toEqual([45, 0]);
+    const del = await request(app).delete(`/api/admin/company/prevailing-rate-history/${list.body.history[1].id}`);
+    expect(del.status).toBe(200);
+    expect(db.settings.find(s => s.key === 'prevailing_wage_rate').value).toBe('45');
+    mockPerms = ['manage_workers'];
+    expect((await request(app).get('/api/admin/company/prevailing-rate-history')).status).toBe(403);
+  });
+});
+
 describe('daily cache refresh job', () => {
   test('gated by DISABLE_BACKGROUND_JOBS like the other jobs', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
@@ -408,9 +454,10 @@ describe('daily cache refresh job', () => {
       .mockResolvedValueOnce({ rows: [{ company_id: CO, tz: TZ }] })
       .mockResolvedValueOnce({ rowCount: 2 })
       .mockResolvedValueOnce({ rowCount: 0 })
-      .mockResolvedValueOnce({ rowCount: 1 });
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rowCount: 1 }); // company prevailing (0210)
     const out = await store.refreshAllCaches();
-    expect(out).toEqual({ companies: 1, updated: 3 });
+    expect(out).toEqual({ companies: 1, updated: 4 });
     const calls = pool.query.mock.calls;
     expect(calls[0][0]).toMatch(/effective_date > DATE '1900-01-01'/); // only companies with real dated changes
     for (const [q, params] of calls.slice(1)) {

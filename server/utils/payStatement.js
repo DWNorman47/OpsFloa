@@ -8,7 +8,7 @@ const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFro
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings, ymd } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
-const { workerRateOn, prevailingRateOn, loadRateBook, blendRate } = require('./rateHistory');
+const { workerRateOn, prevailingRateOn, companyPrevailingRateOn, loadRateBook, blendRate } = require('./rateHistory');
 const { resolveRuleset, deductionsForRole, splitDeductionsByTiming } = require('./paycheckRun');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
 const { normWeekStart } = require('./weekBounds');
@@ -120,7 +120,7 @@ function eachDay(from, to) {
  * p.prevOf(e)      the prevailing rate entry e earns
  */
 function workedPay(p) {
-  const { paid, ctxRows, rateType, rateOf, rateOnDate, prevOf, rule, threshold, weekStart, otMult, otConfig, settings, from, to, weekWorkedDays, leave } = p;
+  const { paid, ctxRows, rateType, rateOf, rateOnDate, typeOnDate, prevOf, rule, threshold, weekStart, otMult, otConfig, settings, from, to, weekWorkedDays, leave } = p;
 
   const baseRateOf = e => (e.wage_type === 'prevailing' ? prevOf(e) : rateOf(e));
 
@@ -155,8 +155,29 @@ function workedPay(p) {
     // 'regular_first' draws OT from regular hours before prevailing on a mixed day/
     // week (default 'chronological' = today's behavior). See payEnums.js.
     const wagePriority = settings.overtime_wage_priority === 'regular_first' ? 'regular_first' : 'chronological';
+    // Week-context rows can fall on days paid a DAILY rate (a daily ↔ hourly switch
+    // in the week: the other run of a type-switch period, or context outside it).
+    // Their rate is a DAY amount, not an hourly one — blending $200/day as $200/h
+    // into the weighted-average regular rate inflated OT ~2.5×. Such a day enters
+    // the blend at its hourly equivalent: day pay ÷ that day's regular hours, so
+    // Σ(hours × rate) over the day === the day's pay (FLSA regular rate).
+    const dailyDayHours = new Map();
+    if (typeOnDate) {
+      for (const e of withCtx) {
+        if (e.wage_type !== 'regular' || !e.start_time || !e.end_time) continue;
+        const d = ymd(e.work_date);
+        if (typeOnDate(d) === 'daily') dailyDayHours.set(d, (dailyDayHours.get(d) || 0) + entryDuration(e));
+      }
+    }
+    const otBaseRateOf = e => {
+      if (e.wage_type === 'regular' && dailyDayHours.size) {
+        const h = dailyDayHours.get(ymd(e.work_date));
+        if (h != null) return h > 0 ? rateOf(e) / h : 0;
+      }
+      return baseRateOf(e);
+    };
     const split = splitRateAware(withCtx, {
-      rule, threshold, weekStart, otMult, baseRateOf, method: otMethod, wagePriority,
+      rule, threshold, weekStart, otMult, baseRateOf: otBaseRateOf, method: otMethod, wagePriority,
       ...(inPeriod ? { countIf: e => inPeriod.has(e) } : {}),
     });
     // Per-entry OT + reason for the line-item display column (BillPDF / WorkerMetrics).
@@ -339,7 +360,15 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const otMult = parseFloat(settings.overtime_multiplier) || 1.5;
   // Gate rate/prevRate on `unpaid` directly — a `... || 45`/`... || 0` fallback would turn a
   // zeroed setting back into the default (0 is falsy), leaking prevailing pay.
-  const prevRate = unpaid ? 0 : (parseFloat(settings.prevailing_wage_rate) || 45);
+  // The company prevailing fallback (a prevailing entry on a project with no rate of
+  // its own) is effective-dated too (company_prevailing_rate_history, 0210): the rate
+  // in effect on the entry's date, so changing the setting never re-prices past pay.
+  // No history → the setting (legacy). `|| 45` is the engine's long-standing default.
+  const prevFallbackAt = d => {
+    if (unpaid) return 0;
+    const v = rateBook ? companyPrevailingRateOn(rateBook, d || null, settings) : parseFloat(settings.prevailing_wage_rate);
+    return v || 45;
+  };
   const paid = entries || [];
 
   // ── Rates, per date ─────────────────────────────────────────────────────
@@ -358,17 +387,19 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     return rateCache.get(k);
   };
   const prevOf = e => {
-    if (unpaid) return prevRate; // 0
+    if (unpaid) return 0;
     const pr = rateBook
       ? prevailingRateOn(rateBook, e.project_id, e.work_date, projectRateMap)
       : (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : null);
-    return pr != null ? pr : prevRate;
+    return pr != null ? pr : prevFallbackAt(ymd(e.work_date));
   };
   const rateOf = e => workerRateAt(e.work_date).rate;
   const rateOnDate = d => workerRateAt(d).rate;
   // Period end: the date the headline rate / range-level pay (weekly guarantee) uses.
   const lastWorked = paid.length ? sortChrono(paid)[paid.length - 1].work_date : null;
   const periodEndKey = ymd(to || lastWorked || from) || null;
+  // Headline company prevailing fallback (stub / explain display): the period end's.
+  const prevRate = prevFallbackAt(periodEndKey);
 
   // Weekly rule + a period that clips a week: the out-of-period hours of those weeks.
   const ctxRows = (rule === 'weekly' && from && to && Array.isArray(weekContextEntries) && weekContextEntries.length)
@@ -376,9 +407,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // another period's in-period row (workerPeriodStatements shares one fetch).
     ? weekContextEntries.map(e => ({ ...e })) : null;
 
-  const common = { rateOf, rateOnDate, prevOf, rule, threshold, weekStart, otMult, otConfig, settings, weekWorkedDays, leave };
-  let core;
   const typeAt = d => workerRateAt(d).rateType;
+  const common = { rateOf, rateOnDate, typeOnDate: typeAt, prevOf, rule, threshold, weekStart, otMult, otConfig, settings, weekWorkedDays, leave };
+  let core;
   const types = rateBook ? new Set([...paid.map(e => typeAt(e.work_date)), ...(from && to ? eachDay(from, to).map(typeAt) : [])]) : null;
   if (!types || types.size <= 1) {
     const rateType = types && types.size === 1 ? [...types][0] : (rateBook ? typeAt(periodEndKey) : legacyRate.rateType);
@@ -446,17 +477,24 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const hourlyRate = hourlyOn(periodEndKey);
   // Leave is priced at the rate in effect on each leave day (a raise mid-period pays
   // the pre-raise sick day at the old rate). One rate → exactly hourlyRate.
+  const blendLeave = m => blendRate([...m].map(([d, h]) => ({ w: h, r: hourlyOn(d) })), hourlyRate);
   const leaveHourly = (leave && leave.leaveByDate instanceof Map && leave.leaveByDate.size)
-    ? blendRate([...leave.leaveByDate].map(([d, h]) => ({ w: h, r: hourlyOn(d) })), hourlyRate)
+    ? blendLeave(leave.leaveByDate)
     : hourlyRate;
+  // Sick and vacation each at the rates of THEIR OWN days (computeLeaveHours'
+  // sickByDate / vacationByDate). One merged blend priced a $20 sick day and a
+  // $30 vacation day both at $25. Callers without the per-type maps keep the blend.
+  const typedLeaveHourly = m => (m instanceof Map ? (m.size ? blendLeave(m) : hourlyRate) : leaveHourly);
+  const sickHourly = typedLeaveHourly(leave && leave.sickByDate);
+  const vacationHourly = typedLeaveHourly(leave && leave.vacationByDate);
 
   // Round every line to cents so line items provably sum to the totals.
   const regularCost = cents(regularCostRaw);
   const overtimeCost = cents(overtimeCostRaw);
   const prevailingCost = cents(prevailingCostRaw);
   const guaranteeCost = cents(guaranteeShortfall * hourlyRate);
-  const sickCost = cents(sickHours * leaveHourly * mult.sick);
-  const vacationCost = cents(vacationHours * leaveHourly * mult.vacation);
+  const sickCost = cents(sickHours * sickHourly * mult.sick);
+  const vacationCost = cents(vacationHours * vacationHourly * mult.vacation);
   const nightPremium = cents(nightPremiumRaw);
   const grossWages = regularCost + overtimeCost + prevailingCost + nightPremium + guaranteeCost + sickCost + vacationCost;
 
@@ -553,7 +591,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       regular: regularCost, overtime: overtimeCost, prevailing: prevailingCost,
       night: nightPremium,
       sick: sickCost, vacation: vacationCost, guarantee: guaranteeCost,
-      sickRate: cents(leaveHourly * mult.sick), vacationRate: cents(leaveHourly * mult.vacation),
+      sickRate: cents(sickHourly * mult.sick), vacationRate: cents(vacationHourly * mult.vacation),
     },
     rates: { rate, rateType, prevailingWageRate: prevRate, overtimeMultiplier: otMult, sickPct: settings.sick_pay_pct, vacationPct: settings.vacation_pay_pct, ...(rateChanges.length > 1 ? { changes: rateChanges } : {}) },
     deductions: stub.deductions,

@@ -534,3 +534,43 @@ CREATE TABLE IF NOT EXISTS company_default_rate_history (
   CONSTRAINT chk_company_default_rate_history_nonneg CHECK (rate >= 0),
   CONSTRAINT uq_company_default_rate_history_company_date UNIQUE (company_id, effective_date)
 );
+
+-- 0211: ledger of range-level pay (leave, weekly guarantee, min-daily floors)
+-- billed to contractors on QuickBooks Bills — see migrations/0211_qbo_bill_range_pay.sql.
+CREATE TABLE IF NOT EXISTS qbo_bill_range_pay (
+  id            SERIAL PRIMARY KEY,
+  company_id    UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL,
+  pay_date      DATE NOT NULL,
+  amount_cents  BIGINT NOT NULL,
+  hours         NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  qbo_bill_id   TEXT,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_qbo_bill_range_pay_kind CHECK (kind IN ('daily_floor', 'weekly_guarantee', 'sick', 'vacation')),
+  CONSTRAINT uq_qbo_bill_range_pay UNIQUE (company_id, user_id, kind, pay_date)
+);
+CREATE INDEX IF NOT EXISTS idx_qbo_bill_range_pay_company_date ON qbo_bill_range_pay (company_id, pay_date);
+-- Security hardening (0212): MFA brute-force/replay state + Stripe webhook de-dupe.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_failed_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_locked_until    TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_last_used_step  BIGINT;
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  event_id    TEXT        PRIMARY KEY,
+  event_type  TEXT,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_received_at ON stripe_webhook_events (received_at);
+-- 0210: effective-dated company prevailing-wage fallback (settings.prevailing_wage_rate
+-- is its current-rate cache) — see migrations/0210_company_prevailing_rate_history.sql.
+CREATE TABLE IF NOT EXISTS company_prevailing_rate_history (
+  id             SERIAL PRIMARY KEY,
+  company_id     UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  rate           NUMERIC(10,2) NOT NULL,
+  effective_date DATE NOT NULL,
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note           TEXT,
+  CONSTRAINT chk_company_prevailing_rate_history_nonneg CHECK (rate >= 0),
+  CONSTRAINT uq_company_prevailing_rate_history_company_date UNIQUE (company_id, effective_date)
+);

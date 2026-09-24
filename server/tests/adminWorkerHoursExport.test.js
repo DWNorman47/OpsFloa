@@ -47,15 +47,27 @@ describe('GET /admin/export/worker-hours', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
-  test('computes Regular/OT/Total + days per worker (approved, daily OT@8)', async () => {
-    pool.query
-      .mockResolvedValueOnce({ rows: [{ key: 'overtime_threshold', value: '8' }] }) // getSettings
-      .mockResolvedValueOnce({ rows: [{ id: 5, full_name: 'Alex Rivera', invoice_name: null, overtime_rule: 'daily' }] }) // workers
-      .mockResolvedValueOnce({ rows: [ // approved entries
-        { user_id: 5, wage_type: 'regular', start_time: '08:00', end_time: '18:00', work_date: '2026-06-01', break_minutes: 0 }, // 10h → 8 reg + 2 OT
-        { user_id: 5, wage_type: 'regular', start_time: '08:00', end_time: '14:00', work_date: '2026-06-02', break_minutes: 0 }, // 6h → 6 reg
-      ] });
+  // The export prices hours through the SAME loader as payroll (companyStatements):
+  // SQL-dispatching fake, date-filtered by the query's own bounds.
+  function mockExportDb({ settings = [], workers = [], entries = [] }) {
+    pool.query.mockImplementation(async (sql, p = []) => {
+      if (/FROM settings/.test(sql)) return { rows: settings };
+      if (/FROM users/.test(sql)) return { rows: workers };
+      if (/FROM time_entries/.test(sql) && /start_time/.test(sql)) {
+        return { rows: entries.filter(e => e.work_date >= p[1] && e.work_date <= p[2]) };
+      }
+      return { rows: [] };
+    });
+  }
+  const W5 = { id: 5, full_name: 'Alex Rivera', invoice_name: null, overtime_rule: 'daily', role_id: null, hourly_rate: '20', rate_type: 'hourly', guaranteed_weekly_hours: 0, worker_type: 'employee' };
+  const E = (d, start, end, over = {}) => ({ id: d + start, user_id: 5, project_id: null, wage_type: 'regular', start_time: start, end_time: end, work_date: d, break_minutes: 0, overtime_hours_override: null, ...over });
 
+  test('computes Regular/OT/Total + days per worker (approved, daily OT@8)', async () => {
+    mockExportDb({
+      settings: [{ key: 'overtime_threshold', value: '8' }],
+      workers: [W5],
+      entries: [E('2026-06-01', '08:00', '18:00'), E('2026-06-02', '08:00', '14:00')], // 10h → 8+2 OT; 6h
+    });
     const res = await request(makeApp()).get('/api/admin/export/worker-hours?from=2026-06-01&to=2026-06-30');
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/);
@@ -63,24 +75,48 @@ describe('GET /admin/export/worker-hours', () => {
     expect(lines[0]).toBe('Worker,Regular Hrs,OT Hrs,Total Hrs,Days Worked');
     expect(lines).toContain('"Alex Rivera",14.00,2.00,16.00,2');
     expect(lines[lines.length - 1]).toBe('"TOTAL",14.00,2.00,16.00,2');
-    // approved-only filter present
-    expect(pool.query.mock.calls[2][0]).toMatch(/status = 'approved'/);
+    // approved-only filter present on the entries query
+    const entriesSql = pool.query.mock.calls.map(c => c[0]).find(q => /FROM time_entries te/.test(q) && /start_time/.test(q));
+    expect(entriesSql).toMatch(/status = 'approved'/);
   });
 
-  test('honors worker_access_ids scope in both queries', async () => {
+  test('weekly OT sees the whole week (full-week loading), like payroll', async () => {
+    // Weekly 40h. Mon–Tue 06-01/02 are OUTSIDE the range but in the same week;
+    // Wed–Fri are in range. Week = 50h → Friday's 10h are OT and fall in range.
+    mockExportDb({
+      settings: [{ key: 'overtime_rule', value: 'weekly' }, { key: 'overtime_threshold', value: '40' }],
+      workers: [{ ...W5, overtime_rule: 'weekly' }],
+      entries: ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05'].map(d => E(d, '08:00', '18:00')),
+    });
+    const res = await request(makeApp()).get('/api/admin/export/worker-hours?from=2026-06-03&to=2026-06-09');
+    expect(res.status).toBe(200);
+    expect(res.text.split(/\r?\n/)).toContain('"Alex Rivera",20.00,10.00,30.00,3'); // was 30.00,0.00
+  });
+
+  test('honors overtime_hours_override (loads it, like payroll)', async () => {
+    mockExportDb({
+      settings: [{ key: 'overtime_threshold', value: '8' }],
+      workers: [W5],
+      entries: [E('2026-06-01', '08:00', '16:00', { overtime_hours_override: 3 })],
+    });
+    const res = await request(makeApp()).get('/api/admin/export/worker-hours?from=2026-06-01&to=2026-06-07');
+    expect(res.status).toBe(200);
+    expect(res.text.split(/\r?\n/)).toContain('"Alex Rivera",5.00,3.00,8.00,1');
+    const entriesSql = pool.query.mock.calls.map(c => c[0]).find(q => /FROM time_entries te/.test(q) && /start_time/.test(q));
+    expect(entriesSql).toMatch(/overtime_hours_override/);
+    expect(entriesSql).toMatch(/wage_type/);
+  });
+
+  test('honors worker_access_ids scope', async () => {
     setUser({ worker_access_ids: [5, 6] });
-    pool.query
-      .mockResolvedValueOnce({ rows: [] })  // settings
-      .mockResolvedValueOnce({ rows: [] })  // workers
-      .mockResolvedValueOnce({ rows: [] }); // entries
+    mockExportDb({ workers: [W5], entries: [E('2026-06-01', '08:00', '12:00'), E('2026-06-01', '13:00', '17:00', { user_id: 9 })] });
     const res = await request(makeApp()).get('/api/admin/export/worker-hours?from=2026-06-01&to=2026-06-30');
     expect(res.status).toBe(200);
-    const [workersSql, workersParams] = pool.query.mock.calls[1];
-    const [entriesSql, entriesParams] = pool.query.mock.calls[2];
-    expect(workersSql).toMatch(/id = ANY\(/);
-    expect(entriesSql).toMatch(/user_id = ANY\(/);
-    expect(workersParams).toContainEqual([5, 6]);
-    expect(entriesParams).toContainEqual([5, 6]);
+    const workersCall = pool.query.mock.calls.find(c => /FROM users/.test(c[0]));
+    expect(workersCall[0]).toMatch(/id = ANY\(/);
+    expect(workersCall[1]).toContainEqual([5, 6]);
+    // Only in-scope workers are priced / listed.
+    expect(res.text.split(/\r?\n/)[res.text.split(/\r?\n/).length - 1]).toBe('"TOTAL",4.00,0.00,4.00,1');
   });
 });
 
@@ -112,6 +148,7 @@ describe('GET /admin/certified-payroll classification attribution', () => {
       .mockResolvedValueOnce({ rows: [] }) // worker_rate_history
       .mockResolvedValueOnce({ rows: [] }) // project_prevailing_rate_history
       .mockResolvedValueOnce({ rows: [] }) // company_default_rate_history
+      .mockResolvedValueOnce({ rows: [] }) // company_prevailing_rate_history (0210)
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });

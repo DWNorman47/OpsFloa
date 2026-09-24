@@ -176,23 +176,49 @@ describe('contractor bills come from the pay engine', () => {
 
 describe('range-level pay (weekly guarantee) is billed once', () => {
   const week = { from: '2026-04-06', to: '2026-04-12' }; // Mon–Sun
-  test('first bill for the range includes the guarantee top-up; a follow-up bill does not', async () => {
+  // The 0211 ledger (qbo_bill_range_pay) persisted across the two pushes.
+  function withLedger(ledger) {
+    const base = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, params) => {
+      const s = String(sql);
+      if (/FROM qbo_bill_range_pay/.test(s)) return { rows: ledger.map(r => ({ ...r })) };
+      if (/INSERT INTO qbo_bill_range_pay/.test(s)) {
+        const [, uids, kinds, dates, amounts, hours] = params;
+        uids.forEach((uid, i) => {
+          const hit = ledger.find(l => l.user_id === uid && l.kind === kinds[i] && l.pay_date === dates[i]);
+          if (hit) Object.assign(hit, { amount_cents: amounts[i], hours: hours[i] });
+          else ledger.push({ user_id: uid, kind: kinds[i], pay_date: dates[i], amount_cents: amounts[i], hours: hours[i] });
+        });
+        return { rows: [], rowCount: uids.length };
+      }
+      return base(sql, params);
+    });
+  }
+  test('first bill includes the guarantee top-up; a follow-up bill trues it up instead of billing it again', async () => {
+    const ledger = [];
     installDb({ timeRows: [timeRow({ id: 1, work_date: '2026-04-06', guaranteed_weekly_hours: 40 })] });
+    withLedger(ledger);
     qbo.createBill.mockResolvedValueOnce({ Id: 'B-1' });
     await request(makeApp()).post('/api/qbo/push-bills').send(week);
     const first = qbo.createBill.mock.calls[0][1].lines;
     expect(first.find(l => /guaranteed-hours/.test(l.description)).amount).toBe(960); // 32h × $30
     expect(lineTotal(first)).toBe(1200);
+    expect(ledger).toEqual([expect.objectContaining({ kind: 'weekly_guarantee', pay_date: '2026-04-06', amount_cents: 96000 })]);
 
     installDb({ timeRows: [
       timeRow({ id: 1, work_date: '2026-04-06', guaranteed_weekly_hours: 40, qbo_bill_id: 'B-1' }),
       timeRow({ id: 2, work_date: '2026-04-07', guaranteed_weekly_hours: 40 }),
     ] });
+    withLedger(ledger);
     qbo.createBill.mockResolvedValueOnce({ Id: 'B-2' });
     await request(makeApp()).post('/api/qbo/push-bills').send(week);
     const second = qbo.createBill.mock.calls[1][1].lines;
-    expect(second.some(l => /guaranteed-hours/.test(l.description))).toBe(false);
-    expect(lineTotal(second)).toBe(240);
+    // 16h worked is still a 40h week: the new 8h ($240) replaces 8h of the
+    // guarantee already billed (−$240) — the worker is billed $1,200 total, not
+    // $1,440 (old code billed the new day on top of the full top-up).
+    expect(second.find(l => /guaranteed-hours/.test(l.description)).amount).toBe(-240);
+    expect(lineTotal(second)).toBe(0);
+    expect(ledger[0].amount_cents).toBe(72000);
   });
 });
 

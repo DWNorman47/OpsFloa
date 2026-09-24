@@ -435,8 +435,9 @@ describe('POST /api/qbo/push-bills', () => {
     expect(res.body.pushed).toEqual([]);
     expect(res.body.skipped).toHaveLength(1);
     expect(res.body.skipped[0].reason).toMatch(/Item inactive/);
-    // 7 reads (settings, realm, ot settings, time, reimb, leave requests, leave shifts), 0 updates
-    expect(pool.query).toHaveBeenCalledTimes(7);
+    // 8 reads (settings, realm, ot settings, time, reimb, leave requests, leave shifts,
+    // range-pay ledger), 0 updates
+    expect(pool.query).toHaveBeenCalledTimes(8);
   });
 
   test('pushes an overtime premium line for OT hours', async () => {

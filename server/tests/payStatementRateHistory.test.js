@@ -237,7 +237,7 @@ describe('loaders price at the dated rate', () => {
     const out = await companyStatements({ companyId: 'co', workers: [worker()], settings: SETTINGS, from: '2026-07-06', to: '2026-07-12' });
     expect(out.get(1).cost.regular).toBe(848);
     const sqls = pool.query.mock.calls.map(c => c[0]);
-    expect(sqls.filter(s => /rate_history/.test(s))).toHaveLength(3); // batched: one per history
+    expect(sqls.filter(s => /rate_history/.test(s))).toHaveLength(4); // batched: one per history (incl. company prevailing, 0210)
   });
 
   test('workerStatement (worker invoice, ruleset pay stubs)', async () => {

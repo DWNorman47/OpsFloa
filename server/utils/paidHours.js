@@ -1,7 +1,8 @@
 const pool = require('../db');
 const { ADMIN_SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { roundEntriesFromSettings, otConfigFromSettings, sickRulesFromSettings, sickRulesByRoleFactory } = require('./hoursRules');
-const { computeOT, shiftHoursByDate, computeLeaveHours } = require('./payCalculations');
+const { computeOT, shiftHoursByDate, computeLeaveHours, entryDuration } = require('./payCalculations');
+const { workerRateOn, loadRateBookForLaborRows } = require('./rateHistory');
 
 /**
  * The ONE way to turn raw punches into paid hours and money.
@@ -139,6 +140,14 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
 // hours ($200/day × 8h = $1600), and 'unpaid' workers were costed. Only the
 // worked-hours lines count (regular, OT, prevailing, night premium); leave, the
 // weekly guarantee and deductions are period concepts, not job cost.
+//
+// `opts.dayContext` (loadLaborDayContext): the same workers' REGULAR rows on the
+// same days on OTHER projects. A daily-rate worker is paid ONE day rate for a day,
+// however many projects share it; priced per project, a day split 4h/4h across
+// A and B cost a full day on each (2× the real cost). With the context, each
+// project carries its hours' share of the day — exactly how the QBO bill splits a
+// daily rate (routes/qbo.js billLabor). Hourly workers are unaffected. Rows are
+// matched by te.id so the entries themselves are never counted as context.
 function laborCostCents(entries, settings, opts = {}) {
   // Lazy: payStatement requires this module.
   const { buildPayStatement } = require('./payStatement');
@@ -151,8 +160,20 @@ function laborCostCents(entries, settings, opts = {}) {
     byWorker.get(k).push({ ...e });
   }
 
+  // Other-project regular rows per worker (never one of `entries` itself).
+  const ctxByWorker = new Map();
+  if (Array.isArray(opts.dayContext) && opts.dayContext.length) {
+    const own = new Set((entries || []).filter(e => e && e.id != null).map(e => String(e.id)));
+    for (const c of opts.dayContext) {
+      if (!c || c.id == null || own.has(String(c.id)) || c.wage_type !== 'regular') continue;
+      const k = c.user_id ?? 'unknown';
+      if (!ctxByWorker.has(k)) ctxByWorker.set(k, []);
+      ctxByWorker.get(k).push({ ...c });
+    }
+  }
+
   let dollars = 0;
-  for (const rows of byWorker.values()) {
+  for (const [workerKey, rows] of byWorker.entries()) {
     const first = rows[0];
     if (first.worker_type === 'unpaid') continue; // tracked, never paid → no labor cost
     const roleId = first.role_id ?? null;
@@ -168,12 +189,13 @@ function laborCostCents(entries, settings, opts = {}) {
       if (r.project_id != null && Number.isFinite(pr)) projectRateMap[r.project_id] = pr;
     }
     const paid = roundEntriesFromSettings(rows, s, roleId != null ? { workerRoleById: { [userId]: roleId } } : {});
+    const workerRow = {
+      id: userId, hourly_rate: first.rate, rate_type: first.rate_type || 'hourly',
+      overtime_rule: first.ot_rule ?? null, role_id: roleId, worker_type: first.worker_type,
+      guaranteed_weekly_hours: 0,
+    };
     const st = buildPayStatement({
-      worker: {
-        id: userId, hourly_rate: first.rate, rate_type: first.rate_type || 'hourly',
-        overtime_rule: first.ot_rule ?? null, role_id: roleId, worker_type: first.worker_type,
-        guaranteed_weekly_hours: 0,
-      },
+      worker: workerRow,
       entries: paid,
       otConfig: otConfigFromSettings(s, roleId, userId),
       projectRateMap,
@@ -183,6 +205,33 @@ function laborCostCents(entries, settings, opts = {}) {
       rateBook: opts.rateBook || null,
     });
     dollars += st.cost.regular + st.cost.overtime + st.cost.prevailing + st.cost.night;
+
+    // Daily-rate days shared with other projects: the statement paid this project a
+    // WHOLE day; keep only its hours' share (the rest is the other projects').
+    const ctx = ctxByWorker.get(workerKey);
+    if (ctx && ctx.length) {
+      const ctxPaid = roundEntriesFromSettings(ctx, s, roleId != null ? { workerRoleById: { [userId]: roleId } } : {});
+      const hoursByDay = list => {
+        const m = new Map();
+        for (const e of list) {
+          if (e.wage_type !== 'regular') continue;
+          const d = String(e.work_date).substring(0, 10);
+          m.set(d, (m.get(d) || 0) + entryDuration(e));
+        }
+        return m;
+      };
+      const ownDays = hoursByDay(paid), otherDays = hoursByDay(ctxPaid);
+      const legacyDayRate = parseFloat(first.rate) || parseFloat(s.default_hourly_rate) || 0;
+      for (const [d, ownH] of ownDays) {
+        const otherH = otherDays.get(d) || 0;
+        if (!(otherH > 0)) continue;
+        const r = opts.rateBook
+          ? workerRateOn(opts.rateBook, workerRow, d, s)
+          : { rate: legacyDayRate, rateType: first.rate_type === 'daily' ? 'daily' : 'hourly' };
+        if (r.rateType !== 'daily') continue;
+        dollars -= (r.rate || 0) * otherH / (ownH + otherH);
+      }
+    }
   }
   if (opts.includeBurden) {
     const burden = parseFloat(settings?.labor_burden_pct);
@@ -210,8 +259,9 @@ function laborCostCents(entries, settings, opts = {}) {
 // only the CURRENT-rate fallback for workers / projects with no rate history.
 // start_ts / end_ts / timezone feed entryDuration's DST correction (a shift across a
 // DST change is ±1h vs its wall-clock TIMEs); without them the correction is 0.
+// te.id lets laborCostCents tell an entry apart from its day context (see there).
 const LABOR_ENTRY_COLUMNS = `
-  te.company_id, te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
+  te.id, te.company_id, te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
   te.wage_type, te.overtime_hours_override, te.project_id,
   te.start_ts, te.end_ts, te.timezone,
   (SELECT lp.prevailing_wage_rate FROM projects lp WHERE lp.id = te.project_id) AS prevailing_rate,
@@ -220,6 +270,52 @@ const LABOR_ENTRY_COLUMNS = `
   u.worker_type AS worker_type,
   u.overtime_rule AS ot_rule,
   u.role_id AS role_id`;
+
+/**
+ * Day context for laborCostCents: every REGULAR entry (any project) of the
+ * workers in `rows` on the dates in `rows` where the worker is on a DAILY rate
+ * (per the rate book when given, else the row's current rate_type). One query,
+ * and none at all when no row is a daily-rate day. `includePending` mirrors the
+ * caller's status filter (spend / WIP count pending; invoices approved only).
+ */
+async function loadLaborDayContext(rows, { rateBook = null, settings = {}, includePending = false, db = pool } = {}) {
+  const list = (rows || []).filter(r => r && r.company_id && r.user_id != null && r.work_date);
+  if (!list.length) return [];
+  const companyId = list[0].company_id;
+  const pairs = new Map();
+  for (const r of list) {
+    if (r.company_id !== companyId || r.wage_type !== 'regular') continue;
+    const d = String(r.work_date).substring(0, 10);
+    const type = rateBook
+      ? workerRateOn(rateBook, { id: r.user_id, hourly_rate: r.rate, rate_type: r.rate_type }, d, settings).rateType
+      : (r.rate_type === 'daily' ? 'daily' : 'hourly');
+    if (type === 'daily') pairs.set(`${r.user_id}|${d}`, [Number(r.user_id), d]);
+  }
+  if (!pairs.size) return [];
+  const keys = [...pairs.values()];
+  const res = await db.query(
+    `SELECT ${LABOR_ENTRY_COLUMNS}
+       FROM time_entries te
+       JOIN users u ON u.id = te.user_id
+       JOIN unnest($2::int[], $3::date[]) AS k(uid, d) ON k.uid = te.user_id AND k.d = te.work_date
+      WHERE te.company_id = $1
+        AND te.wage_type = 'regular'
+        AND te.start_time IS NOT NULL AND te.end_time IS NOT NULL
+        AND ${includePending ? "te.status != 'rejected'" : "te.status = 'approved'"}`,
+    [companyId, keys.map(k => k[0]), keys.map(k => k[1])]
+  );
+  return (res && res.rows) || [];
+}
+
+/**
+ * Everything laborCostCents needs beyond the rows: the effective-dated rate book
+ * and the daily-rate day context. `{ rateBook, dayContext }` — spread into opts.
+ */
+async function loadLaborCostOpts(rows, settings, { includePending = false, db = pool } = {}) {
+  const rateBook = await loadRateBookForLaborRows(rows, db);
+  const dayContext = await loadLaborDayContext(rows, { rateBook, settings, includePending, db });
+  return { rateBook, dayContext };
+}
 
 /**
  * Paid-leave pay multipliers from settings: sick and vacation each as a fraction
@@ -306,6 +402,8 @@ module.exports = {
   otRuleFromSettings,
   computePaid,
   laborCostCents,
+  loadLaborDayContext,
+  loadLaborCostOpts,
   computeWorkerLeave,
   computeCompanyLeave,
   leaveRateMultipliers,

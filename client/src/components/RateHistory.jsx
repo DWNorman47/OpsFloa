@@ -20,6 +20,7 @@ const PATHS = {
   worker: id => `/admin/workers/${id}/rate-history`,
   project: id => `/admin/projects/${id}/prevailing-rate-history`,
   company: () => '/admin/company/default-rate-history',
+  company_prevailing: () => '/admin/company/prevailing-rate-history', // 0210
 };
 
 const fill = (s, vars) => String(s || '').replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? vars[k] : ''));
@@ -32,13 +33,18 @@ export function localToday() {
 }
 
 /**
- * Run `send(confirmLocked)`; on a 409 locked_periods answer, ask the admin to
- * confirm (naming the locked periods) and resend with confirmLocked = true.
+ * Run `send(confirmLocked, axiosOpts)`; on a 409 locked_periods answer, ask the
+ * admin to confirm (naming the locked periods) and resend with confirmLocked = true.
  * Resolves to the response, or null when the admin cancelled.
+ *
+ * The first send gets `{ suppressToast: true }` (spread it into the axios config):
+ * its expected 409 would otherwise flash the global red error toast behind the
+ * confirm. Callers render / rethrow any other error themselves. (api.js also never
+ * toasts a `locked_periods` 409, for callers that ignore the opts.)
  */
 export async function withLockedConfirm(send, confirm, t) {
   try {
-    return await send(false);
+    return await send(false, { suppressToast: true });
   } catch (err) {
     const d = err?.response?.data;
     if (err?.response?.status !== 409 || d?.code !== 'locked_periods') throw err;
@@ -106,7 +112,7 @@ export default function RateHistory({ kind, ownerId, currency, allowAdd = false,
         note: form.note || undefined,
         ...(kind === 'worker' && form.rate_type ? { rate_type: form.rate_type } : {}),
       };
-      const res = await withLockedConfirm(c => api.post(path, { ...body, confirm_locked: c }), confirm, t);
+      const res = await withLockedConfirm((c, opts) => api.post(path, { ...body, confirm_locked: c }, opts), confirm, t);
       if (res) { apply(res); setForm(f => ({ ...f, rate: '', note: '' })); }
     } catch (err) {
       setError(err?.response?.data?.error || t.failedSave);
@@ -118,7 +124,7 @@ export default function RateHistory({ kind, ownerId, currency, allowAdd = false,
     if (!await confirm({ title: t.rhDeleteTitle, body: fill(t.rhDeleteBody, { date: label }), confirmLabel: t.delete, tone: 'danger' })) return;
     setBusy(true); setError('');
     try {
-      const res = await withLockedConfirm(c => api.delete(`${path}/${row.id}`, { data: { confirm_locked: c } }), confirm, t);
+      const res = await withLockedConfirm((c, opts) => api.delete(`${path}/${row.id}`, { ...opts, data: { confirm_locked: c } }), confirm, t);
       apply(res);
     } catch (err) {
       setError(err?.response?.data?.error || t.failedSave);

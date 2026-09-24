@@ -154,29 +154,32 @@ describe('isValidDate / dayKey', () => {
 
 describe('loadRateBook — batched, one query per history', () => {
   beforeEach(() => pool.query.mockReset());
-  test('three queries, scoped by company + ids + upper date bound', async () => {
+  test('four queries (one per history), scoped by company + ids + upper date bound', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ user_id: 1, hourly_rate: '20', rate_type: 'hourly', effective_date: '1900-01-01' }] })
       .mockResolvedValueOnce({ rows: [{ project_id: 3, rate: '45', effective_date: '1900-01-01' }] })
-      .mockResolvedValueOnce({ rows: [{ rate: '30', effective_date: '1900-01-01' }] });
+      .mockResolvedValueOnce({ rows: [{ rate: '30', effective_date: '1900-01-01' }] })
+      .mockResolvedValueOnce({ rows: [{ rate: '45', effective_date: '1900-01-01' }] });
     const b = await loadRateBookForEntries('co', [
       { user_id: 1, project_id: 3, work_date: '2026-07-06' },
       { user_id: 1, project_id: null, work_date: '2026-07-10' },
     ]);
-    expect(pool.query).toHaveBeenCalledTimes(3);
+    expect(pool.query).toHaveBeenCalledTimes(4);
     const [wSql, wArgs] = pool.query.mock.calls[0];
     expect(wSql).toMatch(/FROM worker_rate_history/);
     expect(wArgs).toEqual(['co', [1], '2026-07-10']);
     expect(pool.query.mock.calls[1][1]).toEqual(['co', [3], '2026-07-10']);
     expect(pool.query.mock.calls[2][1]).toEqual(['co', '2026-07-10']);
+    expect(pool.query.mock.calls[3][0]).toMatch(/FROM company_prevailing_rate_history/);
     expect(workerRateOn(b, { id: 1 }, '2026-07-06').rate).toBe(20);
     expect(prevailingRateOn(b, 3, '2026-07-06')).toBe(45);
   });
   test('empty id lists skip their query', async () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
     await loadRateBook({ companyId: 'co', userIds: [], projectIds: [], to: null });
-    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledTimes(2); // the two company-level histories
     expect(pool.query.mock.calls[0][0]).toMatch(/company_default_rate_history/);
+    expect(pool.query.mock.calls[1][0]).toMatch(/company_prevailing_rate_history/);
   });
 });
 
