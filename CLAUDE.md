@@ -52,6 +52,8 @@
 - **Worklog.** After a task, append a short report to `docs/WORKLOG.md` — findings
   and judgment calls, not a second git log. Parked bugs/ideas → `docs/BACKLOG.md`;
   feature designs → `docs/plans/*.md`.
+- **Owner follow-ups.** Actions/decisions that need David (secrets to set, choices,
+  pre-merge test checklist) live in `docs/FOLLOW-UP.md` — add to it, and remind him of open items.
 
 ## Pay math (money-critical)
 - All four pay surfaces — worker invoice, overtime report, payroll CSV, pay stubs —
