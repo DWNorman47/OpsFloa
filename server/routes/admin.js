@@ -685,8 +685,8 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
       entryResult = await client.query(
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
-            clock_in_lat, clock_in_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            clock_in_lat, clock_in_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, clock_in_late_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING *`,
         [
           companyId, clock.user_id, clock.project_id, clock.work_date,
@@ -695,6 +695,7 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
           Math.max(0, parseInt(break_minutes) || 0), mileageVal,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
+          clock.clock_in_late_minutes ?? null,
         ]
       );
       await client.query('DELETE FROM active_clock WHERE user_id = $1', [clock.user_id]);
@@ -720,7 +721,8 @@ router.patch('/active-clock/:user_id', requireAdmin, requirePerm('manage_workers
   if (!/^\d{2}:\d{2}(:\d{2})?$/.test(clock_in_time)) return res.status(400).json({ error: 'clock_in_time must be HH:MM or HH:MM:SS' });
   try {
     const result = await pool.query(
-      `UPDATE active_clock SET clock_in_time = $1
+      // An admin setting the time has verified it — clear the late-clock-in flag.
+      `UPDATE active_clock SET clock_in_time = $1, clock_in_late_minutes = NULL
        WHERE user_id = $2 AND company_id = $3
        RETURNING *`,
       [clock_in_time, req.params.user_id, companyId]
@@ -1991,7 +1993,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
           // Pass regular_shift_hours so daily OT prices at daily ÷ standard day, matching
           // the worker invoice (buildPayStatement); the 7th arg defaulted to 8 before.
           const dailyHours = parseFloat(settings.regular_shift_hours) || 8;
-          const dc = computeDailyPayCosts(reg, overtime_rule, bandThreshold, rate, settings.overtime_multiplier, otConfig, dailyHours);
+          const dc = computeDailyPayCosts(reg, overtime_rule, bandThreshold, rate, settings.overtime_multiplier, otConfig, dailyHours, settings.week_start);
           regularCost += dc.regularCost; overtimeCost += dc.overtimeCost;
         } else {
           regularCost += rh * rate;

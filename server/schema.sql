@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS time_entries (
   timezone        VARCHAR(50),
   client_id       VARCHAR(36),
   long_shift_flagged BOOLEAN    NOT NULL DEFAULT false,  -- multi-day/forgotten clock-out whose wall-clock hours are truncated (see 0196)
+  clock_in_late_minutes INTEGER,  -- claimed clock-in was this many minutes before the server got it (see 0200)
   created_at      TIMESTAMP     NOT NULL DEFAULT NOW(),
   CONSTRAINT time_entries_break_minutes_nonneg CHECK (break_minutes IS NULL OR break_minutes >= 0)  -- see 0195
 );
@@ -151,6 +152,7 @@ CREATE TABLE IF NOT EXISTS active_clock (
   work_date      DATE          NOT NULL,
   notes          TEXT,
   timezone       VARCHAR(50),
+  clock_in_late_minutes INTEGER,  -- see 0200
   created_at     TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
@@ -321,9 +323,12 @@ CREATE TABLE IF NOT EXISTS punchlist_items (
   assigned_to INTEGER      REFERENCES users(id) ON DELETE SET NULL,
   created_by  INTEGER      NOT NULL REFERENCES users(id),
   resolved_at TIMESTAMP,
+  client_request_id TEXT,  -- offline-replay idempotency key (see 0201)
   created_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_punchlist_items_client_request
+  ON punchlist_items (company_id, client_request_id) WHERE client_request_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- safety_talks

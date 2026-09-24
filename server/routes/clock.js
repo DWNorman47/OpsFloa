@@ -6,9 +6,10 @@ const { haversineDistanceFt } = require('../utils/geoUtils');
 const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
-const { otThreshold } = require('../utils/paidHours');
+const { otThreshold, otRuleFromSettings } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
 const { wallClockInTZ, validLocalTime, entryInstants, isTruncatedLongShift } = require('../utils/timeFormat');
+const { resolveClientClockTime } = require('../utils/clientClockTime');
 const { autoStartDayTx } = require('../utils/dailyChecklistCore');
 const {
   loadWeekStart, loadPriorHours, evaluateGate, pickOverflowTarget,
@@ -211,9 +212,11 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     }
 
     // Use client-supplied clock_in_time (captured at button-press, before GPS wait).
-    // Falls back to NOW() if not provided or unparseable.
-    const parsedClockInTime = clock_in_time ? new Date(clock_in_time) : null;
-    const clockInTs = parsedClockInTime && !isNaN(parsedClockInTime) ? parsedClockInTime : null;
+    // Falls back to NOW() if not provided or unparseable; a future time is clamped
+    // to now, and an old one is kept but flagged (clock_in_late_minutes) for review.
+    const claimed = clock_in_time ? resolveClientClockTime(clock_in_time) : null;
+    const clockInTs = claimed ? claimed.ts : null;
+    const clockInLateMinutes = claimed ? claimed.lateMinutes : null;
 
     // Idempotency against a RESURRECTED shift. A clock-in queued offline can replay
     // after the shift has already been clocked out (a double queue-replay, or an out
@@ -243,11 +246,11 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     // an offline-queue replay is idempotent and the shift is preserved.
     // (Changing projects mid-shift is what /switch is for.)
     const result = await pool.query(
-      `INSERT INTO active_clock (user_id, company_id, project_id, clock_in_time, clock_in_lat, clock_in_lng, work_date, notes, timezone, clock_source, clocked_in_by)
-       VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6, COALESCE($7::date, CURRENT_DATE), $8, $9, $10, $11)
+      `INSERT INTO active_clock (user_id, company_id, project_id, clock_in_time, clock_in_lat, clock_in_lng, work_date, notes, timezone, clock_source, clocked_in_by, clock_in_late_minutes)
+       VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6, COALESCE($7::date, CURRENT_DATE), $8, $9, $10, $11, $12)
        ON CONFLICT (user_id) DO NOTHING
        RETURNING *`,
-      [req.user.id, companyId, effectiveProjectId, clockInTs, lat || null, lng || null, local_work_date || null, notes || null, timezone || null, 'worker', null]
+      [req.user.id, companyId, effectiveProjectId, clockInTs, lat || null, lng || null, local_work_date || null, notes || null, timezone || null, 'worker', null, clockInLateMinutes]
     );
 
     if (result.rowCount === 0) {
@@ -432,11 +435,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       }
     }
 
-    const switchInTs = (() => {
-      const parsed = clock_in_time ? new Date(clock_in_time) : null;
-      return parsed && !isNaN(parsed) ? parsed : new Date();
-    })();
-    const clockOutTime = new Date();
+    const { ts: switchInTs, lateMinutes: switchLateMinutes } = resolveClientClockTime(clock_in_time);
     // Wall-clock strings are computed after oldClock is loaded inside the
     // transaction below so we can use its timezone for the fallback.
 
@@ -449,7 +448,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
     try {
       await txClient.query('BEGIN');
       const clockResult = await txClient.query(
-        'SELECT user_id, company_id, project_id, clock_in_time, clock_in_lat, clock_in_lng, work_date, notes, timezone, clock_source, clocked_in_by FROM active_clock WHERE user_id = $1 FOR UPDATE',
+        'SELECT user_id, company_id, project_id, clock_in_time, clock_in_lat, clock_in_lng, work_date, notes, timezone, clock_source, clocked_in_by, clock_in_late_minutes FROM active_clock WHERE user_id = $1 FOR UPDATE',
         [req.user.id]
       );
       if (clockResult.rowCount === 0) {
@@ -477,27 +476,33 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       }
 
       const clockInTime = new Date(oldClock.clock_in_time);
+      // ONE switch instant closes the old segment and opens the new one. Ending the old
+      // segment at server NOW while the new one starts at the client's (possibly offline-
+      // replayed, earlier) press time overlapped the two = the overlap paid twice.
+      // Never before the old segment's own start.
+      const segmentEnd = switchInTs < clockInTime ? clockInTime : switchInTs;
       // Wall-clock fallback uses the worker's stored timezone instead of
       // server UTC. start_ts/end_ts are real instants written below, so
       // the legacy time columns just need to display correctly.
       const start_time = validLocalTime(local_clock_in)  || wallClockInTZ(clockInTime,  oldClock.timezone);
-      const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, oldClock.timezone);
+      const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(segmentEnd, oldClock.timezone);
 
       entryResult = await txClient.query(
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by, long_shift_flagged)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
          RETURNING *`,
         [
           companyId, req.user.id, oldClock.project_id, oldClock.work_date,
-          start_time, end_time, clockInTime, clockOutTime, oldWageType, oldClock.notes || null,
+          start_time, end_time, clockInTime, segmentEnd, oldWageType, oldClock.notes || null,
           oldClock.clock_in_lat, oldClock.clock_in_lng, lat || null, lng || null,
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           oldClock.timezone || null,
           oldClock.clock_source, oldClock.clocked_in_by,
-          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time), // a forgotten clock-out resolved via switch
+          isTruncatedLongShift(clockInTime, segmentEnd, start_time, end_time), // a forgotten clock-out resolved via switch
+          oldClock.clock_in_late_minutes ?? null,
         ]
       );
 
@@ -514,10 +519,11 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
              clocked_in_by = NULL,
              current_lat = NULL,
              current_lng = NULL,
-             location_updated_at = NULL
+             location_updated_at = NULL,
+             clock_in_late_minutes = $8
          WHERE user_id = $1
          RETURNING *`,
-        [req.user.id, project_id, switchInTs, lat || null, lng || null, local_work_date || null, timezone || oldClock.timezone || null]
+        [req.user.id, project_id, segmentEnd, lat || null, lng || null, local_work_date || null, timezone || oldClock.timezone || null, switchLateMinutes]
       );
       await txClient.query('COMMIT');
     } catch (err) {
@@ -543,7 +549,10 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
         if (!s.feature_overtime || !s.feature_overtime_alerts) return;
 
         const workDate = oldClock.work_date;
-        const rule = s.overtime_rule || 'daily';
+        // The worker's own overtime rule wins over the company's — same resolution as the
+        // pay engine, so the alert can't disagree with the pay stub.
+        const workerRuleRow = await pool.query('SELECT overtime_rule FROM users WHERE id = $1', [req.user.id]);
+        const rule = otRuleFromSettings(s, workerRuleRow.rows[0]?.overtime_rule);
         const threshold = otThreshold(s, rule);
         const calcH = (start, end, brk = 0) => {
           const startDate = new Date(`1970-01-01T${start}`);
@@ -603,8 +612,12 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
 async function recoverLostClockOut(req, res) {
   const companyId = req.user.company_id;
   const { project_id, work_date, timezone, notes, local_clock_in, local_clock_out, break_minutes, mileage, lat, lng, clock_in_time } = req.body;
-  const recoverTs = clock_in_time ? new Date(clock_in_time) : null;
-  if (!recoverTs || isNaN(recoverTs)) {
+  // The shift's clock-in never reached us, so its whole length is unverified:
+  // resolveClientClockTime flags it (late minutes ~ shift length) for approval
+  // and clamps a future time. Missing/unparseable -> nothing to rebuild from.
+  const recovered = clock_in_time && !isNaN(new Date(clock_in_time)) ? resolveClientClockTime(clock_in_time) : null;
+  const recoverTs = recovered ? recovered.ts : null;
+  if (!recoverTs) {
     // No clock-in evidence to rebuild from — behave as before.
     logFailure(req, 'clock.out', 'not_clocked_in');
     return res.status(400).json({ error: 'Not clocked in' });
@@ -648,11 +661,11 @@ async function recoverLostClockOut(req, res) {
     const ins = await txClient.query(
       `INSERT INTO time_entries
          (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
-          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, long_shift_flagged)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16) RETURNING *`,
+          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16,$17) RETURNING *`,
       [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
        lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null,
-       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time)]
+       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time), recovered.lateMinutes]
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
@@ -681,65 +694,78 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       // losing it (falls back to 400 when there's nothing to rebuild from).
       return await recoverLostClockOut(req, res);
     }
-    const clock = clockResult.rows[0];
-
-    // Clock-out must never strand a worker because projects were disabled,
-    // archived, or otherwise no longer resolve. Preserve the project when it
-    // still exists and projects are enabled; otherwise close the shift without it.
-    let wage_type = 'regular';
-    let project_name = null;
-    let entryProjectId = clock.project_id;
-    if (clock.project_id) {
-      const featureResult = await pool.query(
-        `SELECT value FROM settings
-         WHERE company_id = $1 AND key = 'feature_project_integration'`,
-        [companyId]
-      );
-      const projectsEnabled = featureResult.rowCount === 0 || featureResult.rows[0].value !== '0';
-      if (projectsEnabled) {
-        const projResult = await pool.query(
-          'SELECT wage_type, name FROM projects WHERE id = $1 AND company_id = $2',
-          [clock.project_id, companyId]
-        );
-        if (projResult.rowCount > 0) {
-          ({ wage_type, name: project_name } = projResult.rows[0]);
-        } else {
-          entryProjectId = null;
-          logger.warn({ project_id: clock.project_id, user_id: req.user.id }, 'clock out ignoring stale project');
-        }
-      } else {
-        entryProjectId = null;
-      }
-    }
-
-    // Use client-supplied local times if available — the modern client
-    // always sends them, but old PWA caches may not. The fallback used
-    // to be `getUTCHours()` etc., which stamped wall-clock times in UTC
-    // and silently mis-recorded shifts for any worker not in UTC. Now
-    // we use wallClockInTZ() against the worker's stored timezone (set
-    // on clock-in into active_clock.timezone). Phase-2 start_ts / end_ts
-    // are computed below from clockInTime/clockOutTime directly, so they
-    // remain correct regardless of the wall-clock fallback path.
-    const clockInTime = new Date(clock.clock_in_time);
+    const preRead = clockResult.rows[0];
     const clockOutTime = new Date();
-    const start_time = validLocalTime(local_clock_in) || wallClockInTZ(clockInTime, clock.timezone);
-    const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, clock.timezone);
 
     // Create the time entry and remove active clock atomically
     const txClient = await pool.connect();
     let entryResult;
+    let clock;
+    let wage_type = 'regular';
+    let project_name = null;
     try {
       await txClient.query('BEGIN');
       // The active_clock SELECT above is unlocked, so two concurrent /out calls
       // both read the row and, without this, both insert a time entry for the
-      // same shift (double pay). Re-check under a row lock: FOR UPDATE serializes
+      // same shift (double pay). Re-read under a row lock: FOR UPDATE serializes
       // the pair; the loser finds the row already gone and aborts with no entry.
-      const locked = await txClient.query('SELECT 1 FROM active_clock WHERE user_id = $1 FOR UPDATE', [req.user.id]);
+      // Build the entry from THIS locked row, not the unlocked pre-read: a /switch
+      // committing in between moves clock_in_time / project_id to the new segment,
+      // and closing from the stale copy re-paid the first segment and put the
+      // second on the wrong project.
+      const locked = await txClient.query(
+        'SELECT user_id, company_id, project_id, clock_in_time, clock_in_lat, clock_in_lng, work_date, notes, timezone, clock_source, clocked_in_by, clock_in_late_minutes FROM active_clock WHERE user_id = $1 FOR UPDATE',
+        [req.user.id]
+      );
       if (locked.rowCount === 0) {
         await txClient.query('ROLLBACK');
         logFailure(req, 'clock.out', 'not_clocked_in');
         return res.status(400).json({ error: 'Not clocked in' });
       }
+      clock = locked.rows[0];
+      const rowChanged = new Date(clock.clock_in_time).getTime() !== new Date(preRead.clock_in_time).getTime();
+
+      // Clock-out must never strand a worker because projects were disabled,
+      // archived, or otherwise no longer resolve. Preserve the project when it
+      // still exists and projects are enabled; otherwise close the shift without it.
+      let entryProjectId = clock.project_id;
+      if (clock.project_id) {
+        const featureResult = await txClient.query(
+          `SELECT value FROM settings
+           WHERE company_id = $1 AND key = 'feature_project_integration'`,
+          [companyId]
+        );
+        const projectsEnabled = featureResult.rowCount === 0 || featureResult.rows[0].value !== '0';
+        if (projectsEnabled) {
+          const projResult = await txClient.query(
+            'SELECT wage_type, name FROM projects WHERE id = $1 AND company_id = $2',
+            [clock.project_id, companyId]
+          );
+          if (projResult.rowCount > 0) {
+            ({ wage_type, name: project_name } = projResult.rows[0]);
+          } else {
+            entryProjectId = null;
+            logger.warn({ project_id: clock.project_id, user_id: req.user.id }, 'clock out ignoring stale project');
+          }
+        } else {
+          entryProjectId = null;
+        }
+      }
+
+      // Use client-supplied local times if available — the modern client
+      // always sends them, but old PWA caches may not. The fallback used
+      // to be `getUTCHours()` etc., which stamped wall-clock times in UTC
+      // and silently mis-recorded shifts for any worker not in UTC. Now
+      // we use wallClockInTZ() against the worker's stored timezone (set
+      // on clock-in into active_clock.timezone). Phase-2 start_ts / end_ts
+      // are computed below from clockInTime/clockOutTime directly, so they
+      // remain correct regardless of the wall-clock fallback path.
+      // (The client's local_clock_in describes the segment IT saw — ignore it
+      // if a switch replaced that segment under us.)
+      const clockInTime = new Date(clock.clock_in_time);
+      const start_time = (!rowChanged && validLocalTime(local_clock_in)) || wallClockInTZ(clockInTime, clock.timezone);
+      const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, clock.timezone);
+
       // Phase 2 dual-write: clockInTime / clockOutTime are already real UTC
       // instants, so we can write them straight to start_ts / end_ts without
       // round-tripping through wall-clock + TZ.
@@ -747,8 +773,8 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by, long_shift_flagged)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
          RETURNING *`,
         [
           companyId, req.user.id, entryProjectId, clock.work_date,
@@ -758,6 +784,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
           isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time),
+          clock.clock_in_late_minutes ?? null,
         ]
       );
       await txClient.query('DELETE FROM active_clock WHERE user_id = $1', [req.user.id]);
@@ -780,7 +807,10 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
 
         if (s.feature_overtime && s.feature_overtime_alerts) {
           const workDate = clock.work_date;
-          const rule = s.overtime_rule || 'daily';
+          // The worker's own overtime rule wins over the company's — same resolution as the
+          // pay engine, so the alert can't disagree with the pay stub.
+          const workerRuleRow = await pool.query('SELECT overtime_rule FROM users WHERE id = $1', [req.user.id]);
+          const rule = otRuleFromSettings(s, workerRuleRow.rows[0]?.overtime_rule);
           const threshold = otThreshold(s, rule);
 
           // Get all entries for this worker on the relevant period (before this new entry)

@@ -117,6 +117,13 @@ function suggestedOverrideFor(entry, rule, threshold) {
   return { h, m };
 }
 
+// "2h 5m" / "45m" for the late-clock-in badge.
+function lateLabel(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`;
+}
+
 // Human label for a time entry's clock source.
 function sourceLabel(src, t) {
   if (src === 'admin') return t.aqSourceAdmin;
@@ -873,6 +880,11 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       {e.long_shift_flagged && (
                         <span style={{ ...styles.wageTag, background: '#b91c1c' }} title={t.aqLongShiftTitle}>
                           ⚠ {t.aqLongShift}{spanHours(e) ? `: ${spanHours(e)}` : ''}
+                        </span>
+                      )}
+                      {e.clock_in_late_minutes > 0 && (
+                        <span style={{ ...styles.wageTag, background: '#c2410c' }} title={t.aqLateClockInTitle}>
+                          ⏱ {t.aqLateClockIn}: {lateLabel(e.clock_in_late_minutes)}
                         </span>
                       )}
                       {e.overtime_hours_override != null && (() => {
