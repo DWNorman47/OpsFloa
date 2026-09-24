@@ -91,19 +91,26 @@ export default defineConfig({
     sourcemap: sentryPlugins.length > 0,
     rollupOptions: {
       output: {
-        manualChunks: (id) => {
-          // Stable vendor libs — cached long-term separately from app code
-          if (!id.includes('node_modules')) return undefined;
-          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/.test(id)) {
-            return 'vendor-react';
-          }
-          if (/[\\/]node_modules[\\/](leaflet|react-leaflet)[\\/]/.test(id)) {
-            return 'vendor-leaflet';
-          }
-          if (/[\\/]node_modules[\\/]recharts[\\/]/.test(id)) {
-            return 'vendor-charts';
-          }
-          return undefined;
+        // Stable vendor libs — cached long-term separately from app code.
+        // codeSplitting groups, not the deprecated manualChunks shim: groups
+        // include their dependencies recursively by default, so with
+        // manualChunks Rolldown pulled React itself into vendor-charts and
+        // react-dom into vendor-leaflet (recharts / react-leaflet import them).
+        // vendor-react then imported both, index.html modulepreloaded ~190KB gz
+        // of charts + Leaflet on every page, and since both are excluded from
+        // the precache (globIgnores) an installed app opened offline couldn't
+        // boot — blank screen. vendor-react's higher priority claims React's
+        // runtime first; the lower-priority groups then only get their own code.
+        codeSplitting: {
+          groups: [
+            {
+              name: 'vendor-react',
+              test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|react-is|use-sync-external-store)[\\/]/,
+              priority: 3,
+            },
+            { name: 'vendor-leaflet', test: /[\\/]node_modules[\\/](leaflet|react-leaflet)[\\/]/, priority: 2 },
+            { name: 'vendor-charts', test: /[\\/]node_modules[\\/]recharts[\\/]/, priority: 1 },
+          ],
         },
         // Corporate web filters commonly block any asset URL containing
         // "admin", which silently 404'd the lazily-loaded admin/superadmin

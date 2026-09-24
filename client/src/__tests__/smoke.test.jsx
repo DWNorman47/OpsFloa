@@ -219,7 +219,9 @@ describe.each([['English'], ['Spanish']])('smoke: admin pages (%s)', (language) 
     // Business plan so the dashboard (not the upgrade prompt) renders.
     const { default: FinancialReportsPage } = await import('../pages/FinancialReportsPage');
     await smokeRender(<FinancialReportsPage />, { user: makeUser('admin', { plan: 'business' }) });
-  });
+    // The first import of the charts-heavy Reports page is slow (~1s alone, 6s+
+    // under a full `npm run verify`), which flaked the default 5s timeout.
+  }, 20000);
 
   test('ProjectsPage', async () => {
     const { default: ProjectsPage } = await import('../pages/ProjectsPage');

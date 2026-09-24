@@ -6572,3 +6572,42 @@ prod opsfloa.com is unaffected (preview *.vercel.app are auto-noindexed by Verce
 is already lazy code-split with no heavy-lib imports — no change needed; measure real CWV via
 PageSpeed on the deploy, and the only bigger lever if needed is splitting i18n by language.
 After deploy: in Search Console, URL-inspect https://opsfloa.com/ and Request Indexing.
+
+## Review pass: "Fix first" items (2026-09-24)
+Whole-repo review (security / pay / server / client), then fixed the 12 top items. Verify
+green (server 1670, client 321 + build).
+- **Pay engine.** otThreshold: the stored threshold belongs to the COMPANY rule; a worker
+  whose own rule differs gets that rule's default (weekly-worker-in-daily-company was paid OT
+  after 8h/week: $1120 vs $800). Weekly OT now computed over full weeks and attributed to the
+  period its dates fall in (a week straddling a semimonthly boundary lost its OT).
+  companyStatements selects overtime_hours_override (payroll CSV/OT report/QBO JE ignored it).
+  laborCostCents now prices through buildPayStatement (prevailing hours were $0 on T&M
+  invoices/P&L; daily-rate workers were rate x hours). computeDailyPayCosts honours week_start.
+  OT alerts + weekly payroll email use the worker's own rule too.
+- **QBO /push** only sends approved entries (bill path already did).
+- **Clock.** clock_in_time is still honoured (offline punches) but a future time is clamped
+  and >10 min old is flagged `clock_in_late_minutes` (0200) -> "Late clock-in" badge in
+  Approvals. Forgotten clock-ins belong in a manual entry (already `log_entry`-badged). /out
+  now builds the entry from the row it LOCKS (a racing /switch made it re-pay segment 1);
+  /switch ends segment 1 and starts segment 2 at the same instant (offline replay overlapped
+  them). Recovered lost-clock-out shifts are flagged late (their clock-in never reached us).
+- **R2 ownership.** Profile photos: foreign https URLs dropped, sizes never client-supplied,
+  deletes only company-owned `public-profiles/` keys (was: delete any tenant's file + quota
+  bypass). Takeoff/live PDFs: new keys `takeoffs/<cid>/`, pdfUrl must be under the caller's
+  prefix; traversal/encoded segments rejected. Legacy flat keys still readable (UUIDs).
+- **Offline queue.** Replay keeps items on 5xx/429/408/401 with backoff (was: deleted on any
+  non-OK = lost punches); drops only real 4xx and reports them; per-user ordering; stuck cap.
+  Idempotency-Key stamped before the first attempt; timeEntries/fieldReports/punchlist/
+  incidents dedupe (0201). 15s timeout so hung requests fall back to the queue.
+- **Server.** dailyChecklist double client.release() removed (could hand a live connection to
+  another request). The 10 bare `/api` plan-gated mounts -> one mount placed LAST;
+  /api/settings, /company-info, /availability were 403 for paid starter/free plans.
+  tests/indexMountOrder.test.js guards it.
+- **Client build.** manualChunks -> Rolldown codeSplitting groups with priority: React's runtime
+  had been hoisted into vendor-charts/leaflet, so every page modulepreloaded ~190KB gz of
+  charts+maps that weren't precached -> blank screen when an installed app opened offline.
+- Smoke test "Reports - Performance tab" given a 20s timeout (flaked at 6s under full verify).
+Follow-ups (next tier of the review): 401 logs out on wrong password, no axios timeout, SSE
+token in logs / not revalidated, QBO OAuth CSRF, bill breaks/premium, WIP N+1 + missing
+time_entries(project_id) index, migrations not transactional, rate history, DST.
+safety-talks/equipment/rfis/sub-reports/inspections don't dedupe on Idempotency-Key yet.
