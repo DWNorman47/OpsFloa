@@ -6611,3 +6611,25 @@ Follow-ups (next tier of the review): 401 logs out on wrong password, no axios t
 token in logs / not revalidated, QBO OAuth CSRF, bill breaks/premium, WIP N+1 + missing
 time_entries(project_id) index, migrations not transactional, rate history, DST.
 safety-talks/equipment/rfis/sub-reports/inspections don't dedupe on Idempotency-Key yet.
+
+## Review pass 2: next-tier items (2026-09-24)
+Six commits (client i18n split, client auth/timeouts/UX, QBO, live-session/push/shift security,
+data scoping, server reliability). Verify green (server 2079, client 340 + build).
+Judgment calls:
+- QBO OAuth completes via the SPA (POST /qbo/callback/complete with Bearer) rather than a
+  cookie, since API and SPA can be cross-site. Intuit redirect URI unchanged.
+- Live-stream legacy ?token= accepted until 2026-10-31 (cached Plan Rooms), with requireAuth's checks.
+- Query timeouts: Neon's -pooler rejects startup params, so 0204 sets them as ROLE defaults
+  (also affects psql/scripts as that role; revert with ALTER ROLE ... RESET). pool.queryLong for long jobs.
+- GET /time-entries defaults to 90 days; ?all=1 for full history (worker Dashboard passes it).
+- MailPage left English-only (single user, by design).
+- CSP connect-src/img-src still `https:` — tightening needs the real prod/stage/dev API, R2,
+  Sentry and map hosts from Vercel/Render env.
+Deferred (need a design call): dated pay rates (a raise reprices past stubs) and paying from
+start_ts/end_ts instead of wall-clock TIME columns (DST shifts off by an hour).
+
+**Incident:** `server/scripts/lintMigrations.js` loads server/.env (Neon DEV branch,
+ep-orange-cell) and its apply pass re-ran migrations 0001–0173 there (~16:30 UTC): 0003 dropped
+company_chat, 0068 truncated worker_availability, permission backfills re-ran. Dev restored via
+Neon point-in-time restore. The script now refuses non-local hosts unless
+LINT_MIGRATIONS_ALLOW_REMOTE=yes-this-db-is-disposable. Read any server/scripts/* before running it.
