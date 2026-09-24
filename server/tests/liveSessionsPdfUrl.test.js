@@ -17,6 +17,7 @@ jest.mock('../r2', () => {
     uploadBase64: jest.fn(),
     deleteByUrl: jest.fn(() => Promise.resolve()),
     getBytesByUrl: jest.fn(),
+    getObjectStreamByUrl: jest.fn(),
     getPresignedUploadUrl: jest.fn(),
   };
 });
@@ -24,7 +25,9 @@ jest.mock('../r2', () => {
 const express = require('express');
 const request = require('supertest');
 const pool = require('../db');
-const { uploadBase64, getBytesByUrl } = require('../r2');
+const { Readable } = require('stream');
+const { uploadBase64, getObjectStreamByUrl } = require('../r2');
+const streamOf = (text) => ({ body: Readable.from([Buffer.from(text)]), contentType: 'application/pdf', contentLength: Buffer.byteLength(text) });
 const { router, rooms } = require('../routes/liveSessions');
 
 const B = 'https://cdn.example.com';
@@ -89,11 +92,23 @@ test.each([
   `${B}/live-sessions/7/abc.pdf`,
   `${B}/takeoffs/legacy.pdf`,
   `${B}/live-sessions/legacy.pdf`,
-])('GET /:id/pdf proxies %s', async (url) => {
-  getBytesByUrl.mockResolvedValue(Buffer.from('hi'));
+])('GET /:id/pdf streams %s as application/pdf', async (url) => {
+  getObjectStreamByUrl.mockResolvedValue(streamOf('%PDF-hi'));
   seedRoom(url);
-  const res = await request(makeApp()).get('/api/live-sessions/42/pdf');
+  const res = await request(makeApp()).get('/api/live-sessions/42/pdf')
+    .buffer(true).parse((r, cb) => { const c = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); });
   expect(res.status).toBe(200);
+  expect(res.headers['content-type']).toMatch(/application\/pdf/);
+  expect(res.body.toString()).toBe('%PDF-hi');
+  expect(getObjectStreamByUrl).toHaveBeenCalledWith(url);
+});
+
+test('GET /:id/pdf 404s for another company room', async () => {
+  seedRoom(`${B}/takeoffs/7/abc.pdf`);
+  mockUser = { ...mockUser, company_id: 8 };
+  const res = await request(makeApp()).get('/api/live-sessions/42/pdf');
+  expect(res.status).toBe(404);
+  expect(getObjectStreamByUrl).not.toHaveBeenCalled();
 });
 
 test.each([
@@ -101,9 +116,9 @@ test.each([
   `${B}/live-sessions/8/abc.pdf`,
   `${B}/public-profiles/victim.jpg`,
 ])('GET /:id/pdf refuses to proxy %s', async (url) => {
-  getBytesByUrl.mockResolvedValue(Buffer.from('secret'));
+  getObjectStreamByUrl.mockResolvedValue(streamOf('secret'));
   seedRoom(url);
   const res = await request(makeApp()).get('/api/live-sessions/42/pdf');
   expect(res.status).toBe(404);
-  expect(getBytesByUrl).not.toHaveBeenCalled();
+  expect(getObjectStreamByUrl).not.toHaveBeenCalled();
 });

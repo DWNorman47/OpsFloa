@@ -8369,24 +8369,57 @@ function applyStream(msg) {
   session.applying = false;
 }
 
-function openStream() {
-  session.connected = false;
-  const url = toolApiBase() + '/live/' + session.id + '/stream?token=' + encodeURIComponent(toolToken()) + '&client=' + encodeURIComponent(session.clientId);
-  let es = null;
-  try { es = new EventSource(url); } catch (_) { es = null; }
-  session.es = es;
-  if (es) {
-    es.onopen = () => refreshLiveStatus(); // connection open, but wait for a real message before calling it live
-    es.onmessage = e => { session.connected = true; refreshLiveStatus(); try { applyStream(JSON.parse(e.data)); } catch (_) {} };
-    es.onerror = () => { session.connected = false; refreshLiveStatus(); }; // EventSource auto-reconnects; the backup poll covers the gap
+// The stream authenticates with a short-lived, single-use ticket (never the session
+// JWT in a URL). A ticket can't be reused, so EventSource's built-in auto-reconnect
+// (same URL) would just 401 — on any error we close it ourselves and reopen with a
+// FRESH ticket, backing off 3s → 30s. The REST backup poll covers the gap.
+async function streamUrl(s) {
+  const base = toolApiBase() + '/live/' + s.id + '/stream';
+  const res = await apiLive('/' + s.id + '/stream-ticket', { method: 'POST', timeout: 10000, body: JSON.stringify({ clientId: s.clientId }) });
+  if (res.ok) { const j = await res.json(); return base + '?ticket=' + encodeURIComponent(j.ticket); }
+  // A server that predates tickets has no such route (Express's non-JSON 404) —
+  // fall back to the legacy query-token stream until it redeploys.
+  if (res.status === 404 && !/json/i.test(res.headers.get('content-type') || '')) {
+    return base + '?token=' + encodeURIComponent(toolToken()) + '&client=' + encodeURIComponent(s.clientId);
   }
+  throw new Error('HTTP ' + res.status);
+}
+function scheduleStreamReopen(s) {
+  if (session !== s || s.reopenTimer) return;
+  const delay = Math.min(30000, 3000 * Math.pow(2, s.reopenFails || 0));
+  s.reopenFails = (s.reopenFails || 0) + 1;
+  s.reopenTimer = setTimeout(() => { s.reopenTimer = null; if (session === s) openStream(); }, delay);
+}
+async function openStream() {
+  const s = session;
+  if (!s) return;
+  s.connected = false;
+  if (s.es) { try { s.es.close(); } catch (_) {} s.es = null; }
+  const gen = (s.streamGen || 0) + 1;
+  s.streamGen = gen;
   // REST backup poll: while the SSE push isn't delivering, pull the room every few
   // seconds so a buffered/blocked stream (common for a cross-origin EventSource
   // through a proxy) can't strand a joiner on a static copy — the likely cause of
   // "I joined but we're not in the same session." Gated on !connected, so it's
   // ~free whenever the stream is healthy.
-  if (!session.poll) session.poll = setInterval(livePollTick, 4000);
+  if (!s.poll) s.poll = setInterval(livePollTick, 4000);
   refreshLiveStatus();
+  let url;
+  try { url = await streamUrl(s); } catch (_) { scheduleStreamReopen(s); return; }
+  if (session !== s || s.streamGen !== gen) return; // left / superseded while fetching
+  let es = null;
+  try { es = new EventSource(url); } catch (_) { es = null; }
+  s.es = es;
+  if (!es) { scheduleStreamReopen(s); return; }
+  es.onopen = () => refreshLiveStatus(); // connection open, but wait for a real message before calling it live
+  es.onmessage = e => { if (session !== s) return; s.connected = true; s.reopenFails = 0; refreshLiveStatus(); try { applyStream(JSON.parse(e.data)); } catch (_) {} };
+  es.onerror = () => {
+    if (session !== s || s.es !== es) { try { es.close(); } catch (_) {} return; }
+    s.connected = false; refreshLiveStatus();
+    try { es.close(); } catch (_) {}
+    s.es = null;
+    scheduleStreamReopen(s);
+  };
 }
 
 function livePollTick() {
@@ -8465,7 +8498,15 @@ async function joinSession(id) {
   if (t.pdfUrl) {
     try {
       const pr = await apiLive('/' + id + '/pdf');
-      if (pr.ok) { const pj = await pr.json(); await openFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdfName || 'plans.pdf', null); if (t.doc && t.doc.page) await setPage(t.doc.page); }
+      if (pr.ok) {
+        // Current servers stream the PDF bytes (application/pdf); an older server
+        // still answers { name, b64 } JSON — accept either.
+        let buf, nm = t.pdfName || 'plans.pdf';
+        if (/json/i.test(pr.headers.get('content-type') || '')) { const pj = await pr.json(); buf = base64ToBytes(pj.b64).buffer; nm = pj.name || nm; }
+        else buf = await pr.arrayBuffer();
+        await openFromBytes(buf, nm, null);
+        if (t.doc && t.doc.page) await setPage(t.doc.page);
+      }
     } catch (_) { setMsg('Joined, but could not load the plans.'); }
   }
   session = {
@@ -8484,6 +8525,7 @@ function endSessionLocal(remote) {
   if (!session) return;
   const wasHost = session.isHost;
   if (session.es) { try { session.es.close(); } catch (_) {} }
+  if (session.reopenTimer) clearTimeout(session.reopenTimer);
   clearTimeout(session.timer);
   if (session.poll) clearInterval(session.poll);
   session = null;

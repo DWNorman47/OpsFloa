@@ -7,6 +7,7 @@ const { sendPushToUser, sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { logAudit } = require('../auditLog');
 const { weekRange } = require('../utils/weekBounds');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
 // node-pg returns a DATE column as a Date at local midnight — interpolating it raw yields
 // "Thu Jul 30 2026 00:00:00 GMT…" and .toString().substring(0,10) yields "Thu Jul 30" (no
@@ -39,7 +40,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
       `SELECT s.*, u.full_name as worker_name, p.name as project_name
        FROM shifts s
        JOIN users u ON s.user_id = u.id
-       LEFT JOIN projects p ON s.project_id = p.id
+       LEFT JOIN projects p ON s.project_id = p.id AND p.company_id = s.company_id
        WHERE s.company_id = $1
          AND ($2::date IS NULL OR s.shift_date >= $2::date)
          AND ($3::date IS NULL OR s.shift_date <= $3::date)
@@ -66,6 +67,9 @@ router.post('/admin', requireAdmin, shiftWriteLimiter, async (req, res) => {
       [user_id, companyId]
     );
     if (workerCheck.rowCount === 0) return res.status(400).json({ error: 'Worker not found' });
+    // A foreign project_id would be stored and then leak that tenant's project name
+    // through the project_name join below (and /mine).
+    if (!(await projectBelongsToCompany(pool, project_id, companyId))) return res.status(400).json({ error: 'Invalid project' });
     const full = await pool.query(
       `WITH inserted AS (
          INSERT INTO shifts (company_id, user_id, project_id, shift_date, start_time, end_time, notes, recurrence_group_id)
@@ -74,7 +78,7 @@ router.post('/admin', requireAdmin, shiftWriteLimiter, async (req, res) => {
        SELECT s.*, u.full_name as worker_name, p.name as project_name
        FROM inserted s
        JOIN users u ON s.user_id = u.id
-       LEFT JOIN projects p ON s.project_id = p.id`,
+       LEFT JOIN projects p ON s.project_id = p.id AND p.company_id = s.company_id`,
       [companyId, user_id, project_id || null, shift_date, start_time, end_time, notes, recurrence_group_id || null]
     );
     const shift = full.rows[0];
@@ -98,6 +102,7 @@ router.patch('/admin/:id', requireAdmin, shiftWriteLimiter, async (req, res) => 
   const clientUpdatedAt = req.body.updated_at || null;
   const companyId = req.user.company_id;
   try {
+    if (!(await projectBelongsToCompany(pool, project_id, companyId))) return res.status(400).json({ error: 'Invalid project' });
     if (clientUpdatedAt) {
       const cur = await pool.query('SELECT updated_at FROM shifts WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
       if (!cur.rows.length) return res.status(404).json({ error: 'Shift not found' });
@@ -113,8 +118,8 @@ router.patch('/admin/:id', requireAdmin, shiftWriteLimiter, async (req, res) => 
     if (result.rowCount === 0) return res.status(404).json({ error: 'Shift not found' });
     const full = await pool.query(
       `SELECT s.*, u.full_name as worker_name, p.name as project_name
-       FROM shifts s JOIN users u ON s.user_id = u.id LEFT JOIN projects p ON s.project_id = p.id
-       WHERE s.id = $1`, [req.params.id]
+       FROM shifts s JOIN users u ON s.user_id = u.id LEFT JOIN projects p ON s.project_id = p.id AND p.company_id = s.company_id
+       WHERE s.id = $1 AND s.company_id = $2`, [req.params.id, companyId]
     );
     const shift = full.rows[0];
     logAudit(companyId, req.user.id, req.user.full_name, 'shift.edited', 'shift', shift.id, shift.worker_name,
@@ -131,7 +136,7 @@ router.delete('/admin/:id', requireAdmin, shiftWriteLimiter, async (req, res) =>
   try {
     const full = await pool.query(
       `SELECT s.*, u.full_name as worker_name, p.name as project_name
-       FROM shifts s JOIN users u ON s.user_id = u.id LEFT JOIN projects p ON s.project_id = p.id
+       FROM shifts s JOIN users u ON s.user_id = u.id LEFT JOIN projects p ON s.project_id = p.id AND p.company_id = s.company_id
        WHERE s.id = $1 AND s.company_id = $2`,
       [req.params.id, req.user.company_id]
     );
@@ -230,7 +235,7 @@ router.get('/mine', requireAuth, async (req, res) => {
 
     const result = await pool.query(
       `SELECT s.*, p.name as project_name
-       FROM shifts s LEFT JOIN projects p ON s.project_id = p.id
+       FROM shifts s LEFT JOIN projects p ON s.project_id = p.id AND p.company_id = s.company_id
        WHERE s.user_id = $1 ${dateClause}
        ORDER BY s.shift_date ASC, s.start_time ASC
        LIMIT 14`,

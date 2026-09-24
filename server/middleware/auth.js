@@ -287,6 +287,79 @@ async function requirePlanToolsAddon(req, res, next) {
   }
 }
 
+// Pure form of the requirePlanToolsAddon decision, for callers that can't run the
+// middleware (e.g. the live-session SSE stream, which authenticates by ticket, not a
+// Bearer header). Unlike the middleware it never writes (no trial_expired flip) — an
+// expired trial just reads as "not allowed".
+function planToolsAllowed(company) {
+  if (!company) return false;
+  if (company.subscription_status === 'trial' && company.trial_ends_at && new Date(company.trial_ends_at) < new Date()) return false;
+  if (company.subscription_status === 'canceled' || company.subscription_status === 'trial_expired') return false;
+  return !!(company.subscription_status === 'exempt' || company.subscription_status === 'trial'
+    || company.addon_takeoff || company.addon_planroom || company.addon_roof);
+}
+
+// Re-run requireAuth's live revocation checks for a set of session claims that did
+// NOT arrive as a Bearer header (e.g. claims carried inside a short-lived stream
+// ticket, or a legacy query-string token). Mirrors requireAuth:
+//   - tv claim → user must exist, be active, and match token_version;
+//   - imp claim (no tv) → target active, and the impersonating super-admin (imp_by)
+//     still active + super_admin;
+//   - neither → single-purpose token (mfa/setup) — never a session.
+// Also returns the acting company's plan/add-on row so callers can gate on it.
+// Resolves { ok: true, company } or { ok: false, status, error }. Fails closed (503)
+// on a DB error. A separate entry point — requireAuth itself is unchanged.
+async function checkSessionClaims(claims) {
+  const c = claims || {};
+  if (c.id == null) return { ok: false, status: 401, error: 'Invalid token' };
+  try {
+    if (c.tv != null) {
+      const { rows } = await pool.query(
+        `SELECT u.token_version, u.active,
+                c.id AS _company_id, ${COMPANY_AUTH_COLS.split(', ').map(k => 'c.' + k).join(', ')}
+           FROM users u
+           LEFT JOIN companies c ON c.id = $2
+          WHERE u.id = $1`,
+        [c.id, c.company_id ?? null]
+      );
+      if (!rows.length) return { ok: false, status: 401, error: 'Invalid token' };
+      const u = rows[0];
+      if (u.active === false) return { ok: false, status: 401, error: 'Account deactivated' };
+      if (u.token_version !== c.tv) return { ok: false, status: 401, error: 'Session invalidated, please log in again' };
+      const company = u._company_id != null ? {
+        plan: u.plan, subscription_status: u.subscription_status, trial_ends_at: u.trial_ends_at,
+        addon_qbo: u.addon_qbo, addon_certified_payroll: u.addon_certified_payroll,
+        addon_advanced_payroll: u.addon_advanced_payroll, addon_takeoff: u.addon_takeoff,
+        addon_planroom: u.addon_planroom, addon_roof: u.addon_roof,
+      } : null;
+      return { ok: true, company };
+    }
+    if (c.imp) {
+      const { rows } = await pool.query(
+        `SELECT
+           (SELECT active FROM users WHERE id = $1)      AS target_active,
+           (SELECT active FROM users WHERE id = $2)      AS imp_active,
+           (SELECT role   FROM users WHERE id = $2)      AS imp_role`,
+        [c.id, c.imp_by ?? null]
+      );
+      const row = rows[0] || {};
+      if (row.target_active === false) return { ok: false, status: 401, error: 'Account deactivated' };
+      if (c.imp_by != null && (row.imp_active !== true || row.imp_role !== 'super_admin')) {
+        return { ok: false, status: 401, error: 'Impersonation session ended' };
+      }
+      let company = null;
+      if (c.company_id != null) {
+        const r = await pool.query(`SELECT ${COMPANY_AUTH_COLS} FROM companies WHERE id = $1`, [c.company_id]);
+        company = r.rows[0] || null;
+      }
+      return { ok: true, company };
+    }
+    return { ok: false, status: 401, error: 'Invalid token' };
+  } catch (_) {
+    return { ok: false, status: 503, error: 'Auth service temporarily unavailable' };
+  }
+}
+
 // Returns true if the user has a given admin permission.
 // null admin_permissions = full access (existing admins + company founder).
 function hasAdminPermission(user, key) {
@@ -315,4 +388,5 @@ module.exports = {
   requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireAdvancedPayrollAddon, requireTakeoffAddon, requirePlanToolsAddon,
   hasAdminPermission, requirePermission,
   hasPerm, requirePerm,
+  planToolsAllowed, checkSessionClaims,
 };

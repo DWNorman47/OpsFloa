@@ -2,6 +2,7 @@ const router = require('express').Router();
 const webpush = require('web-push');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { isAllowedPushEndpoint } = require('../push');
 
 // GET /push/generate-vapid-keys
 // One-time setup helper — only works when VAPID keys are NOT yet configured.
@@ -29,6 +30,11 @@ router.get('/vapid-public-key', (req, res) => {
 router.post('/subscribe', requireAuth, async (req, res) => {
   const { endpoint, p256dh, auth } = req.body;
   if (!endpoint || !p256dh || !auth) return res.status(400).json({ error: 'endpoint, p256dh, auth required' });
+  // The server later POSTs to this URL — only real browser push services (no SSRF).
+  if (!isAllowedPushEndpoint(endpoint)) return res.status(400).json({ error: 'Unsupported push endpoint' });
+  if (typeof p256dh !== 'string' || typeof auth !== 'string' || p256dh.length > 256 || auth.length > 256) {
+    return res.status(400).json({ error: 'Invalid subscription keys' });
+  }
   try {
     await pool.query(
       `INSERT INTO push_subscriptions (user_id, company_id, endpoint, p256dh, auth)

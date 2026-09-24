@@ -13,21 +13,68 @@
  * session survives host disconnects and a server restart (bounded to seconds).
  *
  * Mounting (see index.js): the REST router mounts behind requireAuth +
- * requirePlanToolsAddon; the SSE stream mounts separately with query-token
- * auth (EventSource can't set an Authorization header).
+ * requirePlanToolsAddon; the SSE stream mounts separately (before requireAuth)
+ * because EventSource can't set an Authorization header. It authenticates with a
+ * short-lived, single-use STREAM TICKET minted by the gated
+ * POST /:id/stream-ticket — never the full session JWT (which would land in
+ * request logs and outlive a deactivation). See streamHandler.
  */
 
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const router = require('express').Router();
 const pool = require('../db');
-const { getBytesByUrl, uploadBase64, keyBelongsTo, safeKeyFromPublicUrl } = require('../r2');
+const { getObjectStreamByUrl, uploadBase64, keyBelongsTo, safeKeyFromPublicUrl } = require('../r2');
 const { takeoffFolder, pdfUrlBelongsToCompany: takeoffPdfBelongsToCompany } = require('./takeoffs');
 const { LIVE_SESSION_TOOLS, LIVE_SESSION_TOOL_DEFAULT } = require('../constants/liveSessionEnums');
+const { checkSessionClaims, planToolsAllowed } = require('../middleware/auth');
 
 const rooms = new Map();        // sessionId(string) -> Room
 const SNAPSHOT_MS = 4000;       // coalesce DB snapshots
 const HEARTBEAT_MS = 20000;     // SSE keep-alive ping
 const isAdmin = req => req.user.role === 'admin' || req.user.role === 'super_admin';
+
+/* ------------------------------ stream tickets ------------------------------ */
+
+// A ticket is a JWT signed with a key DERIVED from JWT_SECRET (so no other
+// jwt.verify in the app — requireAuth, setup/MFA — can ever accept one) plus a
+// distinct audience, lives 60s, and is single-use (jti burned on first connect).
+// It binds: user, company, session id, token version / impersonation claims (re-
+// checked live on connect), and the SSE client id — namespaced by user server-side
+// so a co-worker can't claim another participant's slot.
+const TICKET_AUD = 'live-stream';
+const TICKET_TTL_S = 60;
+const ticketKey = () => crypto.createHmac('sha256', String(process.env.JWT_SECRET || '')).update('opsfloa:live-stream-ticket:v1').digest();
+const usedTickets = new Map();  // jti -> expiry(ms); in-memory single-use guard
+function burnTicket(jti, expMs) {
+  const now = Date.now();
+  for (const [k, e] of usedTickets) if (e < now) usedTickets.delete(k);
+  if (usedTickets.has(jti)) return false;
+  usedTickets.set(jti, expMs);
+  return true;
+}
+// Client-chosen id (only used to skip echoing a client's own ops back to it),
+// sanitized and bound to the authenticated user so ids can't collide across users.
+const safeClientId = raw => String(raw || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 64);
+const clientKey = (userId, raw) => `${userId}:${safeClientId(raw) || crypto.randomBytes(8).toString('hex')}`;
+
+// Transition: until this date, the stream still accepts an old-style `?token=<session
+// JWT>` (a cached pre-ticket Plan Room), but ONLY after the same live checks as
+// requireAuth (tv/active/impersonation) + the plan-tools add-on, and it logs a warning.
+// After it, only tickets are accepted. Delete the legacy branch once past.
+const LEGACY_STREAM_TOKEN_SUNSET = Date.parse('2026-10-31T00:00:00Z');
+
+function mintStreamTicket(user, sessionId, rawClientId) {
+  const claims = {
+    uid: user.id, cid: user.company_id, sid: String(sessionId),
+    cl: clientKey(user.id, rawClientId),
+    jti: crypto.randomBytes(12).toString('hex'),
+  };
+  // Carry the revocation-relevant claims under non-session names, re-checked on connect.
+  if (user.tv != null) claims.ttv = user.tv;
+  if (user.imp) { claims.timp = true; if (user.imp_by != null) claims.timp_by = user.imp_by; }
+  return jwt.sign(claims, ticketKey(), { audience: TICKET_AUD, expiresIn: TICKET_TTL_S, algorithm: 'HS256' });
+}
 
 // Plan-doc storage for sessions. A presigned upload comes from the takeoffs
 // /upload-url (so it lives under takeoffs/<company_id>/); the base64 fallback is
@@ -184,8 +231,23 @@ router.get('/:id', async (req, res) => {
   } catch (err) { req.log && req.log.error({ err }, 'live join'); res.status(500).json({ error: 'server error' }); }
 });
 
-// GET /:id/pdf  — the session's plan doc, proxied from R2 as base64 (no R2 CORS
-// needed to read; a joiner downloads it once on join)
+// POST /:id/stream-ticket  { clientId? } — mint a 60s single-use ticket for the SSE
+// stream (EventSource can't send the Bearer header). Behind requireAuth +
+// requirePlanToolsAddon like the rest of this router.
+router.post('/:id/stream-ticket', async (req, res) => {
+  try {
+    const room = await loadRoom(String(req.params.id));
+    if (!room || room.companyId !== String(req.user.company_id)) return res.status(404).json({ error: 'not found' });
+    const b = req.body || {};
+    res.set('Cache-Control', 'no-store');
+    res.json({ ticket: mintStreamTicket(req.user, room.id, b.clientId), expiresIn: TICKET_TTL_S });
+  } catch (err) { req.log && req.log.error({ err }, 'live ticket'); res.status(500).json({ error: 'server error' }); }
+});
+
+// GET /:id/pdf  — the session's plan doc, STREAMED from R2 as application/pdf (no
+// R2 CORS needed to read; a joiner downloads it once on join). Streaming — not a
+// buffered base64 JSON blob — keeps a big plan set from costing ~3.5x its size in
+// server memory per concurrent joiner.
 router.get('/:id/pdf', async (req, res) => {
   try {
     const room = await loadRoom(String(req.params.id));
@@ -194,10 +256,20 @@ router.get('/:id/pdf', async (req, res) => {
     if (!sessionPdfUrlAllowed(room.meta.pdfUrl, room.companyId) && !isLegacySessionPdfUrl(room.meta.pdfUrl)) {
       return res.status(404).json({ error: 'no pdf' });
     }
-    const bytes = await getBytesByUrl(room.meta.pdfUrl);
-    if (!bytes) return res.status(404).json({ error: 'no pdf' });
-    res.json({ name: room.meta.pdfName || 'plans.pdf', b64: bytes.toString('base64') });
-  } catch (err) { req.log && req.log.error({ err }, 'live pdf'); res.status(500).json({ error: 'server error' }); }
+    const obj = await getObjectStreamByUrl(room.meta.pdfUrl);
+    if (!obj || !obj.body) return res.status(404).json({ error: 'no pdf' });
+    const fname = String(room.meta.pdfName || 'plans.pdf').replace(/[^A-Za-z0-9 ._()-]/g, '_').slice(0, 150) || 'plans.pdf';
+    res.setHeader('Content-Type', 'application/pdf');
+    if (obj.contentLength) res.setHeader('Content-Length', String(obj.contentLength));
+    res.setHeader('Content-Disposition', `inline; filename="${fname}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    obj.body.on('error', err => {
+      req.log && req.log.error({ err }, 'live pdf stream');
+      if (!res.headersSent) res.status(500).json({ error: 'server error' });
+      else res.destroy(err);
+    });
+    obj.body.pipe(res);
+  } catch (err) { req.log && req.log.error({ err }, 'live pdf'); if (!res.headersSent) res.status(500).json({ error: 'server error' }); }
 });
 
 // POST /:id/op  — apply markup ops + doc settings, broadcast to others
@@ -211,8 +283,10 @@ router.post('/:id/op', async (req, res) => {
       const ts = Number(b.docTs) || Date.now();
       if (!room.docTs || ts >= room.docTs) { room.doc = { ...room.doc, ...b.doc }; room.docTs = ts; }
     }
-    // relay verbatim to everyone else in the room
-    broadcast(room, { type: 'ops', ops: b.ops || [], doc: b.doc || null, by: req.user.id }, b.clientId);
+    // relay verbatim to everyone else in the room (stream slots are keyed
+    // `<userId>:<clientId>`, so the echo-skip can only ever match the caller's own)
+    broadcast(room, { type: 'ops', ops: b.ops || [], doc: b.doc || null, by: req.user.id },
+      b.clientId ? `${req.user.id}:${safeClientId(b.clientId)}` : undefined);
     markDirty(room);
     res.json({ ok: true });
   } catch (err) { req.log && req.log.error({ err }, 'live op'); res.status(500).json({ error: 'server error' }); }
@@ -239,19 +313,65 @@ router.post('/:id/end', async (req, res) => {
   } catch (err) { req.log && req.log.error({ err }, 'live end'); res.status(500).json({ error: 'server error' }); }
 });
 
-/* ------------------------------ SSE stream (query-token auth) ------------------------------ */
+/* ------------------------------ SSE stream (ticket auth) ------------------------------ */
+
+const REVALIDATE_MS = 5 * 60 * 1000; // re-run the revocation checks on long-lived streams
+
+// Resolve who is connecting. Returns { claims, clientKey, legacy } or { status }.
+function streamIdentity(req, sessionId) {
+  const q = req.query || {};
+  if (q.ticket) {
+    let t;
+    try { t = jwt.verify(String(q.ticket), ticketKey(), { audience: TICKET_AUD, algorithms: ['HS256'] }); }
+    catch { return { status: 401 }; }
+    if (t.uid == null || !t.jti || !t.cl || String(t.sid) !== sessionId) return { status: 401 };
+    if (!String(t.cl).startsWith(`${t.uid}:`)) return { status: 401 };
+    if (!burnTicket(String(t.jti), (Number(t.exp) || 0) * 1000 + 1000)) return { status: 401 }; // replay
+    return {
+      claims: { id: t.uid, company_id: t.cid, tv: t.ttv, imp: t.timp, imp_by: t.timp_by },
+      clientKey: String(t.cl), legacy: false,
+    };
+  }
+  // Transitional: an old cached client still sends its full session JWT. Accepted only
+  // until the sunset, and only after the same checks requireAuth runs (below).
+  if (q.token && Date.now() < LEGACY_STREAM_TOKEN_SUNSET) {
+    let p;
+    try { p = jwt.verify(String(q.token), process.env.JWT_SECRET); } catch { return { status: 401 }; }
+    if (p.tv == null && !p.imp) return { status: 401 }; // mfa/setup challenge tokens never stream
+    return {
+      claims: { id: p.id, company_id: p.company_id, tv: p.tv, imp: p.imp, imp_by: p.imp_by },
+      clientKey: clientKey(p.id, q.client), legacy: true,
+    };
+  }
+  return { status: 401 };
+}
+
+// Same gates as the REST router (requireAuth's live checks + requirePlanToolsAddon).
+async function streamAllowed(claims) {
+  const chk = await checkSessionClaims(claims);
+  if (!chk.ok) return chk.status || 401;
+  if (!planToolsAllowed(chk.company)) return 403;
+  return 0;
+}
 
 async function streamHandler(req, res) {
-  let payload;
-  try { payload = jwt.verify(String(req.query.token || ''), process.env.JWT_SECRET); } catch { return res.status(401).end(); }
   const id = String(req.params.id);
-  const clientId = String(req.query.client || '') || (Date.now() + '-' + Math.random().toString(36).slice(2));
+  const who = streamIdentity(req, id);
+  if (who.status) return res.status(who.status).end();
+  const { claims, clientKey: clientId } = who;
+  const denied = await streamAllowed(claims);
+  if (denied) return res.status(denied).end();
+  if (who.legacy) {
+    const log = req.log || require('../logger');
+    log.warn({ userId: claims.id, sessionId: id }, 'live stream: legacy ?token= auth (pre-ticket client) — accepted during transition');
+  }
+
   let room;
   try { room = await loadRoom(id); } catch { return res.status(500).end(); }
-  if (!room || room.companyId !== String(payload.company_id)) return res.status(404).end();
+  if (!room || room.companyId !== String(claims.company_id)) return res.status(404).end();
 
   let name = 'Teammate';
-  try { const u = await pool.query('SELECT full_name FROM users WHERE id = $1', [payload.id]); if (u.rows[0]) name = u.rows[0].full_name; } catch (_) {}
+  try { const u = await pool.query('SELECT full_name FROM users WHERE id = $1', [claims.id]); if (u.rows[0]) name = u.rows[0].full_name; } catch (_) {}
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -261,16 +381,52 @@ async function streamHandler(req, res) {
   });
   res.write('retry: 3000\n\n');
 
-  room.clients.set(clientId, { res, userId: payload.id, name });
-  sseWrite(res, { type: 'init', objects: clientObjects(room), doc: room.doc, meta: room.meta, roster: roster(room), you: payload.id });
+  // A reconnect from the SAME user+client replaces its old slot; close the stale one.
+  const prev = room.clients.get(clientId);
+  if (prev && prev.res !== res) { try { prev.res.end(); } catch (_) {} }
+  const entry = { res, userId: claims.id, name };
+  room.clients.set(clientId, entry);
+  sseWrite(res, { type: 'init', objects: clientObjects(room), doc: room.doc, meta: room.meta, roster: roster(room), you: claims.id });
   broadcastPresence(room);
 
   const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, HEARTBEAT_MS);
+  // A stream can stay open for hours; re-run the revocation checks periodically so a
+  // deactivated user / changed password / lost add-on drops off without a reconnect.
+  const reval = setInterval(async () => {
+    let bad = 0;
+    try { bad = await streamAllowed(claims); } catch (_) { bad = 0; }
+    if (bad === 401 || bad === 403) { try { res.end(); } catch (_) {} }
+  }, REVALIDATE_MS);
+  if (reval.unref) reval.unref();
   req.on('close', () => {
     clearInterval(hb);
+    clearInterval(reval);
     const r = rooms.get(id);
-    if (r) { r.clients.delete(clientId); broadcastPresence(r); }
+    // only drop the slot if it's still ours (a reconnect may have replaced it)
+    if (r && r.clients.get(clientId) === entry) { r.clients.delete(clientId); broadcastPresence(r); }
   });
 }
 
-module.exports = { router, streamHandler, rooms };
+/* ------------------------------ graceful shutdown ------------------------------ */
+
+// Persist every room's pending (debounced, up to SNAPSHOT_MS old) edits, then close
+// the open SSE streams so the HTTP server can drain. Called from the SIGTERM handler
+// in index.js. Clients reconnect (fresh ticket) to the next instance, which rehydrates
+// the room from the snapshot. Never throws.
+async function flushAll({ closeStreams = true } = {}) {
+  const pending = [];
+  for (const room of rooms.values()) {
+    if (room.snapTimer) { clearTimeout(room.snapTimer); room.snapTimer = null; }
+    if (room.dirty) pending.push(snapshot(room));
+  }
+  await Promise.allSettled(pending);
+  if (closeStreams) {
+    for (const room of rooms.values()) {
+      for (const c of room.clients.values()) { try { c.res.end(); } catch (_) {} }
+    }
+  }
+  return pending.length;
+}
+
+module.exports = { router, streamHandler, rooms, flushAll, mintStreamTicket };
+module.exports.flushAll = flushAll;
