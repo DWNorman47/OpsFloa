@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useDirtyForm } from '../hooks/useDirtyForm';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useOffline } from '../contexts/OfflineContext';
@@ -55,6 +56,7 @@ function IncidentForm({ projects, onSubmitted, onCancel, defaultProjectId = null
   const [error, setError] = useState('');
 
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setError(''); };
+  useDirtyForm(!!(form.description || form.injured_name || form.body_part || form.witnesses || form.corrective_action), 'incident-report'); // hold off the auto-update reload
   const isInjury = form.type === 'injury';
 
   const handleSubmit = async e => {

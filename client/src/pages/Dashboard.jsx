@@ -96,6 +96,13 @@ export default function Dashboard() {
   const [headerElapsed, setHeaderElapsed] = useState(0);
   const headerTimerRef = useRef(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
+  // Entries are loaded for the server's default window (last 90 days) — the whole history
+  // was downloaded on every open and after every offline sync. All-time is fetched on demand:
+  // the summary's "All time" range, the timesheet paged back past the window, or the list's
+  // "show older" button. Once loaded, later refreshes keep the all-time scope.
+  const [entriesAllTime, setEntriesAllTime] = useState(false);
+  const entriesAllTimeRef = useRef(false);
+  const fetchEntries = allTime => api.get('/time-entries', { params: allTime ? { all: 1 } : {} }).then(r => r.data);
   const TABS = ['clock', 'messages', 'timesheet', 'timeoff', 'schedule', 'reimbursements'];
   const rawHashTab = window.location.hash.replace('#', '');
   const hashTab = normalizeTimeHash(rawHashTab);
@@ -129,7 +136,7 @@ export default function Dashboard() {
     setLoadError(false);
     try {
       const [entries, projects, settings, ci] = await Promise.all([
-        getOrFetch('entries', () => api.get('/time-entries', { params: { all: 1 } }).then(r => r.data)),
+        getOrFetch('entries', () => fetchEntries(false)),
         getOrFetch('projects', () => api.get('/work').then(r => r.data)),
         getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
         api.get('/company-info').then(r => r.data).catch(() => ({})),
@@ -147,8 +154,9 @@ export default function Dashboard() {
 
   const refreshEntries = async () => {
     try {
-      const data = await api.get('/time-entries', { params: { all: 1 } }).then(r => r.data);
-      await setCached('entries', data);
+      const allTime = entriesAllTimeRef.current;
+      const data = await fetchEntries(allTime);
+      if (!allTime) await setCached('entries', data); // the cache holds the default window only
       setEntries(data);
       setEntriesVersion(v => v + 1);
       setRefreshError(false);
@@ -158,6 +166,21 @@ export default function Dashboard() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  const loadAllTimeEntries = () => {
+    if (entriesAllTimeRef.current) return;
+    entriesAllTimeRef.current = true;
+    setEntriesAllTime(true);
+    refreshEntries();
+  };
+
+  // Paging the timesheet back past the default 90-day window needs the older entries.
+  useEffect(() => {
+    if (entriesAllTimeRef.current || !timesheetWeekStart) return;
+    const windowStart = new Date();
+    windowStart.setDate(windowStart.getDate() - 90);
+    if (new Date(timesheetWeekStart) < windowStart) loadAllTimeEntries();
+  }, [timesheetWeekStart]);
 
   // Fetch clock status for header timer (independent of ClockInOut component)
   useEffect(() => {
@@ -579,7 +602,7 @@ ${safeSignature ? `
           <ErrorBoundary key="timesheet" mode="inline" label="Timesheet">
           <Suspense fallback={<TabLoader />}>
             <UpcomingShifts onFillEntry={handleFillFromShift} />
-            {!loading && <WorkerSummary entries={entries} hourlyRate={user?.hourly_rate} rateType={user?.rate_type ?? 'hourly'} overtimeMultiplier={settings?.overtime_multiplier ?? 1.5} prevailingRate={settings?.prevailing_wage_rate ?? 0} overtimeEnabled={settings?.feature_overtime ?? true} overtimeRule={settings?.overtime_rule ?? 'daily'} overtimeThreshold={settings?.overtime_threshold ?? 8} weekStart={settings?.week_start ?? 1} showWages={settings?.show_worker_wages ?? false} currency={settings?.currency ?? 'USD'} />}
+            {!loading && <WorkerSummary onRangeChange={r => { if (r === 'all') loadAllTimeEntries(); }} entries={entries} hourlyRate={user?.hourly_rate} rateType={user?.rate_type ?? 'hourly'} overtimeMultiplier={settings?.overtime_multiplier ?? 1.5} prevailingRate={settings?.prevailing_wage_rate ?? 0} overtimeEnabled={settings?.feature_overtime ?? true} overtimeRule={settings?.overtime_rule ?? 'daily'} overtimeThreshold={settings?.overtime_threshold ?? 8} weekStart={settings?.week_start ?? 1} showWages={settings?.show_worker_wages ?? false} currency={settings?.currency ?? 'USD'} />}
             <TimesheetSignOff t={t} refreshKey={entriesVersion} />
             <div style={styles.timesheetToolbar}>
               <div style={styles.viewToggle}>
@@ -605,7 +628,14 @@ ${safeSignature ? `
                 onSelectedWeekStartChange={setTimesheetWeekStart}
               />
             ) : (
-              <EntryList entries={entries} onDeleted={handleEntryDeleted} onUpdated={handleEntryUpdated} t={t} language={user?.language} currentUserId={user?.id} projects={projects} onRefresh={refreshEntries} />
+              <>
+                <EntryList entries={entries} onDeleted={handleEntryDeleted} onUpdated={handleEntryUpdated} t={t} language={user?.language} currentUserId={user?.id} projects={projects} onRefresh={refreshEntries} />
+                {!entriesAllTime && (
+                  <button style={{ ...styles.exportBtn, display: 'block', margin: '8px auto 0' }} onClick={loadAllTimeEntries}>
+                    {t.showOlderEntries}
+                  </button>
+                )}
+              </>
             )}
           </Suspense>
           </ErrorBoundary>

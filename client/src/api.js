@@ -2,6 +2,7 @@ import axios from 'axios';
 import { safeSession, safeLocal } from './utils/safeStorage';
 import { getT } from './i18n';
 import { detectLanguage } from './languageDetect';
+import { IDEMPOTENCY_HEADER, requestTimeoutMs } from './offlineQueuePolicy';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const api = axios.create({ baseURL });
@@ -15,24 +16,43 @@ const api = axios.create({ baseURL });
 export const DEFAULT_TIMEOUT_MS = 20000;
 export const LONG_TIMEOUT_MS = 180000;
 // Endpoints known to run long server-side: AI (office tools, recordings, jump-start,
-// submittal scanning, daily-report suggestions), exports/imports, uploads, bulk syncs.
-const SLOW_URL = /(^|\/)(office|jumpstart|recordings|submittals)\/|\/(suggest|minutes|daily-log|retry|plan-pdf|logo|media-zip|upload|bulk|sync-staging)(\/|\?|$)|export|import|\/mailbox\/send|overtime-report|wip-report/;
+// submittal scanning, daily-report suggestions), exports/imports, uploads, bulk syncs,
+// QuickBooks pushes (one Intuit round-trip per bill / expense / journal line), payroll
+// runs, and the super-admin mailbox (live IMAP).
+const SLOW_URL = /(^|\/)(office|jumpstart|recordings|submittals|mailbox)\/|\/(suggest|minutes|daily-log|retry|plan-pdf|logo|media-zip|upload|bulk|sync-staging)(\/|\?|$)|\/qbo\/(push[a-z-]*|invoices)(\/|\?|$)|\/payroll-run|export|import|overtime-report|wip-report/;
 const LARGE_BODY_CHARS = 100000;
+
+// Approximate serialized size of a request body: the sum of its string lengths, walking
+// nested arrays / objects (a field report's `photos: [{ url: 'data:…' }, …]` is ~4 MB that
+// the old top-level-only scan missed). Stops once `cap` is reached.
+export function approxBodyChars(data, cap = Infinity) {
+  if (!data) return 0;
+  if (typeof data === 'string') return data.length;
+  if (typeof FormData !== 'undefined' && data instanceof FormData) return cap;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) return data.size;
+  if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return data.byteLength;
+  if (typeof data !== 'object') return 0;
+  let total = 0;
+  let visited = 0;
+  const stack = [[data, 0]];
+  while (stack.length && total < cap && visited < 5000) {
+    const [node, depth] = stack.pop();
+    visited++;
+    const values = Array.isArray(node) ? node : Object.values(node);
+    for (const v of values) {
+      if (typeof v === 'string') total += v.length;
+      else if (v && typeof v === 'object' && depth < 8) stack.push([v, depth + 1]);
+    }
+  }
+  return total;
+}
 
 function hasLargeBody(data) {
   if (!data) return false;
   if (typeof FormData !== 'undefined' && data instanceof FormData) return true;
   if (typeof Blob !== 'undefined' && data instanceof Blob) return true;
   if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return true;
-  if (typeof data === 'string') return data.length > LARGE_BODY_CHARS;
-  if (typeof data === 'object') {
-    // Cheap scan of top-level string fields — catches { dataUrl } style uploads
-    // without stringifying the whole payload.
-    for (const v of Object.values(data)) {
-      if (typeof v === 'string' && v.length > LARGE_BODY_CHARS) return true;
-    }
-  }
-  return false;
+  return approxBodyChars(data, LARGE_BODY_CHARS + 1) > LARGE_BODY_CHARS;
 }
 
 /** Resolve the timeout for a request config (exported for tests). */
@@ -40,9 +60,25 @@ export function resolveTimeout(config = {}) {
   if (config.timeout) return config.timeout; // explicit per-request timeout wins
   const rt = config.responseType;
   if (rt === 'blob' || rt === 'arraybuffer') return LONG_TIMEOUT_MS;
-  if (hasLargeBody(config.data)) return LONG_TIMEOUT_MS;
+  if (hasLargeBody(config.data)) {
+    // Big JSON body (base64 photos): budget for the upload on a slow jobsite uplink, and stay
+    // longer than the service worker's own size-scaled timeout for the same body, so the SW
+    // gets to queue it instead of the page giving up first.
+    return Math.max(LONG_TIMEOUT_MS, requestTimeoutMs(approxBodyChars(config.data)) + 30000);
+  }
   if (SLOW_URL.test(config.url || '')) return LONG_TIMEOUT_MS;
   return DEFAULT_TIMEOUT_MS;
+}
+
+// Creates that carry their own idempotency key in the body (`client_request_id`: field
+// reports, punch items, incidents …) also send it as the Idempotency-Key header, so the service
+// worker sends / replays under the SAME key the body already uses. (Not `client_id` — on some
+// endpoints that is a customer FK, not a request key.)
+export function bodyIdempotencyKey(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  if (typeof FormData !== 'undefined' && data instanceof FormData) return null;
+  const k = data.client_request_id;
+  return typeof k === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(k) ? k : null;
 }
 
 export function isTimeoutError(err) {
@@ -164,6 +200,11 @@ export function requestInterceptor(config) {
     // Remember which store the token came from so a 401 clears only that one.
     config._tokenSource = sessionToken ? 'session' : 'local';
   }
+  const method = String(config.method || 'get').toLowerCase();
+  if (method !== 'get' && config.headers && !config.headers[IDEMPOTENCY_HEADER]) {
+    const key = bodyIdempotencyKey(config.data);
+    if (key) config.headers[IDEMPOTENCY_HEADER] = key;
+  }
   config.timeout = resolveTimeout(config);
   return config;
 }
@@ -176,7 +217,10 @@ export function responseErrorInterceptor(err) {
   // { suppressToast: true } in the axios config. Use this when the caller
   // already renders the error in its own UI (form-level error box, inline
   // warning, etc.) and a toast on top would just duplicate the message.
-  const suppressToast = config.suppressToast === true;
+  // A 409 `locked_periods` is never an error to toast: RateHistory's withLockedConfirm
+  // turns it into a confirm dialog and resends.
+  const suppressToast = config.suppressToast === true
+    || (status === 409 && err.response?.data?.code === 'locked_periods');
 
   if (status === 401) {
     if (isSessionFailure(err) && !window.location.pathname.startsWith('/login')) {
@@ -184,6 +228,13 @@ export function responseErrorInterceptor(err) {
       window.location.href = '/login?session=expired';
     }
     // A credential 401 (wrong password / MFA code) is left to the caller's UI.
+  } else if (status === 403 && err.response?.data?.code === 'company_inactive') {
+    // requireAuth refuses every request once the company is deactivated; the
+    // session is useless, so sign out to a login screen that says why.
+    if (!window.location.pathname.startsWith('/login')) {
+      clearFailedSession(config._tokenSource);
+      window.location.href = '/login?session=inactive';
+    }
   } else if (status === 429) {
     const t = currentT();
     const retryAfter = err.response?.headers?.['retry-after'];

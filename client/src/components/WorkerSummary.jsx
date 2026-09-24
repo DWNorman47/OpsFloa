@@ -92,7 +92,7 @@ function rateAwareSplit(entries, { rule, threshold, mult, rate, prevailingRate, 
   return { regularHours, overtimeHours, prevailingHours, cost };
 }
 
-export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly', overtimeMultiplier = 1.5, prevailingRate = 0, overtimeRule = 'daily', overtimeThreshold = 8, weekStart = 1, showWages = false, currency = 'USD', overtimeEnabled = true }) {
+export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly', overtimeMultiplier = 1.5, prevailingRate = 0, overtimeRule = 'daily', overtimeThreshold = 8, weekStart = 1, showWages = false, currency = 'USD', overtimeEnabled = true, onRangeChange }) {
   const t = useT();
   const RANGES = [
     { label: t.thisWeek, key: 'this_week' },
@@ -149,7 +149,7 @@ export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly'
             <button
               key={r.key}
               style={range === r.key ? styles.rangeActive : styles.rangeBtn}
-              onClick={() => setRange(r.key)}
+              onClick={() => { setRange(r.key); onRangeChange?.(r.key); }}
             >
               {r.label}
             </button>

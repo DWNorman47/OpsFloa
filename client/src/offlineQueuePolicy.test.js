@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'vitest';
 import {
+  LARGE_QUEUE_BODY_CHARS,
+  MAX_NETWORK_TIMEOUT_MS,
+  NETWORK_TIMEOUT_MS,
+  countsTowardBackoff,
+  isAbortTimeout,
+  isAuthPaused,
+  isTokenExpired,
+  replayLane,
+  requestTimeoutMs,
+  tokenSig,
   MAX_QUEUE_AGE_MS,
   MAX_REPLAY_ATTEMPTS,
   backoffMs,
@@ -94,5 +104,50 @@ describe('idempotency key + body parsing', () => {
     expect(parseQueueableBody('')).toEqual({ ok: true, body: {} });
     expect(parseQueueableBody('{"a":1}')).toEqual({ ok: true, body: { a: 1 } });
     expect(parseQueueableBody('--boundary\r\nContent-Disposition: form-data').ok).toBe(false);
+  });
+});
+
+describe('slow uplinks + large bodies', () => {
+  test('timeout scales with body size, capped', () => {
+    expect(requestTimeoutMs(0)).toBe(NETWORK_TIMEOUT_MS);
+    expect(requestTimeoutMs(200)).toBeGreaterThanOrEqual(NETWORK_TIMEOUT_MS);
+    // ~4 MB of base64 photos gets minutes, not 15 s
+    expect(requestTimeoutMs(4 * 1024 * 1024)).toBeGreaterThan(4 * 60 * 1000);
+    expect(requestTimeoutMs(500 * 1024 * 1024)).toBe(MAX_NETWORK_TIMEOUT_MS);
+  });
+
+  test('only a timeout on a LARGE body counts toward backoff', () => {
+    expect(countsTowardBackoff({ timedOut: true, bodyChars: LARGE_QUEUE_BODY_CHARS })).toBe(true);
+    expect(countsTowardBackoff({ timedOut: true, bodyChars: 300 })).toBe(false);
+    expect(countsTowardBackoff({ timedOut: false, bodyChars: LARGE_QUEUE_BODY_CHARS * 4 })).toBe(false);
+    expect(isAbortTimeout({ name: 'TimeoutError' })).toBe(true);
+    expect(isAbortTimeout(new TypeError('Failed to fetch'))).toBe(false);
+  });
+
+  test('field creates get their own lane; punches share the ordered lane', () => {
+    expect(replayLane({ id: 1, type: 'clock' })).toBe('ordered');
+    expect(replayLane({ id: 2, type: 'time-entry' })).toBe('ordered');
+    expect(replayLane({ id: 3, type: 'field' })).toBe('field:3');
+    expect(replayLane({ id: 3, type: 'field' })).not.toBe(replayLane({ id: 4, type: 'field' }));
+  });
+});
+
+describe('auth pause (shared phone)', () => {
+  const jwt = (payload) => `Bearer h.${btoa(JSON.stringify(payload)).replace(/=+$/, '')}.signature-${payload.id}-${payload.exp}`;
+
+  test('expired saved tokens are detected; unknown exp is not "expired"', () => {
+    const now = Date.parse('2026-09-24T12:00:00Z');
+    expect(isTokenExpired(jwt({ id: 1, exp: now / 1000 - 60 }), now)).toBe(true);
+    expect(isTokenExpired(jwt({ id: 1, exp: now / 1000 + 60 }), now)).toBe(false);
+    expect(isTokenExpired('garbage', now)).toBe(false);
+  });
+
+  test('an item rejected with a token stays paused for that token and resumes with a new one', () => {
+    const oldTok = jwt({ id: 1, exp: 1 });
+    const newTok = jwt({ id: 1, exp: 2 });
+    const item = { id: 9, auth_failed_sig: tokenSig(oldTok) };
+    expect(isAuthPaused(item, oldTok)).toBe(true);
+    expect(isAuthPaused(item, newTok)).toBe(false);
+    expect(isAuthPaused({ id: 9 }, oldTok)).toBe(false);
   });
 });

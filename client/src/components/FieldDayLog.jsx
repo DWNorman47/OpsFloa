@@ -10,6 +10,7 @@ import { safeLocal } from '../utils/safeStorage';
 import { downloadBlob } from '../utils/csv';
 import { openVideoConverter } from '../utils/videoConvert';
 import { useConfirm } from './ConfirmDialog';
+import { useDirtyForm } from '../hooks/useDirtyForm';
 
 // A stable per-submission id so an offline-queued POST replayed on reconnect (same body)
 // dedups server-side instead of creating a duplicate report. See migration 0192.
@@ -203,6 +204,23 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
   const [uploadProgress, setUploadProgress] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Captured-but-unsaved photos / note must survive the background auto-update reload.
+  useDirtyForm(capturePhotos.length > 0 || !!captureNote || !!captureVideo, 'field-day-log');
+  // One idempotency key per capture, reused when the user taps Save again after a timeout /
+  // error — a fresh key per tap created a duplicate report whenever the first attempt had
+  // actually reached the server. A new key is minted only after a success.
+  const photoRequestIdRef = useRef(null);
+  const noteRequestIdRef = useRef(null);
+  const videoRequestIdRef = useRef(null);
+  const requestIdFor = ref => {
+    if (!ref.current) ref.current = newRequestId();
+    return ref.current;
+  };
+  // Changed content is a different submission — it gets a fresh key (else a dedup against a
+  // first attempt that did land would silently drop the added photo / edited text).
+  useEffect(() => { photoRequestIdRef.current = null; }, [capturePhotos]);
+  useEffect(() => { noteRequestIdRef.current = null; }, [captureNote]);
+  useEffect(() => { videoRequestIdRef.current = null; }, [captureVideo, videoCaption]);
 
   const [lightbox, setLightbox] = useState(null); // { photos, index }
   const [deletingPhoto, setDeletingPhoto] = useState(false);
@@ -268,8 +286,9 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
         photos: capturePhotos,
         lat, lng,
         report_date: date,
-        client_request_id: newRequestId(),
+        client_request_id: requestIdFor(photoRequestIdRef),
       });
+      photoRequestIdRef.current = null;
       const item = r.data?.offline
         ? { id: 'pending-' + Date.now(), pending: true, photos: capturePhotos.map(p => ({ url: p.url, caption: p.caption || '' })), notes: null, reported_at: new Date().toISOString(), project_id: project }
         : r.data;
@@ -291,8 +310,9 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
         notes: captureNote,
         lat, lng,
         report_date: date,
-        client_request_id: newRequestId(),
+        client_request_id: requestIdFor(noteRequestIdRef),
       });
+      noteRequestIdRef.current = null;
       const item = r.data?.offline
         ? { id: 'pending-' + Date.now(), pending: true, notes: captureNote, photos: [], reported_at: new Date().toISOString(), project_id: project }
         : r.data;
@@ -328,8 +348,9 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
         photos: [{ url: publicUrl, caption: videoCaption, media_type: 'video' }],
         lat, lng,
         report_date: date,
-        client_request_id: newRequestId(),
+        client_request_id: requestIdFor(videoRequestIdRef),
       });
+      videoRequestIdRef.current = null;
       setDayReports(prev => [r.data, ...prev]);
       setCaptureVideo(null);
       setVideoCaption('');

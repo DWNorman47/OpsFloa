@@ -7,7 +7,76 @@
 export const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 
 // A hung connection never rejects, so it would never fall back to the queue. Abort after this.
+// This is the budget for a SMALL request (a clock punch); a request with a big body gets extra
+// time for the upload itself — see requestTimeoutMs.
 export const NETWORK_TIMEOUT_MS = 15000;
+
+// Upload budget for a big body: assume a poor-but-working jobsite uplink of ~16 KB/s. A field
+// report with 10 base64 photos (~4 MB) gets ~4.5 min instead of 15 s, which used to abort every
+// attempt mid-upload, forever.
+export const MIN_UPLINK_BYTES_PER_SEC = 16 * 1024;
+export const MAX_NETWORK_TIMEOUT_MS = 10 * 60 * 1000;
+// Bodies at/over this size are "large": a timeout on one counts toward backoff / the poison cap
+// (a small body timing out means the device is effectively offline — that is not counted).
+export const LARGE_QUEUE_BODY_CHARS = 256 * 1024;
+
+/** Fetch timeout for a request whose body is `bodyChars` long (0 / unknown → the base timeout). */
+export function requestTimeoutMs(bodyChars = 0) {
+  const n = Number(bodyChars) || 0;
+  if (n <= 0) return NETWORK_TIMEOUT_MS;
+  const uploadMs = Math.ceil((n / MIN_UPLINK_BYTES_PER_SEC) * 1000);
+  return Math.min(MAX_NETWORK_TIMEOUT_MS, NETWORK_TIMEOUT_MS + uploadMs);
+}
+
+/** True when a fetch rejection was our own timeout abort (vs. a plain network failure). */
+export function isAbortTimeout(err) {
+  return err?.name === 'TimeoutError' || err?.name === 'AbortError';
+}
+
+/** Whether a failed replay fetch should count toward backoff / the poison cap. */
+export function countsTowardBackoff({ timedOut = false, bodyChars = 0 } = {}) {
+  return !!timedOut && (Number(bodyChars) || 0) >= LARGE_QUEUE_BODY_CHARS;
+}
+
+// Replay ordering lane. Clock punches and time-entry edits must replay strictly in queue order
+// per user (a clock-out must never land before its clock-in), so they share one lane. Field
+// module creates (reports, punch items, incidents …) are independent records: each gets its own
+// lane, so one slow / oversized photo report can't hold the user's later clock punches hostage.
+export function replayLane(item) {
+  return item?.type === 'field' ? `field:${item.id}` : 'ordered';
+}
+
+function decodeJwtPayload(auth) {
+  try {
+    const token = String(auth || '').replace(/^Bearer\s+/i, '');
+    const part = token.split('.')[1];
+    if (!part) return null;
+    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+/** True when the saved token carries an `exp` that has passed (unknown → false). */
+export function isTokenExpired(auth, now = Date.now()) {
+  const exp = decodeJwtPayload(auth)?.exp;
+  return typeof exp === 'number' && exp * 1000 <= now;
+}
+
+// A short fingerprint of a bearer token (its signature tail) — lets the SW remember WHICH token
+// a 401 came from without storing another copy of it. A new login mints a new token → new sig.
+export function tokenSig(auth) {
+  const token = String(auth || '').replace(/^Bearer\s+/i, '');
+  return token ? token.slice(-24) : '';
+}
+
+// Paused for re-auth: the item already got a 401 with this exact token, so replaying it again
+// with the same token is pointless (and re-toasts every minute). A fresh login resumes it.
+export function isAuthPaused(item, auth) {
+  return !!item?.auth_failed_sig && item.auth_failed_sig === tokenSig(auth);
+}
 
 // Poison-item cap. After this many server-side retryable failures (5xx / 429 / 408), or once an
 // item that has been tried is older than MAX_QUEUE_AGE_MS, it is flagged "stuck": it is KEPT (never
@@ -110,4 +179,20 @@ export function parseQueueableBody(text) {
   } catch {
     return { ok: false, body: null };
   }
+}
+
+// Shared "Clear" action for the offline banners: confirm first (it permanently deletes the
+// signed-in user's unsynced punches / reports), then ask the SW to clear. OfflineContext's
+// sendToSW stamps the user's scope; `scope` here is a fallback for callers without it.
+export async function confirmClearQueue({ confirm, t, count, sendToSW, scope }) {
+  if (!sendToSW || !count) return false;
+  const ok = await confirm({
+    title: t.offlineClearConfirmTitle,
+    body: String(t.offlineClearConfirmBody || '').replace('{n}', count),
+    confirmLabel: String(t.offlineClearConfirmBtn || '').replace('{n}', count),
+    tone: 'danger',
+  });
+  if (!ok) return false;
+  sendToSW(scope ? { type: 'CLEAR_QUEUE', scope } : { type: 'CLEAR_QUEUE' });
+  return true;
 }

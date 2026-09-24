@@ -14,21 +14,42 @@ const AUTO_RETRY_MS = 60 * 1000;
 
 export function OfflineProvider({ children }) {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [queueCount, setQueueCount] = useState(0);
+  // Raw SW counts: total + per user scope ("company:user"). A shared phone can hold another
+  // worker's unsynced items; this user only sees / syncs / clears their own.
+  const [queueCounts, setQueueCounts] = useState({ count: 0, byScope: null });
   const addToast = useToast();
   const t = useT();
   const tRef = useRef(t);
   const { user } = useAuth() || {};
   const userScope = user?.id != null && user?.company_id != null ? `${user.company_id}:${user.id}` : null;
   const listenersRef = useRef([]);
+  const userScopeRef = useRef(userScope);
+  userScopeRef.current = userScope;
+
+  const { queueCount, otherUserQueueCount } = splitQueueCounts(queueCounts, userScope);
 
   useEffect(() => { tRef.current = t; }, [t]);
 
+  // Replay and clear requests always carry the signed-in user's scope, so the SW only touches
+  // that user's queued items (never another worker's on a shared phone).
   const sendToSW = useCallback((msg) => {
     if (navigator.serviceWorker?.controller) {
-      navigator.serviceWorker.controller.postMessage(msg);
+      const scoped = (msg?.type === 'REPLAY_QUEUE' || msg?.type === 'CLEAR_QUEUE') && !msg.scope && userScopeRef.current
+        ? { ...msg, scope: userScopeRef.current }
+        : msg;
+      navigator.serviceWorker.controller.postMessage(scoped);
     }
   }, []);
+
+  // One-time notice (per signed-in user, per browser session) that the device holds another
+  // user's unsynced items — they stay put and sync when that user signs in again.
+  useEffect(() => {
+    if (!userScope || otherUserQueueCount <= 0) return;
+    const key = `tc_other_queue_notice:${userScope}`;
+    try { if (safeSession.getItem(key)) return; } catch { /* storage blocked */ }
+    try { safeSession.setItem(key, '1'); } catch { /* storage blocked */ }
+    addToast((tRef.current.offlineOtherUserQueued || '').replace('{n}', otherUserQueueCount), 'info');
+  }, [userScope, otherUserQueueCount, addToast]);
 
   // Subscribe to QUEUE_REPLAYED events
   const onSync = useCallback((fn) => {
@@ -93,7 +114,7 @@ export function OfflineProvider({ children }) {
         return;
       }
       if (type === 'QUEUE_COUNT') {
-        setQueueCount(count ?? 0);
+        setQueueCounts({ count: count ?? 0, byScope: event.data.byScope || null });
       }
       if (type === 'QUEUE_REPLAYED') {
         // The SW broadcasts the authoritative QUEUE_COUNT just before this, so don't
@@ -125,10 +146,21 @@ export function OfflineProvider({ children }) {
   }, [sendToSW, addToast]);
 
   return (
-    <OfflineContext.Provider value={{ isOffline, queueCount, sendToSW, onSync }}>
+    <OfflineContext.Provider value={{ isOffline, queueCount, otherUserQueueCount, sendToSW, onSync }}>
       {children}
     </OfflineContext.Provider>
   );
+}
+
+/**
+ * This user's queued-item count vs. everyone else's (exported for tests). Items with no
+ * decodable user ('' scope) count as the current user's. An older SW without per-scope counts
+ * → everything is "mine", as before.
+ */
+export function splitQueueCounts({ count = 0, byScope = null } = {}, userScope = null) {
+  if (!byScope || !userScope) return { queueCount: count, otherUserQueueCount: 0 };
+  const mine = (byScope[userScope] || 0) + (byScope[''] || 0);
+  return { queueCount: mine, otherUserQueueCount: Math.max(0, count - mine) };
 }
 
 export function useOffline() {

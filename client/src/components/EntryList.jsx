@@ -47,11 +47,28 @@ export default function EntryList({ entries, onDeleted, onUpdated, t, language, 
     setBulkDeleting(true);
     setBulkDeleteError('');
     try {
-      await Promise.all(ids.map(id => api.delete(`/time-entries/${id}`)));
-      ids.forEach(id => onDeleted(id));
-      setSelectedIds(new Set());
-    } catch { setBulkDeleteError(t.failedDeleteEntry); }
-    finally { setBulkDeleting(false); }
+      // allSettled: one locked / already-approved entry must not hide that the others were
+      // deleted (Promise.all rejected on the first failure and left deleted rows on screen).
+      const results = await Promise.allSettled(ids.map(id => api.delete(`/time-entries/${id}`, { suppressToast: true })));
+      const failed = [];
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') onDeleted(ids[i]);
+        else failed.push({ id: ids[i], reason: r.reason?.response?.data?.error || t.failedDeleteEntry });
+      });
+      // Keep only the failures selected so a retry targets exactly those.
+      setSelectedIds(new Set(failed.map(f => f.id)));
+      if (failed.length > 0) {
+        const byId = new Map(entries.map(e => [e.id, e]));
+        const lines = failed.map(f => {
+          const e = byId.get(f.id);
+          const label = e ? `${formatDate(e.work_date, language)} ${formatTime(e.start_time)}` : `#${f.id}`;
+          return `${label}: ${f.reason}`;
+        });
+        setBulkDeleteError(
+          t.bulkDeletePartialFailed.replace('{failed}', failed.length).replace('{total}', ids.length) + ' ' + lines.join(' · ')
+        );
+      }
+    } finally { setBulkDeleting(false); }
   };
 
   // Flat list, dates descending, entries within a day ascending by start_time.

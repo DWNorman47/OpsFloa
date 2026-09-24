@@ -1,16 +1,23 @@
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
+import { useConfirm } from './ConfirmDialog';
+import { confirmClearQueue } from '../offlineQueuePolicy';
+import { currentOfflineScope } from '../offlineDb';
 
 export default function OfflineBanner() {
   const t = useT();
   const { isOffline, queueCount, sendToSW } = useOffline() || {};
+  const { confirm, dialog } = useConfirm();
 
-  if (!isOffline && !queueCount) return null;
+  if (!isOffline && !queueCount) return dialog;
 
   const retry = () => sendToSW?.({ type: 'REPLAY_QUEUE' });
-  const clear = () => sendToSW?.({ type: 'CLEAR_QUEUE' });
+  const clear = () => confirmClearQueue({ confirm, t, count: queueCount, sendToSW, scope: currentOfflineScope() });
+  const n = queueCount;
 
   return (
+    <>
+    {dialog}
     <div
       role="status"
       aria-live="polite"
@@ -30,10 +37,10 @@ export default function OfflineBanner() {
     >
       <span>
         {isOffline
-          ? queueCount > 0
-            ? `Offline — ${queueCount} ${queueCount === 1 ? t.offlineEntry : t.offlineEntries} ${t.offlinePendingSync}`
+          ? n > 0
+            ? (n === 1 ? t.offlineBannerQueuedOne : t.offlineBannerQueuedMany.replace('{n}', n))
             : t.offlineNoQueue
-          : `${queueCount} ${queueCount === 1 ? t.offlineEntry : t.offlineEntries} ${t.offlinePendingSync}…`}
+          : (n === 1 ? t.offlineBannerPendingOne : t.offlineBannerPendingMany.replace('{n}', n))}
       </span>
       {!isOffline && queueCount > 0 && (
         <>
@@ -52,5 +59,6 @@ export default function OfflineBanner() {
         </>
       )}
     </div>
+    </>
   );
 }

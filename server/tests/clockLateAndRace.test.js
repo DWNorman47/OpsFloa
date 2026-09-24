@@ -140,3 +140,60 @@ describe('POST /api/clock/out — closes the LOCKED row', () => {
     expect(ins[20]).toBe(240);
   });
 });
+
+describe('POST /api/clock/out — end_ts is the client-tapped clock_out_time', () => {
+  function setup(row) {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+    const tx = txClient([
+      [/FOR UPDATE/, () => ({ rowCount: 1, rows: [row] })],
+      [/INSERT INTO time_entries/, () => ({ rowCount: 1, rows: [{ id: 1 }] })],
+    ]);
+    pool.connect.mockResolvedValueOnce(tx);
+    return tx;
+  }
+  const insertOf = tx => tx.calls.find(c => /INSERT INTO time_entries/.test(c.sql)).params;
+  const row = (clockIn) => ({ user_id: 7, company_id: 'co-1', project_id: null, clock_in_time: clockIn, work_date: '2026-11-01', timezone: 'America/Chicago', clock_source: 'worker', clocked_in_by: null, clock_in_late_minutes: null });
+
+  test('an offline clock-out synced hours later (across a DST change) keeps the tap instant', async () => {
+    // Shift 2025-11-01 22:00 CDT → tapped out 2025-11-02 06:00 CST (DST ended at 02:00), synced now.
+    const clockIn = '2025-11-02T03:00:00.000Z';
+    const tapped = '2025-11-02T12:00:00.000Z';
+    const tx = setup(row(clockIn));
+    const res = await request(makeApp()).post('/api/clock/out')
+      .send({ local_clock_in: '22:00', local_clock_out: '06:00', clock_out_time: tapped });
+    expect(res.status).toBe(200);
+    const ins = insertOf(tx);
+    expect(new Date(ins[7]).toISOString()).toBe(tapped); // end_ts = tap, not the (much later) receive time
+    expect(ins[5]).toMatch(/^06:00/);                       // end_time agrees with end_ts
+  });
+
+  test('a future clock_out_time is clamped to now (and the wall time derived from it)', async () => {
+    const before = Date.now();
+    const tx = setup(row(new Date(before - 3600e3).toISOString()));
+    await request(makeApp()).post('/api/clock/out')
+      .send({ local_clock_out: '23:59', clock_out_time: new Date(before + 6 * 3600e3).toISOString() });
+    const end = new Date(insertOf(tx)[7]).getTime();
+    expect(end).toBeGreaterThanOrEqual(before - 1000);
+    expect(end).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(insertOf(tx)[5]).not.toMatch(/^23:59/);
+  });
+
+  test('a clock_out_time before the shift start is not accepted — server now instead', async () => {
+    const before = Date.now();
+    const clockIn = new Date(before - 3600e3).toISOString();
+    const tx = setup(row(clockIn));
+    await request(makeApp()).post('/api/clock/out')
+      .send({ clock_out_time: new Date(before - 5 * 3600e3).toISOString() });
+    const end = new Date(insertOf(tx)[7]).getTime();
+    expect(end).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  test('an old client without clock_out_time falls back to server now', async () => {
+    const before = Date.now();
+    const tx = setup(row(new Date(before - 3600e3).toISOString()));
+    await request(makeApp()).post('/api/clock/out').send({ local_clock_out: '17:00' });
+    const ins = insertOf(tx);
+    expect(new Date(ins[7]).getTime()).toBeGreaterThanOrEqual(before - 1000);
+    expect(ins[5]).toMatch(/^17:00/);
+  });
+});

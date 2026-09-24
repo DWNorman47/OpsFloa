@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   isSessionFailure, clearFailedSession, responseErrorInterceptor, requestInterceptor,
   resolveTimeout, isTimeoutError, setApiToastHandler, DEFAULT_TIMEOUT_MS, LONG_TIMEOUT_MS,
+  approxBodyChars, bodyIdempotencyKey,
 } from './api';
 
 const err401 = (error, config = {}, extra = {}) => ({
@@ -72,6 +73,14 @@ describe('401 interceptor', () => {
     expect(window.location.href).toBe('/login?session=expired');
   });
 
+  test('a deactivated company (403 company_inactive) signs out to a login that says why', async () => {
+    localStorage.setItem('tc_token', 'real');
+    const err = { response: { status: 403, data: { code: 'company_inactive', error: 'deactivated' } }, config: { _tokenSource: 'local' } };
+    await expect(responseErrorInterceptor(err)).rejects.toBeTruthy();
+    expect(localStorage.getItem('tc_token')).toBeNull();
+    expect(window.location.href).toBe('/login?session=inactive');
+  });
+
   test('expired normal token clears localStorage and redirects', async () => {
     localStorage.setItem('tc_token', 'real');
     await expect(responseErrorInterceptor(err401('Session invalidated, please log in again', { _tokenSource: 'local' }))).rejects.toBeTruthy();
@@ -121,5 +130,33 @@ describe('timeouts', () => {
     await expect(responseErrorInterceptor(e)).rejects.toBe(e);
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/too long/i), 'warning');
     setApiToastHandler(null);
+  });
+});
+
+describe('slow endpoints + large bodies', () => {
+  test('QuickBooks pushes, payroll runs and the mailbox get the long timeout', () => {
+    for (const url of ['/qbo/push', '/qbo/push-bills', '/qbo/push-expenses', '/qbo/push-payroll',
+      '/qbo/push-bills-preview', '/qbo/invoices', '/admin/payroll-run?from=a&to=b',
+      '/admin/payroll-run/finalize', '/mailbox/messages', '/mailbox/messages/12', '/mailbox/send']) {
+      expect(resolveTimeout({ url })).toBe(LONG_TIMEOUT_MS);
+    }
+    expect(resolveTimeout({ url: '/qbo/status' })).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  test('photos nested in an array count as a large body, and scale past the long timeout', () => {
+    const photo = { url: 'data:image/jpeg;base64,' + 'x'.repeat(400000), caption: '' };
+    const data = { project_id: 1, photos: Array.from({ length: 10 }, () => ({ ...photo })) };
+    expect(approxBodyChars(data)).toBeGreaterThan(4000000);
+    expect(resolveTimeout({ url: '/field-reports', data })).toBeGreaterThan(LONG_TIMEOUT_MS);
+    expect(resolveTimeout({ url: '/field-reports', data: { photos: [{ url: 'x'.repeat(60000) }, { url: 'x'.repeat(60000) }] } }))
+      .toBeGreaterThanOrEqual(LONG_TIMEOUT_MS);
+    expect(resolveTimeout({ url: '/field-reports', data: { notes: 'hi', photos: [] } })).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  test('a body client_request_id is mirrored into the Idempotency-Key header', () => {
+    const cfg = requestInterceptor({ method: 'post', url: '/field-reports', headers: {}, data: { client_request_id: 'abc-123' } });
+    expect(cfg.headers['Idempotency-Key']).toBe('abc-123');
+    expect(requestInterceptor({ method: 'get', url: '/x', headers: {} }).headers['Idempotency-Key']).toBeUndefined();
+    expect(bodyIdempotencyKey({ client_id: '7' })).toBeNull();
   });
 });

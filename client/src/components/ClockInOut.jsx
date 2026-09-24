@@ -6,6 +6,9 @@ import { useFormPersist } from '../hooks/useFormPersist';
 
 import { silentError } from '../errorReporter';
 import { safeLocal } from '../utils/safeStorage';
+import { useConfirm } from './ConfirmDialog';
+import { confirmClearQueue } from '../offlineQueuePolicy';
+import { currentOfflineScope } from '../offlineDb';
 function getLocation(options = {}) {
   const {
     timeout = 2500,
@@ -28,6 +31,20 @@ function formatElapsed(seconds) {
   const s = seconds % 60;
   const pad = n => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// "7h 45m" — the clock-out confirm's worked time (no seconds; it's a pay figure, not a timer).
+function formatHoursMinutes(seconds) {
+  const total = Math.max(0, Math.floor(seconds / 60));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+
+// Worked seconds = elapsed on the clock minus the entered break (never negative).
+function workedSeconds(elapsedSeconds, breakMinutes) {
+  const brk = parseInt(breakMinutes, 10);
+  return Math.max(0, (elapsedSeconds || 0) - (Number.isFinite(brk) && brk > 0 ? brk * 60 : 0));
 }
 
 const HINT_DISMISSED_KEY = 'opsfloa_clockin_hint_dismissed';
@@ -167,6 +184,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
   const [checklistAnswers, setChecklistAnswers] = useState({});
   const [checklistSubmitting, setChecklistSubmitting] = useState(false);
   const [confirmingCancelClock, setConfirmingCancelClock] = useState(false);
+  const [confirmingClockOut, setConfirmingClockOut] = useState(false);
+  const { confirm: confirmDialog, dialog: confirmDialogEl } = useConfirm();
   const [clockOutSummary, setClockOutSummary] = useState(null); // { seconds, projectName }
   const [hourLimitNotice, setHourLimitNotice] = useState(null); // string banner, dismissible
   const timerRef = useRef(null);
@@ -369,7 +388,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
   const handleClockIn = async () => {
   // When work selection is on but the company has zero active work,
     // fall back to project-less clock-in instead of blocking the worker.
-    if (projectsEnabled && hasProjects && !selectedProject) { setError(`${t.cioSelect} project ${t.cioFirst}`); return; }
+    if (projectsEnabled && hasProjects && !selectedProject) { setError(t.cioSelectProjectFirst); return; }
     setError('');
     setLocationDenied(false);
     setLoading(true);
@@ -481,8 +500,12 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
   };
 
   const handleClockOut = async () => {
+    setConfirmingClockOut(false);
     setError('');
     setLoading(true);
+    // The clock-out instant is captured at the tap and sent as clock_out_time: an offline
+    // clock-out may sync hours later (possibly across a DST change) and the server must
+    // store THIS moment, not the moment the queued request finally arrived.
     const clockOutInstant = new Date();
     const { lat, lng } = geolocationEnabled ? await getLocation() : { lat: null, lng: null };
     const local_clock_in = status.clock_in_time ? toLocalTime(new Date(status.clock_in_time)) : toLocalTime(new Date());
@@ -494,6 +517,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
         mileage: mileage ? parseFloat(mileage) : null,
         local_clock_in,
         local_clock_out,
+        clock_out_time: clockOutInstant.toISOString(),
         // Recovery fields — used ONLY if the server has no active_clock (the clock-in
         // was queued offline and outran this clock-out). Ignored on the normal path.
         clock_in_time: status.clock_in_time || null,
@@ -506,7 +530,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
         // Queued offline — stay "clocked in" locally until sync
         setStatus(prev => ({ ...prev, clock_out_queued: true }));
       } else {
-        const summarySeconds = elapsed;
+        // Match what the worker is paid for: shift length minus the break.
+        const summarySeconds = workedSeconds(Math.floor((clockOutInstant - new Date(status.clock_in_time)) / 1000) || elapsed, breakMinutes);
         const summaryProject = status.project_name;
         onEntryAdded({ ...r.data, project_name: status.project_name });
         setStatus(false);
@@ -525,7 +550,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
   };
 
   const handleSwitchProject = async () => {
-    if (!switchProject) { setError(`${t.cioSelectNew} project.`); return; }
+    if (!switchProject) { setError(t.cioSelectNewProjectDot); return; }
     setError('');
     setLoading(true);
     const switchInstant = new Date();
@@ -553,6 +578,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
         local_work_date,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         clock_in_time: switch_clock_in_time,
+        // Same instant closes the previous shift (see handleClockOut: survives a late offline sync).
+        clock_out_time: switch_clock_in_time,
       });
       if (r.data?.offline) {
         setStatus(prev => ({
@@ -594,7 +621,12 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
       {!isOffline && queueCount > 0 && (
         <span style={{ display: 'flex', gap: 8, marginLeft: 8 }}>
           <button style={styles.syncRetryBtn} onClick={() => sendToSW?.({ type: 'REPLAY_QUEUE' })}>{t.syncRetry}</button>
-          <button style={styles.syncClearBtn} onClick={() => sendToSW?.({ type: 'CLEAR_QUEUE' })}>{t.syncClear}</button>
+          <button
+            style={styles.syncClearBtn}
+            onClick={() => confirmClearQueue({ confirm: confirmDialog, t, count: queueCount, sendToSW, scope: currentOfflineScope() })}
+          >
+            {t.syncClear}
+          </button>
         </span>
       )}
     </div>
@@ -603,6 +635,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
   if (status === null) return (
     <div style={styles.card}>
       {offlineBanner}
+      {confirmDialogEl}
       <p style={{ color: '#6b7280', fontSize: 14, margin: 0 }}>{t.clockingStatus}</p>
     </div>
   );
@@ -677,8 +710,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
             {switchingProject ? (
               <div style={styles.switchBox}>
                 <ProjectWheelPicker
-                  label={`${t.cioSelectNew} project`}
-                  placeholder={`${t.cioChoose} project`}
+                  label={t.cioSelectNewProjectLabel}
+                  placeholder={t.cioChooseProject}
                   value={switchProject}
                   options={switchProjects}
                   onChange={setSwitchProject}
@@ -697,14 +730,42 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
             ) : (
               projectsEnabled && projects?.length > 1 && (
                 <button style={{ ...styles.switchProjectBtn, ...(loading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => setSwitchingProject(true)} disabled={loading}>
-                  {`${t.cioSwitch} project`}
+                  {t.cioSwitchProject}
                 </button>
               )
             )}
 
-            <button style={{ ...styles.clockOutBtn, ...(loading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} className="clock-btn" onClick={handleClockOut} disabled={loading}>
-              {loading ? t.clockingOut : t.clockOut}
-            </button>
+            {confirmingClockOut && !loading ? (
+              // One extra tap: review what's about to be recorded before clocking out.
+              <div style={styles.clockOutConfirm} role="group" aria-label={t.cioConfirmClockOutTitle}>
+                <div style={styles.clockOutConfirmTitle}>{t.cioConfirmClockOutTitle}</div>
+                {status.project_name && <div style={styles.clockOutConfirmRow}><span>{t.project}</span><strong>{status.project_name}</strong></div>}
+                <div style={styles.clockOutConfirmRow}>
+                  <span>{t.cioConfirmHours}</span>
+                  <strong>
+                    {formatHoursMinutes(workedSeconds(elapsed, breakMinutes))}
+                    {parseInt(breakMinutes, 10) > 0 && (
+                      <span style={styles.clockOutConfirmSub}> {t.cioConfirmBreakNote.replace('{m}', parseInt(breakMinutes, 10))}</span>
+                    )}
+                  </strong>
+                </div>
+                {parseFloat(mileage) > 0 && (
+                  <div style={styles.clockOutConfirmRow}><span>{t.mileageLabel}</span><strong>{parseFloat(mileage)} {t.cioUnitMi}</strong></div>
+                )}
+                <div style={styles.switchActions}>
+                  <button style={{ ...styles.switchConfirmBtn, padding: '12px', fontSize: 15 }} className="clock-btn" onClick={handleClockOut} autoFocus>
+                    {t.cioConfirmClockOutBtn}
+                  </button>
+                  <button style={styles.switchCancelBtn} onClick={() => setConfirmingClockOut(false)}>
+                    {t.cioConfirmBack}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button style={{ ...styles.clockOutBtn, ...(loading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} className="clock-btn" onClick={() => { setError(''); setConfirmingClockOut(true); }} disabled={loading}>
+                {loading ? t.clockingOut : t.clockOut}
+              </button>
+            )}
             {confirmingCancelClock ? (
               <>
                 <button style={{ ...styles.confirmCancelBtn, ...(loading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={handleCancelClockIn} disabled={loading}>{t.confirm}</button>
@@ -733,13 +794,14 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
   return (
     <div style={styles.card}>
       {offlineBanner}
+      {confirmDialogEl}
       {clockOutSummary && (
         <div style={styles.clockOutSummary}>
           <div style={styles.clockOutSummaryCheck}>✓</div>
           <div style={styles.clockOutSummaryBody}>
             <div style={styles.clockOutSummaryTitle}>{t.clockOutSummaryTitle}</div>
             <div style={styles.clockOutSummaryProject}>{clockOutSummary.projectName}</div>
-            <div style={styles.clockOutSummaryDuration}>{t.clockOutSummaryDuration}: <strong>{formatElapsed(clockOutSummary.seconds)}</strong></div>
+            <div style={styles.clockOutSummaryDuration}>{t.clockOutSummaryWorked}: <strong>{formatElapsed(clockOutSummary.seconds)}</strong></div>
           </div>
           <button style={styles.clockOutSummaryDismiss} aria-label={t.dismiss} onClick={() => setClockOutSummary(null)}>✕</button>
         </div>
@@ -758,8 +820,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
       <div style={styles.form}>
         {projectsEnabled && hasProjects && (
           <ProjectWheelPicker
-            label="Project"
-            placeholder={`${t.cioChoose} project`}
+            label={t.project}
+            placeholder={t.cioChooseProject}
             value={selectedProject}
             options={orderedProjects}
             onChange={setSelectedProject}
@@ -1008,6 +1070,10 @@ const styles = {
   switchActions: { display: 'flex', gap: 8 },
   switchConfirmBtn: { flex: 1, padding: '9px', background: '#fff', color: 'var(--ops-page-accent)', border: 'none', borderRadius: 7, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   switchCancelBtn: { padding: '9px 14px', background: 'none', border: '1px solid rgba(255,255,255,0.4)', color: 'rgba(255,255,255,0.8)', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
+  clockOutConfirm: { background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 },
+  clockOutConfirmTitle: { fontSize: 15, fontWeight: 700 },
+  clockOutConfirmRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, fontSize: 14, flexWrap: 'wrap' },
+  clockOutConfirmSub: { fontSize: 12, fontWeight: 400, opacity: 0.8 },
   clockOutBtn: { width: '100%', padding: '13px', background: 'rgba(255,255,255,0.2)', color: '#fff', border: '2px solid rgba(255,255,255,0.5)', borderRadius: 8, fontSize: 16, fontWeight: 700, cursor: 'pointer' },
   cancelClockInBtn: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.55)', fontSize: 12, cursor: 'pointer', textDecoration: 'underline', padding: '2px 0', alignSelf: 'center' },
   confirmCancelBtn: { background: 'rgba(239,68,68,0.85)', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', alignSelf: 'center' },

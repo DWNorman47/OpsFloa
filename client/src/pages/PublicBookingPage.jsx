@@ -9,25 +9,26 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { publicLinkError } from '../utils/publicErrors';
 import MapLink from '../components/MapLink';
-import { getT } from '../i18n';
+import { useTFor } from '../hooks/useT';
 import { detectLanguage } from '../languageDetect';
 import { formatDate, formatDateTime, langToLocale } from '../utils';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const pub = axios.create({ baseURL });
 
-// Public visitors are anonymous, so resolve the language from the browser.
+// Public visitors are anonymous, so resolve the language from the browser. The dictionary is
+// read per render (useTFor) — a module-level getT() froze whatever chunk had loaded at import
+// time, so the page could stay in the wrong language after the i18n split.
 const lang = detectLanguage();
-const t = getT(lang);
 
-const locationKindLabels = () => ({
+const locationKindLabels = (t) => ({
   phone: t.pbkLocationPhone,
   video: t.pbkLocationVideo,
   onsite: t.pbkLocationOnsite,
   office: t.pbkLocationOffice,
   other: t.pbkLocationOther,
 });
-const weekdayFull = () => [
+const weekdayFull = (t) => [
   t.pbkWeekdaySunday,
   t.pbkWeekdayMonday,
   t.pbkWeekdayTuesday,
@@ -38,6 +39,7 @@ const weekdayFull = () => [
 ];
 
 export default function PublicBookingPage() {
+  const t = useTFor(lang);
   const { companySlug, typeSlug } = useParams();
   const navigate = useNavigate();
   const [step, setStep] = useState(typeSlug ? 'date' : 'type');
@@ -50,7 +52,7 @@ export default function PublicBookingPage() {
   const [typeError, setTypeError] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
 
-  const LOCATION_KIND_LABELS = locationKindLabels();
+  const LOCATION_KIND_LABELS = locationKindLabels(t);
 
   // Step 1: load types if no slug
   useEffect(() => {
@@ -201,12 +203,13 @@ export default function PublicBookingPage() {
 // ── Slot picker ─────────────────────────────────────────────────────────────
 
 function SlotPicker({ companySlug, typeSlug, duration, onPick, onBack }) {
+  const t = useTFor(lang);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [days, setDays] = useState(14);
 
-  const WEEKDAY_FULL = weekdayFull();
+  const WEEKDAY_FULL = weekdayFull(t);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -278,6 +281,7 @@ function SlotPicker({ companySlug, typeSlug, duration, onPick, onBack }) {
 // ── Client form ─────────────────────────────────────────────────────────────
 
 function ClientForm({ companySlug, typeSlug, slot, onBack }) {
+  const t = useTFor(lang);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -365,6 +369,7 @@ function ClientForm({ companySlug, typeSlug, slot, onBack }) {
 // ── Manage page ─────────────────────────────────────────────────────────────
 
 export function PublicBookingManagePage() {
+  const t = useTFor(lang);
   const { token } = useParams();
   const [appt, setAppt] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -373,7 +378,7 @@ export function PublicBookingManagePage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelled, setCancelled] = useState(false);
 
-  const LOCATION_KIND_LABELS = locationKindLabels();
+  const LOCATION_KIND_LABELS = locationKindLabels(t);
 
   useEffect(() => {
     pub.get(`/public/book/manage/${token}`)

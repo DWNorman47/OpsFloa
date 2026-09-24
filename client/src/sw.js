@@ -3,11 +3,18 @@ import { NavigationRoute, registerRoute } from 'workbox-routing';
 import {
   IDEMPOTENCY_HEADER,
   classifyReplayStatus,
+  countsTowardBackoff,
+  isAbortTimeout,
+  isAuthPaused,
   isBackingOff,
   isStuck,
+  isTokenExpired,
   newIdempotencyKey,
   parseQueueableBody,
+  replayLane,
+  requestTimeoutMs,
   timeoutSignal,
+  tokenSig,
   withFailedAttempt,
 } from './offlineQueuePolicy';
 
@@ -152,20 +159,17 @@ async function dequeue(id) {
   });
 }
 
-async function getQueueCount() {
-  const db = await openQueueDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(QUEUE_STORE, 'readonly');
-    const req = tx.objectStore(QUEUE_STORE).count();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
+// Total + per-user counts. On a shared phone the queue can hold another worker's unsynced items;
+// the page shows (and clears) only the signed-in user's, and tells them the others exist.
 async function broadcastQueueCount() {
-  const count = await getQueueCount();
+  const items = await getAllQueued();
+  const byScope = {};
+  for (const it of items) {
+    const s = it.scope || authScope(it.auth) || '';
+    byScope[s] = (byScope[s] || 0) + 1;
+  }
   const clients = await self.clients.matchAll();
-  clients.forEach(c => c.postMessage({ type: 'QUEUE_COUNT', count }));
+  clients.forEach(c => c.postMessage({ type: 'QUEUE_COUNT', count: items.length, byScope }));
 }
 
 // ── Offline request handler (clock, time entries, field modules) ───────────────
@@ -182,14 +186,15 @@ async function handleOfflineableRequest(event, type) {
   headers.set(IDEMPOTENCY_HEADER, idempotencyKey);
   try {
     // Timeout: a hung connection never rejects, so without it the request would never fall
-    // back to the queue.
+    // back to the queue. Scaled to the body size, so a photo report on a slow uplink gets time
+    // to actually upload instead of being aborted mid-upload.
     return await fetch(request.url, {
       method: request.method,
       headers,
       body: bodyText === '' ? undefined : bodyText,
       credentials: request.credentials,
       mode: request.mode === 'navigate' ? 'same-origin' : request.mode,
-      signal: timeoutSignal(),
+      signal: timeoutSignal(requestTimeoutMs(bodyText.length)),
     });
   } catch {
     const { ok, body } = parseQueueableBody(bodyText);
@@ -230,14 +235,20 @@ function getClientAuth(client) {
   });
 }
 
-// A browser may have a normal and impersonation tab open at once. Only accept
-// a refreshed token for the same company/user that originally queued the item.
-async function getFreshAuth(scope) {
-  if (!scope) return null;
+// Ask every open page for its current token. A browser may have a normal and an impersonation
+// tab open at once, so this is a scope → token map: a queued item only ever replays with a token
+// for the same company/user that originally queued it.
+async function collectClientAuth() {
   const clients = await self.clients.matchAll({ includeUncontrolled: true });
-  if (clients.length === 0) return null;
-  const candidates = await Promise.all(clients.map(getClientAuth));
-  return candidates.find(auth => authScope(auth) === scope) || null;
+  const authByScope = new Map();
+  if (clients.length > 0) {
+    const candidates = await Promise.all(clients.map(getClientAuth));
+    for (const auth of candidates) {
+      const scope = authScope(auth);
+      if (scope && !authByScope.has(scope)) authByScope.set(scope, auth);
+    }
+  }
+  return { hasClients: clients.length > 0, authByScope };
 }
 
 // The queue is replayed from two triggers (a REPLAY_QUEUE message and a Background
@@ -245,9 +256,26 @@ async function getFreshAuth(scope) {
 // passes read the same items with getAllQueued() and replay each one twice — which,
 // for a clock-in, could re-create a shift after it was clocked out. Coalesce concurrent
 // replays into a single in-flight pass.
+// A manual Retry that arrives while an AUTOMATIC pass is running must not be swallowed (the auto
+// pass skips the backing-off / stuck items the user explicitly asked to retry), so it queues ONE
+// follow-up manual pass that starts as soon as the current pass finishes.
 let replayInFlight = null;
+let inFlightManual = false;
+let manualFollowUp = null;
 function replayQueue(opts = {}) {
-  if (replayInFlight) return replayInFlight;
+  if (replayInFlight) {
+    if (opts.manual && !inFlightManual) {
+      if (!manualFollowUp) {
+        manualFollowUp = replayInFlight.catch(() => {}).then(() => {
+          manualFollowUp = null;
+          return replayQueue(opts);
+        });
+      }
+      return manualFollowUp;
+    }
+    return replayInFlight;
+  }
+  inFlightManual = !!opts.manual;
   replayInFlight = doReplayQueue(opts).finally(() => { replayInFlight = null; });
   return replayInFlight;
 }
@@ -259,14 +287,21 @@ async function errorCode(res) {
 // One replay pass. Outcome per item (see offlineQueuePolicy.classifyReplayStatus):
 //   done  → dequeue, count as synced
 //   drop  → dequeue + report (REPLAY_PARTIAL_FAILURE): a permanent 4xx that can never succeed
-//   retry → KEEP, record the attempt + backoff (5xx cold start / deploy, 429, 408, network error)
-//   auth  → KEEP, pause that user's replay until they log in again (OfflineContext re-triggers
-//           a replay when a user signs in)
-// Items replay in queue order per user: once one of a user's items is kept (retry / auth /
-// backing off / stuck), that user's later items wait too — a queued clock-out must never land
-// before the clock-in it follows. `manual` (the Retry buttons) ignores backoff and retries stuck
-// items; automatic passes skip them.
-async function doReplayQueue({ manual = false } = {}) {
+//   retry → KEEP, record the attempt + backoff (5xx cold start / deploy, 429, 408, and a timeout
+//           on a LARGE body). A network error / timeout on a small body (device still offline)
+//           keeps the item without counting it.
+//   auth  → KEEP, remember which token was rejected and stay quiet for that user until they log
+//           in again (a new token resumes it; OfflineContext re-triggers a replay on sign-in)
+// Which items a pass touches: only the signed-in user's (`scope`, sent by the page). On a shared
+// phone, worker A's queued items never replay under worker B's session (they used to 401 with
+// A's expired token and toast B every minute). A Background Sync pass (no scope) replays the
+// scopes of the open pages — or, with no page open, items whose saved token hasn't expired.
+// Ordering: clock / time-entry items replay in queue order per user — once one is kept (retry /
+// backing off / stuck), that user's later ones wait (a queued clock-out must never land before
+// its clock-in). Field creates are independent records (see replayLane) and never block the
+// punches. An auth failure pauses the user's whole queue. `manual` (the Retry buttons) ignores
+// backoff and retries stuck items; automatic passes skip them.
+async function doReplayQueue({ manual = false, scope: requestedScope = null } = {}) {
   const items = (await getAllQueued()).sort((a, b) => a.id - b.id);
   const now = Date.now();
   let replayed = 0;
@@ -276,31 +311,42 @@ async function doReplayQueue({ manual = false } = {}) {
   let newlyStuck = 0;
   let skippedStuck = 0;
 
-  const freshAuthByScope = new Map();
+  const { hasClients, authByScope } = await collectClientAuth();
   const blockedScopes = new Set();
+  const blockedLanes = new Set();
+
+  const eligible = (scope, item) => {
+    if (!scope) return true; // legacy item with no decodable user
+    if (requestedScope) return scope === requestedScope;
+    if (hasClients) return authByScope.has(scope);
+    return !isTokenExpired(item.auth, now);
+  };
 
   for (const item of items) {
     const scope = item.scope || authScope(item.auth);
     const scopeKey = scope || '';
+    if (!eligible(scope, item)) continue;
     if (blockedScopes.has(scopeKey)) continue;
+    const laneKey = `${scopeKey}|${replayLane(item)}`;
+    if (blockedLanes.has(laneKey)) continue;
     if (!manual && isStuck(item, now)) {
       skippedStuck++;
-      blockedScopes.add(scopeKey);
+      blockedLanes.add(laneKey);
       continue;
     }
     if (!manual && isBackingOff(item, now)) {
       retryPending = true;
-      blockedScopes.add(scopeKey);
+      blockedLanes.add(laneKey);
       continue;
     }
     try {
-      if (scope && !freshAuthByScope.has(scope)) {
-        freshAuthByScope.set(scope, await getFreshAuth(scope));
-      }
-      const freshAuth = scope ? freshAuthByScope.get(scope) : null;
-      const auth = freshAuth || item.auth;
+      const auth = (scope && authByScope.get(scope)) || item.auth;
       if (scope && authScope(auth) !== scope) {
-        authFailed = true;
+        blockedScopes.add(scopeKey);
+        continue;
+      }
+      // Already rejected with this exact token — wait quietly for a fresh login.
+      if (isAuthPaused(item, auth)) {
         blockedScopes.add(scopeKey);
         continue;
       }
@@ -311,6 +357,7 @@ async function doReplayQueue({ manual = false } = {}) {
         current = { ...current, idempotency_key: newIdempotencyKey() };
         await updateQueued(current);
       }
+      const bodyText = JSON.stringify(current.body);
       let res;
       try {
         res = await fetch(current.url, {
@@ -320,14 +367,19 @@ async function doReplayQueue({ manual = false } = {}) {
             [IDEMPOTENCY_HEADER]: current.idempotency_key,
             ...(auth ? { Authorization: auth } : {}),
           },
-          body: JSON.stringify(current.body),
-          signal: timeoutSignal(),
+          body: bodyText,
+          signal: timeoutSignal(requestTimeoutMs(bodyText.length)),
         });
-      } catch {
-        // Still offline / timed out — keep it. Not counted toward the poison cap.
-        await updateQueued(withFailedAttempt(current, { now, countAttempt: false }));
-        retryPending = true;
-        blockedScopes.add(scopeKey);
+      } catch (err) {
+        // Still offline → keep it, not counted. A TIMEOUT on a large body (slow uplink /
+        // oversized report) IS counted, so it backs off and eventually goes stuck instead of
+        // re-uploading megabytes every minute forever.
+        const countAttempt = countsTowardBackoff({ timedOut: isAbortTimeout(err), bodyChars: bodyText.length });
+        const next = withFailedAttempt(current, { now, countAttempt });
+        await updateQueued(next);
+        if (countAttempt && isStuck(next, now)) newlyStuck++;
+        else retryPending = true;
+        blockedLanes.add(laneKey);
         continue;
       }
       const outcome = classifyReplayStatus(res.status, res.status === 409 ? await errorCode(res) : null);
@@ -338,8 +390,10 @@ async function doReplayQueue({ manual = false } = {}) {
         await dequeue(current.id);
         partialFailure = true;
       } else if (outcome === 'auth') {
-        // Even the fresh token was rejected. KEEP the request (dropping it lost clock-outs) and
-        // stop this user's pass until they re-authenticate.
+        // Even the freshest token we have was rejected. KEEP the request (dropping it lost
+        // clock-outs), remember WHICH token failed, and stop this user's pass until they
+        // re-authenticate. Reported once: later passes with the same token skip silently.
+        await updateQueued({ ...current, auth_failed_sig: tokenSig(auth), last_status: 401 });
         authFailed = true;
         blockedScopes.add(scopeKey);
       } else {
@@ -347,12 +401,12 @@ async function doReplayQueue({ manual = false } = {}) {
         await updateQueued(next);
         if (isStuck(next, now)) newlyStuck++;
         else retryPending = true;
-        blockedScopes.add(scopeKey);
+        blockedLanes.add(laneKey);
       }
     } catch {
       // IndexedDB / auth-handshake hiccup — leave the item as it is.
       retryPending = true;
-      blockedScopes.add(scopeKey);
+      blockedLanes.add(laneKey);
     }
   }
   await broadcastQueueCount();
@@ -479,7 +533,8 @@ self.addEventListener('message', event => {
   if (event.data?.type === 'REPLAY_QUEUE') {
     // `auto: true` comes from OfflineContext's own triggers (reconnect, login, periodic retry)
     // and honors backoff; anything else (the Retry buttons) is a manual retry.
-    event.waitUntil(replayQueue({ manual: !event.data.auto }));
+    // `scope` is the signed-in user's company:user — only their items replay.
+    event.waitUntil(replayQueue({ manual: !event.data.auto, scope: event.data.scope || null }));
   }
   if (event.data?.type === 'GET_QUEUE_COUNT') {
     event.waitUntil(broadcastQueueCount());

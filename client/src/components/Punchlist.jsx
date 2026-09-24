@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useDirtyForm } from '../hooks/useDirtyForm';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
@@ -43,6 +44,7 @@ function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPh
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  useDirtyForm(!!(form.title || form.description || form.location), 'punchlist-item'); // hold off the auto-update reload
 
   const submit = async e => {
     e.preventDefault();

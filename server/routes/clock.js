@@ -601,6 +601,16 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
   }
 });
 
+// Clock-out instant for /out: the client-claimed tap time (resolveClientClockTime clamps a
+// future time to now), but never before the segment's start — a claimed end before the start
+// is not trusted and falls back to server now (the pre-fix behaviour).
+function resolveClockOutTime(raw, startTs, now = new Date()) {
+  if (raw == null || raw === '') return now;
+  const { ts } = resolveClientClockTime(raw, now);
+  if (startTs && ts.getTime() < new Date(startTs).getTime()) return now;
+  return ts;
+}
+
 // POST /api/clock/out
 // Recover a clock-OUT whose clock-IN was queued offline and never reached the server
 // (so there is no active_clock to close). Rather than 400 and lose the shift, rebuild
@@ -608,7 +618,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
 // path so it can't affect it. Dedup + advisory-lock guarded against a racing replay.
 async function recoverLostClockOut(req, res) {
   const companyId = req.user.company_id;
-  const { project_id, work_date, timezone, notes, local_clock_in, local_clock_out, break_minutes, mileage, lat, lng, clock_in_time } = req.body;
+  const { project_id, work_date, timezone, notes, local_clock_in, local_clock_out, break_minutes, mileage, lat, lng, clock_in_time, clock_out_time } = req.body;
   // The shift's clock-in never reached us, so its whole length is unverified:
   // resolveClientClockTime flags it (late minutes ~ shift length) for approval
   // and clamps a future time. Missing/unparseable -> nothing to rebuild from.
@@ -631,7 +641,7 @@ async function recoverLostClockOut(req, res) {
       if (proj.rowCount > 0) { wage_type = proj.rows[0].wage_type; project_name = proj.rows[0].name; entryProjectId = project_id; }
     }
   }
-  const clockOutTime = new Date();
+  const clockOutTime = resolveClockOutTime(clock_out_time, recoverTs);
   const start_time = validLocalTime(local_clock_in) || wallClockInTZ(recoverTs, timezone);
   const end_time = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, timezone);
   const wd = (work_date && /^\d{4}-\d{2}-\d{2}$/.test(work_date)) ? work_date : recoverTs.toISOString().slice(0, 10);
@@ -674,7 +684,7 @@ async function recoverLostClockOut(req, res) {
 }
 
 router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerceBody({ float: ['break_minutes', 'mileage'] }), async (req, res) => {
-  const { lat, lng, break_minutes, mileage, local_clock_in, local_clock_out } = req.body;
+  const { lat, lng, break_minutes, mileage, local_clock_in, local_clock_out, clock_out_time } = req.body;
   if ((lat != null || lng != null) && !validCoords(lat, lng)) {
     logFailure(req, 'clock.out', 'invalid_coords', { lat, lng });
     return res.status(400).json({ error: 'Invalid coordinates' });
@@ -692,7 +702,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       return await recoverLostClockOut(req, res);
     }
     const preRead = clockResult.rows[0];
-    const clockOutTime = new Date();
+    let clockOutTime;
 
     // Create the time entry and remove active clock atomically
     const txClient = await pool.connect();
@@ -760,8 +770,16 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       // (The client's local_clock_in describes the segment IT saw — ignore it
       // if a switch replaced that segment under us.)
       const clockInTime = new Date(clock.clock_in_time);
+      // The instant the worker TAPPED clock-out (sent by the client) — not when this request
+      // arrived. An offline clock-out can replay hours later, possibly across a DST change,
+      // and end_ts from server time then disagreed with end_time (the tap's wall clock) by
+      // the replay lag / ±1h. Clamped: future → now; before this segment's start → now.
+      clockOutTime = resolveClockOutTime(clock_out_time, clockInTime);
       const start_time = (!rowChanged && validLocalTime(local_clock_in)) || wallClockInTZ(clockInTime, clock.timezone);
-      const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, clock.timezone);
+      // A client wall time only describes the client's own instant — if we fell back to
+      // server time, derive the wall time from that instead so the two columns agree.
+      const usedClientInstant = clock_out_time != null && clockOutTime.getTime() === new Date(clock_out_time).getTime();
+      const end_time   = ((usedClientInstant || clock_out_time == null) && validLocalTime(local_clock_out)) || wallClockInTZ(clockOutTime, clock.timezone);
 
       // Phase 2 dual-write: clockInTime / clockOutTime are already real UTC
       // instants, so we can write them straight to start_ts / end_ts without

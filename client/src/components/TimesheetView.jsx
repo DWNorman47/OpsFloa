@@ -70,7 +70,8 @@ export default function TimesheetView({
     try {
       const r = await api.post('/time-entries/copy-last-week');
       const { created, skipped } = r.data;
-      setCopyMsg(`${created} entr${created === 1 ? 'y' : 'ies'} copied${skipped > 0 ? `, ${skipped} skipped` : ''}`);
+      const copied = (created === 1 ? t.tsCopiedOne : t.tsCopiedMany).replace('{n}', created);
+      setCopyMsg(skipped > 0 ? `${copied}${t.tsCopiedSkipped.replace('{n}', skipped)}` : copied);
       setTimeout(() => setCopyMsg(''), 4000);
       if (created > 0 && onRefresh) await onRefresh();
     } catch {
