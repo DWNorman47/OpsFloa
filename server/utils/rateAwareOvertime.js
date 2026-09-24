@@ -1,4 +1,4 @@
-const { hoursWorked, annotateEntryOvertime } = require('./payCalculations');
+const { entryDuration, annotateEntryOvertime } = require('./payCalculations');
 const { DEFAULT_OVERTIME_RATE_METHOD } = require('../constants/payEnums');
 
 /**
@@ -35,7 +35,9 @@ const { DEFAULT_OVERTIME_RATE_METHOD } = require('../constants/payEnums');
  */
 function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRateOf, method = DEFAULT_OVERTIME_RATE_METHOD, wagePriority = 'chronological' }) {
   const worked = (entries || []).filter(e => e.start_time && e.end_time);
-  const dur = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+  // entryDuration: the engine's one definition of paid hours (DST-corrected, break
+  // clamped at 0) — must match what annotateEntryOvertime buckets on the clones.
+  const dur = entryDuration;
 
   // Treat every worked hour as ONE stream toward the threshold: clone with a
   // uniform wage_type so annotateEntryOvertime buckets + fills across ALL hours,
@@ -44,6 +46,8 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
   // mutate the caller's rows or their real wage_type.
   const clones = worked.map(e => ({
     start_time: e.start_time, end_time: e.end_time, break_minutes: e.break_minutes,
+    // Instants + zone carry the DST duration correction into the OT fill.
+    start_ts: e.start_ts, end_ts: e.end_ts, timezone: e.timezone,
     work_date: e.work_date, wage_type: 'regular',
     // Real wage type preserved so wagePriority='regular_first' can fill straight
     // time from prevailing hours first (all clones are 'regular' for threshold math).

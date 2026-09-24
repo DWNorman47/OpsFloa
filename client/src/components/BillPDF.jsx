@@ -1,6 +1,7 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { formatCurrency, langToLocale } from '../utils';
+import { entryNetHours } from '../utils/entryHours';
 
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
@@ -16,12 +17,6 @@ function fmtTime(t) {
   const [h, m] = t.split(':');
   const hr = parseInt(h);
   return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`;
-}
-
-function netHours(start, end, brk) {
-  let ms = new Date(`1970-01-01T${end}`) - new Date(`1970-01-01T${start}`);
-  if (ms < 0) ms += 86400000;
-  return Math.max(0, ms / 3600000 - (brk || 0) / 60);
 }
 
 function fmtH(h) {
@@ -157,7 +152,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
           <Text style={[s.th, { width: colHours, textAlign: 'right' }]}>{t.pdfHoursCol || 'Hours'}</Text>
         </View>
         {entries.map(e => {
-          const h = e.synthetic ? (Number(e.hours) || 0) : netHours(e.start_time, e.end_time, e.break_minutes);
+          const h = e.synthetic ? (Number(e.hours) || 0) : entryNetHours(e); // server paid_hours (DST-correct)
           const isPrev = e.wage_type === 'prevailing';
           const synLabels = {
             guarantee: t.floorGuaranteeLabel || 'Guaranteed hours (no clock-in)',

@@ -234,7 +234,7 @@ function wallHours(startTime, endTime) {
  * flag the entry for admin review until the pay reader is cut over to the instants.
  * Needs both instants; returns false if either is missing or unparseable.
  */
-function isTruncatedLongShift(startTs, endTs, startTime, endTime) {
+function isTruncatedLongShift(startTs, endTs, startTime, endTime, timezone = null) {
   if (startTs == null || endTs == null) return false;
   const s = startTs instanceof Date ? startTs : new Date(startTs);
   const e = endTs instanceof Date ? endTs : new Date(endTs);
@@ -242,7 +242,13 @@ function isTruncatedLongShift(startTs, endTs, startTime, endTime) {
   if (!startTime || !endTime) return false;
   const realH = (e.getTime() - s.getTime()) / 3600000;
   if (!(realH > 0)) return false;
-  return realH - wallHours(startTime, endTime) >= 1;
+  // A normal overnight shift across the fall-back DST change is 1h longer than its
+  // wall-clock span, and the pay engine already pays it (entryDuration adds the DST
+  // offset change). Compare against that DST-corrected span so it isn't flagged as a
+  // truncated long shift. Lazy require: payCalculations may load this module.
+  const { dstAdjustHours } = require('./payCalculations');
+  const dst = timezone ? dstAdjustHours({ start_ts: s, end_ts: e, timezone }) : 0;
+  return realH - (wallHours(startTime, endTime) + dst) >= 1;
 }
 
 module.exports = {

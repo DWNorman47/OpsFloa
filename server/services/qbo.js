@@ -3,7 +3,7 @@ const pool = require('../db');
 const { encrypt, decrypt } = require('./encryption');
 const { sendEmail } = require('../email');
 const { roundEntriesFromSettings, ymd } = require('../utils/hoursRules');
-const { hoursWorked } = require('../utils/payCalculations');
+const { entryDuration } = require('../utils/payCalculations');
 
 const IS_PRODUCTION = process.env.QBO_ENVIRONMENT === 'production';
 const QBO_BASE = IS_PRODUCTION
@@ -348,7 +348,7 @@ function timeActivityHours(rows, settings, roleById = {}) {
   const paid = roundEntriesFromSettings(normalized, settings || {}, { workerRoleById: roleById || {} });
   return paid.map(e => ({
     entry: e,
-    hours: Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60),
+    hours: entryDuration(e), // paid hours, DST-corrected (needs start_ts/end_ts/timezone on the row)
     workDate: e.work_date,
   }));
 }

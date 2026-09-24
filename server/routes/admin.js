@@ -28,7 +28,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
-const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, nightHoursForEntry, computeGuaranteeShortfall } = require('../utils/payCalculations');
+const { hoursWorked, entryDuration, dstAdjustHours, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, nightHoursForEntry, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
 const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
 const { workerStatement, companyStatements } = require('../utils/payStatement');
@@ -2009,7 +2009,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
           }
         }
         items.filter(e => e.wage_type === 'prevailing').forEach(e => {
-          const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+          const h = entryDuration(e); // paid hours, DST-corrected — same as the OT engine
           prevailingHours += h; prevailingCost += h * effectivePrevRate;
         });
       }
@@ -2050,6 +2050,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
       pool.query(
         `SELECT te.project_id, te.user_id, te.work_date, te.start_time, te.end_time,
                 te.break_minutes, te.wage_type, te.overtime_hours_override,
+                te.start_ts, te.end_ts, te.timezone,
                 COALESCE(u.hourly_rate, $2) AS rate,
                 COALESCE(u.overtime_rule, 'daily') AS ot_rule,
                 u.role_id AS role_id
@@ -2089,7 +2090,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
       let totalHours = 0, prevailingHours = 0, estimatedCost = 0;
       const workerIds = new Set();
       for (const e of pe) {
-        const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
+        const h = entryDuration(e); // same paid-hours definition as computePaid's regular+OT (DST-corrected)
         totalHours += h;
         if (e.wage_type === 'prevailing') prevailingHours += h;
         estimatedCost += h * parseFloat(e.rate);
@@ -3686,14 +3687,16 @@ router.get('/export', requireAdmin, requirePerm('view_reports'), requirePlan('st
     );
     const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     const fmtTime = t => { const [h, m] = t.split(':'); const hr = parseInt(h); return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`; };
-    const netHours = (s, e, brk) => (hoursWorked(s, e) - (brk || 0) / 60).toFixed(2);
+    // Raw punch (not rounded), but real elapsed time: + the DST correction so a
+    // shift across a DST change exports 9h / 7h, not the wall-clock 8h.
+    const netHours = r => (hoursWorked(r.start_time, r.end_time) + dstAdjustHours(r) - (r.break_minutes || 0) / 60).toFixed(2);
     const headers = ['Worker', 'Project', 'Date', 'Start', 'End', 'Break (min)', 'Net Hours', 'Wage Type', 'Mileage (mi)', 'Status', 'Notes'];
     const lines = [
       headers.join(','),
       ...result.rows.map(r => [
         esc(r.worker_name), esc(r.project_name), esc(r.work_date_str),
         esc(fmtTime(r.start_time)), esc(fmtTime(r.end_time)),
-        r.break_minutes || 0, netHours(r.start_time, r.end_time, r.break_minutes),
+        r.break_minutes || 0, netHours(r),
         esc(r.wage_type), r.mileage != null ? parseFloat(r.mileage).toFixed(1) : '',
         esc(r.status || 'pending'), esc(r.notes),
       ].join(',')),
@@ -4290,7 +4293,7 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
     const eVals = [companyId, from, to];
     if (accessIds && accessIds.length) { eVals.push(accessIds); eConds.push(`user_id = ANY($${eVals.length})`); }
     const entries = await pool.query(
-      `SELECT user_id, start_time, end_time, work_date, break_minutes FROM time_entries WHERE ${eConds.join(' AND ')}`,
+      `SELECT user_id, start_time, end_time, work_date, break_minutes, start_ts, end_ts, timezone FROM time_entries WHERE ${eConds.join(' AND ')}`,
       eVals
     );
 
@@ -4536,7 +4539,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
               u.hourly_rate, u.rate_type, u.classification, u.role_id, u.overtime_rule,
               to_char(te.work_date, 'YYYY-MM-DD') as work_date,
               te.start_time, te.end_time, te.break_minutes, te.wage_type,
-              te.overtime_hours_override,
+              te.overtime_hours_override, te.start_ts, te.end_ts, te.timezone,
               te.classification AS entry_classification,
               p.prevailing_wage_rate AS project_prevailing_wage_rate
        FROM time_entries te
@@ -4598,7 +4601,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         : w.rate;
       const regular_days = emptyDays(), prevailing_days = emptyDays(), ot_days = emptyDays();
       const dayKeyOf = e => DAY_KEYS[new Date(e.work_date + 'T00:00:00Z').getUTCDay()];
-      const dur = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+      const dur = entryDuration; // paid hours (DST-corrected, break clamped) — matches splitRateAware/computeOT
       const classificationOf = e => e.entry_classification || e.classification || w.classification || 'Unclassified';
       const prevailingRateOf = e => {
         const projectRate = parseFloat(e.project_prevailing_wage_rate);

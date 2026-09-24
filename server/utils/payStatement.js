@@ -1,7 +1,7 @@
 const pool = require('../db');
 const {
   computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost,
-  nightPremiumCost, nightHoursForEntry, hoursWorked, computeGuaranteeShortfall,
+  nightPremiumCost, nightHoursForEntry, entryDuration, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('./paidHours');
@@ -232,7 +232,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       if (e.wage_type !== 'prevailing') continue;
       // Clamp at 0 (matches entryDuration): a break longer than the shift must not
       // produce negative prevailing hours/cost.
-      const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
+      const h = entryDuration(e); // DST-corrected, break clamped — same definition as the OT engine
       prevailingHours += h;
       prevailingCostRaw += h * (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate);
     }
@@ -358,6 +358,10 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     kind: 'vacation', id: 'leave-vacation', work_date: periodEnd, hours: vacationHours, cost: vacationCost,
     explain: [{ code: 'leave', leaveType: 'vacation', hours: vacationHours }],
   }));
+  // Each worked row carries the paid hours the engine priced it at (entryDuration:
+  // the paid punch, DST-corrected, net of break) so renderers display the server's
+  // number instead of re-deriving it from start/end — which can't see a DST change.
+  for (const e of paid) if (!e.synthetic) e.paid_hours = entryDuration(e);
   const outEntries = syntheticEntries.length
     ? [...paid, ...syntheticEntries].sort((a, b) => {
         const d = String(a.work_date).localeCompare(String(b.work_date));
@@ -506,7 +510,8 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
       // overtime_hours_override was missing, so the report / CSV / QBO journal
       // ignored admin OT overrides the invoice and stubs honoured.
       `SELECT te.id, te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, to_char(te.work_date, 'YYYY-MM-DD') AS work_date,
-              te.break_minutes, te.mileage, te.overtime_hours_override
+              te.break_minutes, te.mileage, te.overtime_hours_override,
+              te.start_ts, te.end_ts, te.timezone
        FROM time_entries te
        WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'
        ORDER BY te.user_id, te.work_date ASC, te.start_time ASC`,

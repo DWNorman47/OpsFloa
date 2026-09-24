@@ -191,4 +191,19 @@ describe('isTruncatedLongShift', () => {
     expect(isTruncatedLongShift(new Date(), 'nope', '08:00', '09:00')).toBe(false);
     expect(isTruncatedLongShift(new Date('2026-04-27T08:00:00Z'), new Date('2026-04-29T09:00:00Z'), '', '')).toBe(false);
   });
+
+  test('a normal overnight shift across fall-back is NOT flagged when the timezone is known', () => {
+    // 22:00 CDT Oct 31 → 06:00 CST Nov 1 2026 (Chicago): 9 real hours, 8 on the wall clock.
+    const start = new Date('2026-11-01T03:00:00Z');
+    const end   = new Date('2026-11-01T12:00:00Z');
+    expect(isTruncatedLongShift(start, end, '22:00', '06:00', 'America/Chicago')).toBe(false);
+    // Without a timezone the DST hour can't be explained, so it is still flagged (old behaviour).
+    expect(isTruncatedLongShift(start, end, '22:00', '06:00')).toBe(true);
+  });
+
+  test('a forgotten multi-day clock-out is still flagged with a timezone', () => {
+    const start = new Date('2026-04-27T13:00:00Z'); // 08:00 CDT
+    const end   = new Date('2026-04-29T14:00:00Z'); // 09:00 CDT two days later
+    expect(isTruncatedLongShift(start, end, '08:00', '09:00', 'America/Chicago')).toBe(true);
+  });
 });

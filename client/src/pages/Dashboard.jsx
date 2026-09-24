@@ -25,6 +25,7 @@ import { safeLocal } from '../utils/safeStorage';
 import { getChatUnread, subscribeChatUnread, setChatUnread } from '../chatUnreadStore';
 import { escapeHtml } from '../utils/html';
 import { startOfWeek as computeStartOfWeek, toYMD } from '../utils/weekBounds';
+import { entryNetHours } from '../utils/entryHours';
 // Secondary tabs — lazy-loaded on first visit
 const TimesheetView    = lazy(() => import('../components/TimesheetView'));
 const WorkerSummary    = lazy(() => import('../components/WorkerSummary'));
@@ -311,11 +312,7 @@ export default function Dashboard() {
 
     const rows = sorted.map(e => {
       let h = Number(e.hours);
-      if (!Number.isFinite(h)) {
-        let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-        if (ms < 0) ms += 86400000;
-        h = Math.max(0, ms / 3600000 - (e.break_minutes || 0) / 60);
-      }
+      if (!Number.isFinite(h)) h = entryNetHours(e); // server paid_hours (DST-correct), else same rule locally
       const isPrev = e.wage_type === 'prevailing';
       const syntheticLabel = {
         guarantee: t.floorGuaranteeLabel || 'Guaranteed hours',

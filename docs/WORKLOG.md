@@ -6633,3 +6633,18 @@ ep-orange-cell) and its apply pass re-ran migrations 0001–0173 there (~16:30 U
 company_chat, 0068 truncated worker_availability, permission backfills re-ran. Dev restored via
 Neon point-in-time restore. The script now refuses non-local hosts unless
 LINT_MIGRATIONS_ALLOW_REMOTE=yes-this-db-is-disposable. Read any server/scripts/* before running it.
+
+## DST-correct paid hours (2026-09-24)
+Shifts across a DST change were paid by wall clock (22:00→06:00 on fall-back paid 8h, real 9h;
+spring-forward paid 8h, real 7h). Minimal fix: `entryDuration` (payCalculations.js) adds
+`-(offset(end_ts) - offset(start_ts))` in the row's IANA `timezone` — only when start_ts, end_ts
+and a valid tz are all present and the span is ≤ 26h, else 0 (legacy rows unchanged). Wall clock
+stays the basis for rounding, work_date bucketing and windows; night_diff / window_mult add or
+remove the repeated/skipped wall hour when it falls inside the window. Every server site that
+did its own `hoursWorked - break` now uses entryDuration; explicit SELECT lists carry
+start_ts/end_ts/timezone. Statement rows carry `paid_hours`; client `utils/entryHours.js` prefers it.
+Left as-is (approximate SQL dashboards, not pay): KPIs, analytics, worker directory totals,
+project health/workers/budget alert, dailyReports. Also left: scheduled-shift hours for leave
+valuation (shifts have no tz), hours-rules auto_break trigger (wall hours), isTruncatedLongShift
+(flags a fall-back overnight clock-out as +1h "truncated" — review flag only).
+Tests: server/tests/payDst.test.js, client/src/utils/entryHours.test.js.

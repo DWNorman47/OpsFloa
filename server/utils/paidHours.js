@@ -199,9 +199,12 @@ function laborCostCents(entries, settings, opts = {}) {
 // COALESCE(…,'daily') forced daily on a weekly company. rate_type / worker_type /
 // the project's prevailing rate let laborCostCents price like the pay engine; the
 // prevailing rate is a correlated subquery so callers need no extra JOIN.
+// start_ts / end_ts / timezone feed entryDuration's DST correction (a shift across a
+// DST change is ±1h vs its wall-clock TIMEs); without them the correction is 0.
 const LABOR_ENTRY_COLUMNS = `
   te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
   te.wage_type, te.overtime_hours_override, te.project_id,
+  te.start_ts, te.end_ts, te.timezone,
   (SELECT lp.prevailing_wage_rate FROM projects lp WHERE lp.id = te.project_id) AS prevailing_rate,
   COALESCE(u.hourly_rate, 0) AS rate,
   u.rate_type AS rate_type,

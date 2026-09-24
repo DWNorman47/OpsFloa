@@ -119,7 +119,7 @@ describe('reconcileUserActiveClock', () => {
       if (/^BEGIN|COMMIT|ROLLBACK/.test(sql.trim())) return {};
       if (/FROM active_clock ac\s+JOIN projects/.test(sql)) return forUpdateRows[forUpdateCall++] || { rowCount: 0, rows: [] };
       if (/FROM settings WHERE company_id/.test(sql)) return { rows: [{ value: '1' }] };
-      if (/SELECT start_time, end_time, break_minutes FROM time_entries/.test(sql)) return priorRows;
+      if (/SELECT start_time, end_time, break_minutes\b[^]*?FROM time_entries/.test(sql)) return priorRows;
       if (/FROM projects WHERE id = \$1 AND company_id = \$2/.test(sql)) {
         return { rows: [{ id: 20, name: 'Overflow B', wage_type: 'regular', active: true, hour_limit_mode: 'off', daily_hour_limit: null, weekly_hour_limit: null, hour_limit_overflow_project_id: null }] };
       }

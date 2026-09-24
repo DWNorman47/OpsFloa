@@ -8,6 +8,7 @@ import { handlePdfError } from '../pdfError';
 import { renderTraceItem, renderLeaveDetail, traceItemPhase, hoursRulesLink, SETTINGS_LINKS } from '../utils/reportTrace';
 import DeductionListEditor from './DeductionListEditor';
 import { downloadCsv } from '../utils/csv';
+import { entryNetHours } from '../utils/entryHours';
 
 const fmtDate = d => d.toLocaleDateString('en-CA'); // YYYY-MM-DD, local
 const sundayOf = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return x; };
@@ -202,9 +203,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
         // Rule-generated hours (floor / guarantee / leave) are entries now — one CSV row each.
         return [e.work_date?.toString().substring(0, 10), 'Rule hours', SYN_CSV[e.kind] || e.kind, e.wage_type, '', '', ...(showOtCol ? ['0.00'] : []), Number(e.hours).toFixed(2), e.cost != null ? e.cost : ''];
       }
-      let hMs = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-      if (hMs < 0) hMs += 86400000; // overnight shift (end past midnight) — same wrap as netHours
-      const h = Math.max(0, hMs / 3600000 - (Number(e.break_minutes) || 0) / 60).toFixed(2);
+      const h = entryNetHours(e).toFixed(2); // server paid_hours (DST-correct)
       return [e.work_date?.toString().substring(0, 10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, ...(showOtCol ? [(e.overtime_hours || 0).toFixed(2)] : []), h, ''];
     });
     const reimbRows = (billData.reimbursements || []).map(r => [
@@ -264,9 +263,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   // entry's expand trace (break_logged), so the difference from the span is traceable.
   const dur = e => {
     if (e.synthetic) return Number(e.hours) || 0;
-    let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-    if (ms < 0) ms += 86400000; // overnight shift (end past midnight) — same wrap as netHours
-    return Math.max(0, ms / 3600000 - (Number(e.break_minutes) || 0) / 60);
+    return entryNetHours(e); // server paid_hours (DST-correct), else the same rule locally
   };
 
   // Structured per-entry trace: clock in → its rules, clock out → its rules, then the

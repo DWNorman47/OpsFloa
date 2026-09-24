@@ -28,6 +28,7 @@
 const pool = require('../db');
 const logger = require('../logger');
 const { wallClockInTZ } = require('./timeFormat');
+const { dstAdjustHours } = require('./payCalculations');
 const { HOUR_LIMIT_MODES } = require('../constants/projectEnums');
 
 const MS_PER_HOUR = 3600000;
@@ -40,12 +41,15 @@ function numOrNull(v) {
 
 // Net worked hours of a completed entry from its wall-clock time strings, minus
 // logged break. Same formula the overtime-alert path uses in clock.js — kept in
-// lockstep so a cap and an OT alert count a shift identically.
-function calcH(start, end, brk = 0) {
+// lockstep so a cap and an OT alert count a shift identically. Pass the row as
+// `entry` (with start_ts/end_ts/timezone) to add the pay engine's DST correction
+// (a shift across a DST change is ±1h vs its wall-clock times).
+function calcH(start, end, brk = 0, entry = null) {
   const startDate = new Date(`1970-01-01T${start}`);
   const endDate = new Date(`1970-01-01T${end}`);
   let hours = (endDate - startDate) / MS_PER_HOUR;
   if (hours < 0) hours += 24; // crossed midnight
+  if (entry) hours += dstAdjustHours(entry);
   return Math.max(0, hours - (brk || 0) / 60);
 }
 
@@ -66,7 +70,7 @@ async function loadWeekStart(db, companyId) {
  */
 async function loadPriorHours(db, userId, projectId, workDate, weekStart) {
   const dayRows = await db.query(
-    `SELECT start_time, end_time, break_minutes FROM time_entries
+    `SELECT start_time, end_time, break_minutes, start_ts, end_ts, timezone FROM time_entries
       WHERE user_id = $1 AND project_id = $2
         AND work_date = COALESCE($3::date, CURRENT_DATE)`,
     [userId, projectId, workDate || null]
@@ -74,14 +78,14 @@ async function loadPriorHours(db, userId, projectId, workDate, weekStart) {
   // Bucket by the company's week_start (DATE_TRUNC('week') is always Monday and
   // would misgroup non-Monday weeks); identical math to the OT-alert query.
   const weekRows = await db.query(
-    `SELECT start_time, end_time, break_minutes FROM time_entries
+    `SELECT start_time, end_time, break_minutes, start_ts, end_ts, timezone FROM time_entries
       WHERE user_id = $1 AND project_id = $2
         AND (work_date::date - ((EXTRACT(DOW FROM work_date::date)::int - $4 + 7) % 7))
           = (COALESCE($3::date, CURRENT_DATE)
               - ((EXTRACT(DOW FROM COALESCE($3::date, CURRENT_DATE))::int - $4 + 7) % 7))`,
     [userId, projectId, workDate || null, weekStart]
   );
-  const sum = (rows) => rows.reduce((s, r) => s + calcH(r.start_time, r.end_time, r.break_minutes), 0);
+  const sum = (rows) => rows.reduce((s, r) => s + calcH(r.start_time, r.end_time, r.break_minutes, r), 0);
   return { daily: sum(dayRows.rows), weekly: sum(weekRows.rows) };
 }
 

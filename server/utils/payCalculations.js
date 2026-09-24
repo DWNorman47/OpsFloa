@@ -15,12 +15,135 @@ function hoursWorked(start, end) {
   return ms / 3600000;
 }
 
+// ── DST correction ──────────────────────────────────────────────────────────
+// Pay hours are derived from the wall-clock TIME columns (hoursWorked), which is
+// wrong by the DST offset change for a shift that spans a transition: 22:00→06:00
+// across US fall-back is 9 real hours (wall says 8); across spring-forward it's 7.
+// Everything that depends on WALL time (hours-rules rounding, night / window
+// multipliers, the work_date an hour belongs to, daily OT buckets) stays wall-
+// based; only the DURATION is corrected, by the change in the zone's UTC offset
+// between the entry's real instants:
+//   dstAdjust = -(offsetMinutes(end_ts, tz) - offsetMinutes(start_ts, tz))
+// Applied only when start_ts, end_ts AND a valid IANA `timezone` are all present
+// (else 0 → exactly the pre-fix behaviour), and only for a plausible single-shift
+// span (0 < end_ts − start_ts ≤ 26h — a multi-day forgotten clock-out is already
+// truncated by the TIME columns and flagged for review; we don't touch it).
+
+const DST_MAX_SPAN_MS = 26 * 3600000;
+const _tzFormatters = new Map(); // tz → Intl.DateTimeFormat | null (invalid tz)
+const _offsetCache = new Map();  // `${tz}|${15-min bucket}` → offset minutes
+const OFFSET_CACHE_MAX = 20000;
+
+function tzFormatter(tz) {
+  if (typeof tz !== 'string' || !tz.trim()) return null;
+  if (_tzFormatters.has(tz)) return _tzFormatters.get(tz);
+  let f = null;
+  try {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+  } catch { f = null; } // RangeError: not an IANA zone Node's ICU knows
+  if (_tzFormatters.size < 1000) _tzFormatters.set(tz, f);
+  return f;
+}
+
+/** Wall-clock parts of instant `ms` in `tz` ({y,mo,d,h,mi,s}), or null on a bad tz. */
+function tzParts(ms, tz) {
+  const f = tzFormatter(tz);
+  if (!f) return null;
+  const p = {};
+  for (const x of f.formatToParts(new Date(ms))) if (x.type !== 'literal') p[x.type] = x.value;
+  return { y: +p.year, mo: +p.month, d: +p.day, h: (+p.hour) % 24, mi: +p.minute, s: +p.second };
+}
+
+/**
+ * UTC offset (minutes, e.g. Chicago CDT = -300, CST = -360) of IANA zone `tz` at
+ * instant `ms`; null for an invalid tz / instant. Cached per tz + 15-minute UTC
+ * bucket: every tzdb transition in use falls on a quarter-hour UTC boundary
+ * (Lord Howe's is on the half hour, so a per-hour cache would be wrong there).
+ */
+function offsetMinutes(ms, tz) {
+  if (!Number.isFinite(ms)) return null;
+  const key = `${tz}|${Math.floor(ms / 900000)}`;
+  if (_offsetCache.has(key)) return _offsetCache.get(key);
+  const p = tzParts(ms, tz);
+  let off = null;
+  if (p) {
+    const wall = Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi, p.s);
+    off = Math.round((wall - Math.floor(ms / 1000) * 1000) / 60000);
+  }
+  if (_offsetCache.size >= OFFSET_CACHE_MAX) _offsetCache.clear();
+  _offsetCache.set(key, off);
+  return off;
+}
+
+function instantMs(v) {
+  if (v == null || v === '') return NaN;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'number') return v;
+  return Date.parse(v);
+}
+
+/** { s, e, o1, o2 } for an entry whose instants straddle an offset change, else null. */
+function dstSpan(e) {
+  if (!e || e.start_ts == null || e.end_ts == null || !e.timezone) return null;
+  const s = instantMs(e.start_ts), en = instantMs(e.end_ts);
+  if (!Number.isFinite(s) || !Number.isFinite(en) || !(en > s) || en - s > DST_MAX_SPAN_MS) return null;
+  const o1 = offsetMinutes(s, e.timezone), o2 = offsetMinutes(en, e.timezone);
+  if (o1 == null || o2 == null || o1 === o2) return null;
+  return { s, e: en, o1, o2 };
+}
+
+/**
+ * Minutes to ADD to an entry's wall-clock duration to get its real elapsed time
+ * across a DST change: +60 over US fall-back, −60 over spring-forward, 0 when the
+ * entry has no instants / no valid timezone / no offset change.
+ */
+function dstAdjustMinutes(e) {
+  const sp = dstSpan(e);
+  return sp ? -(sp.o2 - sp.o1) : 0;
+}
+function dstAdjustHours(e) { return dstAdjustMinutes(e) / 60; }
+
+/**
+ * Where the DST anomaly sits on the entry's WALL-CLOCK frame (minutes from its
+ * work_date midnight — the frame the night / window math uses), or null.
+ * Returns { lo, hi, sign }: over fall-back the wall interval [lo,hi) (01:00–02:00
+ * next day for US zones) is worked twice (sign +1); over spring-forward [lo,hi)
+ * (02:00–03:00) never happens (sign −1). hi − lo === |dstAdjustMinutes(e)|.
+ */
+function dstWallInterval(e) {
+  const sp = dstSpan(e);
+  if (!sp) return null;
+  // First instant carrying the new offset (to the minute): bisect [start, end].
+  let lo = sp.s, hi = sp.e;
+  while (hi - lo > 60000) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (offsetMinutes(mid, e.timezone) === sp.o1) lo = mid; else hi = mid;
+  }
+  const t = Math.floor(hi / 60000) * 60000;
+  const p = tzParts(t, e.timezone);           // post-transition wall clock (fall-back 01:00, spring 03:00)
+  const wd = String(ymd(e.work_date) || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!p || !wd) return null;
+  const dayOff = Math.round((Date.UTC(p.y, p.mo - 1, p.d) - Date.UTC(+wd[1], +wd[2] - 1, +wd[3])) / 86400000);
+  const T = dayOff * 1440 + p.h * 60 + p.mi;
+  const delta = sp.o2 - sp.o1;               // fall-back −60, spring-forward +60
+  return delta < 0
+    ? { lo: T, hi: T - delta, sign: +1 }       // repeated wall hour
+    : { lo: T - delta, hi: T, sign: -1 };      // skipped wall hour
+}
+
 function entryDuration(e) {
   // Clamp at 0: a break longer than the shift (bad/hostile input) would otherwise
   // yield a negative duration that subtracts from paid hours — and thus from pay.
   // Also clamp the break itself at 0: a NEGATIVE break would otherwise ADD hours
   // (subtracting a negative), an overpay vector the outer Math.max can't catch.
-  return Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
+  // + dstAdjustHours: real elapsed time across a DST change (0 without instants/tz).
+  // This is THE definition of an entry's paid hours — every pay surface must use
+  // it (or entryDuration-consistent helpers), never hoursWorked() directly.
+  return Math.max(0, hoursWorked(e.start_time, e.end_time) + dstAdjustHours(e) - Math.max(0, e.break_minutes || 0) / 60);
 }
 
 /** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */
@@ -203,12 +326,22 @@ function nightHoursForEntry(e, fromHour, toHour) {
   if (s == null || en == null) return 0;
   if (en < s) en += 1440; // overnight shift
   const nf = fromHour * 60, nt = toHour * 60;
-  let overlap = 0;
-  for (let off = -1; off <= 1; off++) {
-    const a = nf + off * 1440;
-    const b = (nf < nt ? nt : nt + 1440) + off * 1440;
-    overlap += Math.max(0, Math.min(en, b) - Math.max(s, a));
-  }
+  const nightOverlap = (lo, hi) => {
+    let o = 0;
+    for (let off = -1; off <= 1; off++) {
+      const a = nf + off * 1440;
+      const b = (nf < nt ? nt : nt + 1440) + off * 1440;
+      o += Math.max(0, Math.min(hi, b) - Math.max(lo, a));
+    }
+    return o;
+  };
+  let overlap = nightOverlap(s, en);
+  // DST: the window stays wall-clock, but a fall-back shift really works the
+  // repeated 01:00–02:00 twice, and a spring-forward shift never works 02:00–03:00.
+  // Count/uncount that hour when it falls inside the night window, so night hours
+  // track real time like entryDuration does.
+  const iv = dstWallInterval(e);
+  if (iv) overlap = Math.max(0, overlap + iv.sign * nightOverlap(iv.lo, iv.hi));
   return overlap / 60;
 }
 
@@ -261,38 +394,52 @@ function windowHoursForEntry(e, windowRules) {
   if (en <= s) en += 1440;                       // overnight shift (end == start → 0-length)
   const d0 = ymd(e.work_date);
 
-  // Collect covered [lo, hi, mult] segments in minutes-from-work_date-midnight.
-  const segs = [];
-  for (const r of windowRules) {
-    const wf = Number(r.from);
-    let wt = Number(r.to);
-    if (!Number.isFinite(wf) || !Number.isFinite(wt)) continue;
-    if (wt <= wf) wt += 1440;                     // wrap; from == to → +1440 (full 24h)
-    const mult = parseFloat(r.mult);
-    if (!(mult > 0)) continue;
-    for (const k of [-1, 0, 1]) {
-      const anchor = shiftDateStr(d0, k);
-      if (anchor == null || !ruleMatchesDate(r, anchor)) continue;
-      const lo = Math.max(s, k * 1440 + wf);
-      const hi = Math.min(en, k * 1440 + wt);
-      if (hi > lo) segs.push([lo, hi, mult]);
+  // Gross minutes of wall interval [s0, en0) per governing multiplier (highest wins).
+  const coverByMult = (s0, en0) => {
+    // Collect covered [lo, hi, mult] segments in minutes-from-work_date-midnight.
+    const segs = [];
+    for (const r of windowRules) {
+      const wf = Number(r.from);
+      let wt = Number(r.to);
+      if (!Number.isFinite(wf) || !Number.isFinite(wt)) continue;
+      if (wt <= wf) wt += 1440;                     // wrap; from == to → +1440 (full 24h)
+      const mult = parseFloat(r.mult);
+      if (!(mult > 0)) continue;
+      for (const k of [-1, 0, 1]) {
+        const anchor = shiftDateStr(d0, k);
+        if (anchor == null || !ruleMatchesDate(r, anchor)) continue;
+        const lo = Math.max(s0, k * 1440 + wf);
+        const hi = Math.min(en0, k * 1440 + wt);
+        if (hi > lo) segs.push([lo, hi, mult]);
+      }
+    }
+    // Resolve overlaps: over each elementary interval between boundaries, the
+    // highest covering multiplier wins. Sum gross minutes per multiplier.
+    const bounds = [...new Set(segs.flatMap(([lo, hi]) => [lo, hi]))].sort((a, b) => a - b);
+    const out = new Map();
+    for (let i = 0; i < bounds.length - 1; i++) {
+      const a = bounds[i], b = bounds[i + 1];
+      let best = 0;
+      for (const [lo, hi, m] of segs) if (lo <= a && hi >= b && m > best) best = m;
+      if (best > 0) out.set(best, (out.get(best) || 0) + (b - a));
+    }
+    return out;
+  };
+  const grossByMult = coverByMult(s, en);
+  // DST: windows stay wall-clock, but the repeated fall-back hour is worked twice
+  // and the skipped spring-forward hour not at all — adjust whichever multiplier
+  // governs that wall hour (clipped to the shift's wall span).
+  const iv = dstWallInterval(e);
+  if (iv) {
+    for (const [m, mins] of coverByMult(Math.max(s, iv.lo), Math.min(en, iv.hi))) {
+      grossByMult.set(m, Math.max(0, (grossByMult.get(m) || 0) + iv.sign * mins));
     }
   }
-  if (!segs.length) return new Map();
+  if (![...grossByMult.values()].some(v => v > 0)) return new Map();
 
-  // Resolve overlaps: over each elementary interval between boundaries, the
-  // highest covering multiplier wins. Sum gross minutes per multiplier.
-  const bounds = [...new Set(segs.flatMap(([lo, hi]) => [lo, hi]))].sort((a, b) => a - b);
-  const grossByMult = new Map();
-  for (let i = 0; i < bounds.length - 1; i++) {
-    const a = bounds[i], b = bounds[i + 1];
-    let best = 0;
-    for (const [lo, hi, m] of segs) if (lo <= a && hi >= b && m > best) best = m;
-    if (best > 0) grossByMult.set(best, (grossByMult.get(best) || 0) + (b - a));
-  }
-
-  // Cap at paid minutes, assigning to the higher multipliers first.
-  let pool = Math.max(0, (en - s) - (Number(e.break_minutes) || 0));
+  // Cap at paid minutes (entryDuration — DST-corrected, break clamped at 0, same
+  // definition the residual uses), assigning to the higher multipliers first.
+  let pool = Math.max(0, (en - s) + dstAdjustMinutes(e) - Math.max(0, Number(e.break_minutes) || 0));
   const out = new Map();
   for (const m of [...grossByMult.keys()].sort((a, b) => b - a)) {
     if (pool <= 0) break;
@@ -808,4 +955,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours, computeGuaranteeShortfall };
+module.exports = { hoursWorked, entryDuration, dstAdjustHours, dstAdjustMinutes, dstWallInterval, offsetMinutes, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours, computeGuaranteeShortfall };

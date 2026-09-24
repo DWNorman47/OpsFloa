@@ -4,7 +4,7 @@ const logger = require('../logger');
 const { sendEmail } = require('../email');
 const { runJob } = require('./runJob');
 const { weekRange } = require('../utils/weekBounds');
-const { hoursWorked } = require('../utils/payCalculations');
+const { entryDuration } = require('../utils/payCalculations');
 const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paidHours');
 const { formatCurrency, companyCurrency } = require('../currency');
 const { escapeHtml } = require('../utils/htmlEscape');
@@ -110,7 +110,8 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
 
   const entRes = await pool.query(
     `SELECT te.user_id, te.work_date, te.start_time, te.end_time, te.break_minutes,
-            te.wage_type, te.overtime_hours_override, u.full_name, u.role_id, u.overtime_rule
+            te.wage_type, te.overtime_hours_override, te.start_ts, te.end_ts, te.timezone,
+            u.full_name, u.role_id, u.overtime_rule
        FROM users u
   LEFT JOIN time_entries te ON te.user_id = u.id
         AND te.company_id = $1
@@ -134,7 +135,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
   // numbers and billed another.
   const workerRows = [...byUser.values()].map(u => {
     const { paid, regularHours, overtimeHours } = computePaid(u.entries, settings, { rule: otRuleFromSettings(settings, u.overtime_rule), roleId: u.role_id ?? null, userId: u.entries[0]?.user_id ?? null });
-    const totalH = paid.reduce((s, e) => s + hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60, 0);
+    const totalH = paid.reduce((s, e) => s + entryDuration(e), 0); // same paid-hours definition as regular+OT
     return { full_name: u.full_name, entry_count: u.entries.length, total_hours: totalH, overtime_hours: overtimeHours, regular_hours: regularHours };
   }).sort((a, b) => b.total_hours - a.total_hours);
 

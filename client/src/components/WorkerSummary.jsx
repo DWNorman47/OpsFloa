@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { startOfWeek } from '../utils/weekBounds';
+import { entryNetHours } from '../utils/entryHours';
 
 function getDateRange(key, weekStart = 1) {
   const now = new Date();
@@ -26,11 +27,8 @@ function getDateRange(key, weekStart = 1) {
   return { from: null, to: null };
 }
 
-function entryHours(e) {
-  const s = new Date(`1970-01-01T${e.start_time}`);
-  const en = new Date(`1970-01-01T${e.end_time}`);
-  return (en - s) / 3600000 - (e.break_minutes || 0) / 60;
-}
+// Net hours per entry — the server pay engine's rule (overnight wrap, break, DST).
+const entryHours = entryNetHours;
 
 // Client mirror of the server's rate-aware overtime (server/utils/rateAwareOvertime.js,
 // default "rate when worked" method, single multiplier). Kept in sync by hand so

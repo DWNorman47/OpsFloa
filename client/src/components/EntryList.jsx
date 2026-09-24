@@ -5,6 +5,7 @@ import EntryPanel from './EntryPanel';
 import EmptyState from './EmptyState';
 import Pagination from './Pagination';
 import { fmtHours, langToLocale } from '../utils';
+import { entryNetHours } from '../utils/entryHours';
 
 const ENTRIES_PER_PAGE = 25;
 
@@ -21,11 +22,8 @@ function formatTime(t) {
   const hour = parseInt(h);
   return `${hour % 12 || 12}:${m} ${hour < 12 ? 'AM' : 'PM'}`;
 }
-function netHours(start, end, breakMinutes) {
-  let ms = new Date(`1970-01-01T${end}`) - new Date(`1970-01-01T${start}`);
-  if (ms < 0) ms += 86400000;
-  return Math.max(0, ms / 3600000 - (breakMinutes || 0) / 60);
-}
+// Net hours per entry — same rule as the server's pay engine (incl. DST correction).
+const netHours = entryNetHours;
 function isMidnightCross(start, end) {
   return end.substring(0, 5) < start.substring(0, 5);
 }
@@ -147,7 +145,7 @@ export default function EntryList({ entries, onDeleted, onUpdated, t, language, 
                       <span style={styles.times}>
                         {formatTime(e.start_time)} – {formatTime(e.end_time)}
                         {crosses && <span style={styles.plus1}>+1</span>}
-                        <span style={styles.dur}> · {fmtHours(netHours(e.start_time, e.end_time, e.break_minutes))}</span>
+                        <span style={styles.dur}> · {fmtHours(netHours(e))}</span>
                       </span>
                     </div>
                     <div style={styles.entryRight}>

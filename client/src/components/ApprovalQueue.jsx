@@ -15,6 +15,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { silentError } from '../errorReporter';
+import { entryNetHours } from '../utils/entryHours';
 // Use SVG divIcons — avoids all CDN/bundler PNG loading issues
 function makePinIcon(color) {
   return L.divIcon({
@@ -104,11 +105,7 @@ function entryHasEnded(entry) {
 function suggestedOverrideFor(entry, rule, threshold) {
   if (entry.wage_type === 'prevailing') return { h: 0, m: 0 };
   if (rule !== 'daily') return { h: 0, m: 0 };
-  const s = new Date(`1970-01-01T${entry.start_time}`);
-  const e = new Date(`1970-01-01T${entry.end_time}`);
-  let ms = e - s;
-  if (ms < 0) ms += 86400000;
-  const total = ms / 3600000 - (entry.break_minutes || 0) / 60;
+  const total = entryNetHours(entry); // same paid-hours rule as the server (incl. DST)
   const ot = Math.max(0, total - (parseFloat(threshold) || 8));
   const h = Math.trunc(ot);
   const m = Math.round((ot - h) * 60);

@@ -7,6 +7,7 @@ const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { otThreshold, otRuleFromSettings } = require('../utils/paidHours');
+const { entryDuration } = require('../utils/payCalculations');
 const { sendEmail } = require('../email');
 const { wallClockInTZ, validLocalTime, entryInstants, isTruncatedLongShift } = require('../utils/timeFormat');
 const { resolveClientClockTime } = require('../utils/clientClockTime');
@@ -501,7 +502,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           oldClock.timezone || null,
           oldClock.clock_source, oldClock.clocked_in_by,
-          isTruncatedLongShift(clockInTime, segmentEnd, start_time, end_time), // a forgotten clock-out resolved via switch
+          isTruncatedLongShift(clockInTime, segmentEnd, start_time, end_time, oldClock.timezone), // a forgotten clock-out resolved via switch
           oldClock.clock_in_late_minutes ?? null,
         ]
       );
@@ -554,13 +555,9 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
         const workerRuleRow = await pool.query('SELECT overtime_rule FROM users WHERE id = $1', [req.user.id]);
         const rule = otRuleFromSettings(s, workerRuleRow.rows[0]?.overtime_rule);
         const threshold = otThreshold(s, rule);
-        const calcH = (start, end, brk = 0) => {
-          const startDate = new Date(`1970-01-01T${start}`);
-          const endDate = new Date(`1970-01-01T${end}`);
-          let hours = (endDate - startDate) / 3600000;
-          if (hours < 0) hours += 24;
-          return Math.max(0, hours - (brk || 0) / 60);
-        };
+        // Paid hours per entry — the pay engine's entryDuration (DST-corrected), so
+        // the alert fires on the same hours the stub pays.
+        const calcH = entryDuration;
 
         let prevHours = 0;
         let totalHours = 0;
@@ -568,14 +565,14 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           const weekRows = await pool.query(
             // Bucket by the company's week_start (DATE_TRUNC('week') is always Monday and would
             // misgroup the alert for non-Monday weeks); matches the pay engine's week definition.
-            `SELECT start_time, end_time, break_minutes FROM time_entries
+            `SELECT start_time, end_time, break_minutes, start_ts, end_ts, timezone FROM time_entries
              WHERE user_id = $1 AND wage_type = 'regular'
                AND (work_date::date - ((EXTRACT(DOW FROM work_date::date)::int - $3 + 7) % 7))
                  = ($2::date - ((EXTRACT(DOW FROM $2::date)::int - $3 + 7) % 7))`,
             [req.user.id, workDate, parseInt(s.week_start ?? 1, 10)]
           );
-          const newEntryHours = calcH(closedEntry.start_time, closedEntry.end_time, closedEntry.break_minutes);
-          totalHours = weekRows.rows.reduce((sum, r) => sum + calcH(r.start_time, r.end_time, r.break_minutes), 0);
+          const newEntryHours = calcH(closedEntry);
+          totalHours = weekRows.rows.reduce((sum, r) => sum + calcH(r), 0);
           prevHours = totalHours - newEntryHours;
           const weeklyThreshold = threshold <= 10 ? 40 : threshold;
           if (prevHours < weeklyThreshold && totalHours >= weeklyThreshold && oldWageType === 'regular') {
@@ -583,12 +580,12 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           }
         } else {
           const dayRows = await pool.query(
-            `SELECT start_time, end_time, break_minutes FROM time_entries
+            `SELECT start_time, end_time, break_minutes, start_ts, end_ts, timezone FROM time_entries
              WHERE user_id = $1 AND work_date = $2 AND wage_type = 'regular'`,
             [req.user.id, workDate]
           );
-          const newEntryHours = calcH(closedEntry.start_time, closedEntry.end_time, closedEntry.break_minutes);
-          totalHours = dayRows.rows.reduce((sum, r) => sum + calcH(r.start_time, r.end_time, r.break_minutes), 0);
+          const newEntryHours = calcH(closedEntry);
+          totalHours = dayRows.rows.reduce((sum, r) => sum + calcH(r), 0);
           prevHours = totalHours - newEntryHours;
           if (prevHours < threshold && totalHours >= threshold && oldWageType === 'regular') {
             await _sendOvertimeAlert(req.user, companyId, oldProjectName, totalHours, threshold, 'daily', s);
@@ -665,7 +662,7 @@ async function recoverLostClockOut(req, res) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16,$17) RETURNING *`,
       [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
        lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null,
-       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time), recovered.lateMinutes]
+       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time, timezone), recovered.lateMinutes]
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
@@ -783,7 +780,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
-          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time),
+          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time, clock.timezone),
           clock.clock_in_late_minutes ?? null,
         ]
       );
@@ -823,7 +820,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
             // break_minutes so entries with logged breaks don't inflate the weekly total and
             // trigger spurious OT alerts for workers who haven't crossed the 40h paid-hours line.
             const allWeekRows = await pool.query(
-              `SELECT start_time, end_time, break_minutes FROM time_entries
+              `SELECT start_time, end_time, break_minutes, start_ts, end_ts, timezone FROM time_entries
                WHERE user_id = $1 AND wage_type = 'regular'
                  AND (work_date::date - ((EXTRACT(DOW FROM work_date::date)::int - $3 + 7) % 7))
                    = ($2::date - ((EXTRACT(DOW FROM $2::date)::int - $3 + 7) % 7))`,
@@ -831,15 +828,9 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
             );
             const allEntries = allWeekRows.rows;
             const newEntry = entryResult.rows[0];
-            const calcH = (s, e, brk) => {
-              const start = new Date(`1970-01-01T${s}`);
-              const end = new Date(`1970-01-01T${e}`);
-              let h = (end - start) / 3600000;
-              if (h < 0) h += 24;
-              return Math.max(0, h - (brk || 0) / 60);
-            };
-            const newEntryHours = calcH(newEntry.start_time, newEntry.end_time, newEntry.break_minutes);
-            totalHours = allEntries.reduce((sum, r) => sum + calcH(r.start_time, r.end_time, r.break_minutes), 0);
+            const calcH = entryDuration; // pay engine's paid hours (DST-corrected)
+            const newEntryHours = calcH(newEntry);
+            totalHours = allEntries.reduce((sum, r) => sum + calcH(r), 0);
             prevHours = totalHours - newEntryHours;
             // Weekly threshold is typically 40
             const weeklyThreshold = threshold <= 10 ? 40 : threshold;
@@ -849,20 +840,14 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           } else {
             // Daily rule — check today's total
             const dayRows = await pool.query(
-              `SELECT start_time, end_time, break_minutes FROM time_entries
+              `SELECT start_time, end_time, break_minutes, start_ts, end_ts, timezone FROM time_entries
                WHERE user_id = $1 AND work_date = $2 AND wage_type = 'regular'`,
               [req.user.id, workDate]
             );
-            const calcH = (s, e, brk) => {
-              const start = new Date(`1970-01-01T${s}`);
-              const end = new Date(`1970-01-01T${e}`);
-              let h = (end - start) / 3600000;
-              if (h < 0) h += 24;
-              return Math.max(0, h - (brk || 0) / 60);
-            };
+            const calcH = entryDuration; // pay engine's paid hours (DST-corrected)
             const newEntry = entryResult.rows[0];
-            const newEntryHours = calcH(newEntry.start_time, newEntry.end_time, newEntry.break_minutes);
-            totalHours = dayRows.rows.reduce((sum, r) => sum + calcH(r.start_time, r.end_time, r.break_minutes), 0);
+            const newEntryHours = calcH(newEntry);
+            totalHours = dayRows.rows.reduce((sum, r) => sum + calcH(r), 0);
             prevHours = totalHours - newEntryHours;
             if (prevHours < threshold && totalHours >= threshold && wage_type === 'regular') {
               await _sendOvertimeAlert(req.user, companyId, project_name, totalHours, threshold, 'daily', s);
@@ -894,7 +879,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
         const weekStart = await loadWeekStart(pool, companyId);
         // loadPriorHours now includes the just-committed shift → subtract it for "before".
         const total = await loadPriorHours(pool, req.user.id, clock.project_id, clock.work_date, weekStart);
-        const shiftHours = hlCalcH(clockOutEntry.start_time, clockOutEntry.end_time, clockOutEntry.break_minutes);
+        const shiftHours = hlCalcH(clockOutEntry.start_time, clockOutEntry.end_time, clockOutEntry.break_minutes, clockOutEntry);
         const crossedDaily = dl != null && (total.daily - shiftHours) < dl && total.daily >= dl;
         const crossedWeekly = wl != null && (total.weekly - shiftHours) < wl && total.weekly >= wl;
         if (crossedDaily || crossedWeekly) {

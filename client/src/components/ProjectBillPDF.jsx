@@ -2,6 +2,7 @@ import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import CompanyLogoPdf from './CompanyLogoPdf';
 import { formatCurrency, langToLocale } from '../utils';
+import { entryNetHours } from '../utils/entryHours';
 
 const s = StyleSheet.create({
   page: { padding: '40 48', fontSize: 10, fontFamily: 'Helvetica', color: '#1a1a1a' },
@@ -60,14 +61,10 @@ function fmtTime(t) {
   return `${hour % 12 || 12}:${m} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
-function calcHours(start, end, breakMin = 0) {
-  if (!start || !end) return '—';
-  const s = new Date(`1970-01-01T${start}`);
-  const e = new Date(`1970-01-01T${end}`);
-  let ms = e - s;
-  if (ms < 0) ms += 86400000; // overnight shift wraps past midnight (server hoursWorked does the same)
-  const h = ms / 3600000 - (parseFloat(breakMin) || 0) / 60; // subtract the logged break, like the server total
-  return Math.max(0, h).toFixed(2);
+// Net hours (wrap, break, DST correction) — same rule as the server's entryDuration.
+function calcHours(e) {
+  if (!e.start_time || !e.end_time) return '—';
+  return entryNetHours(e).toFixed(2);
 }
 
 function invoiceNumber(projectId, period) {
@@ -224,7 +221,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
                 <Text style={s.colTime}>{fmtTime(e.start_time)}</Text>
                 <Text style={s.colTime}>{fmtTime(e.end_time)}</Text>
                 {showOtCol && <Text style={[s.colOt, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>{e.overtime_hours > 0 ? Number(e.overtime_hours).toFixed(2) : '—'}</Text>}
-                <Text style={s.colHours}>{calcHours(e.start_time, e.end_time, e.break_minutes)}</Text>
+                <Text style={s.colHours}>{calcHours(e)}</Text>
                 <Text style={s.colType}>{e.wage_type}</Text>
               </View>
             ))}

@@ -12,7 +12,7 @@ const { USER_WORKER_TYPES } = require('../constants/userEnums');
 // so OpsFloa's own pay surfaces and QuickBooks can't disagree about the same day.
 const { loadSettings, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
-const { hoursWorked } = require('../utils/payCalculations');
+const { entryDuration } = require('../utils/payCalculations');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { companyStatements, buildPayStatement } = require('../utils/payStatement');
 const { startOfWeek, toYMD } = require('../utils/weekBounds');
@@ -840,6 +840,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
       `SELECT te.id, te.user_id, te.project_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date,
               te.start_time, te.end_time, te.notes, te.qbo_bill_id, te.qbo_activity_id, te.wage_type,
               te.break_minutes, te.mileage, te.overtime_hours_override,
+              te.start_ts, te.end_ts, te.timezone,
               u.full_name, u.qbo_vendor_id, u.hourly_rate, u.rate_type, u.worker_type, u.overtime_rule,
               u.role_id, u.guaranteed_weekly_hours,
               p.qbo_class_id, p.qbo_customer_id, p.name AS project_name, p.prevailing_wage_rate
@@ -960,7 +961,7 @@ function billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel, l
   const { rate, rateType, prevailingWageRate } = stmt.rates;
   const shiftHours = parseFloat(settings.regular_shift_hours) || 8;
   const hourly = rateType === 'daily' ? (shiftHours > 0 ? rate / shiftHours : 0) : rate;
-  const paidHoursOf = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
+  const paidHoursOf = entryDuration; // the engine's paid hours (DST-corrected) — lines must reconcile to the statement
   const baseRateOf = e => (e.wage_type === 'prevailing'
     ? (projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevailingWageRate)
     : rate);

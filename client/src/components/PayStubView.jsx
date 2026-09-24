@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { langToLocale } from '../utils';
+import { entryNetHours } from '../utils/entryHours';
 import { useMoney } from '../hooks/useMoney';
 
 import { silentError } from '../errorReporter';
@@ -26,12 +27,6 @@ function fmtH(h) {
   const wh = Math.floor(h);
   const wm = Math.round((h - wh) * 60);
   return wm > 0 ? `${wh}h ${wm}m` : `${wh}h`;
-}
-
-function netHours(start, end, brk) {
-  let ms = new Date(`1970-01-01T${end}`) - new Date(`1970-01-01T${start}`);
-  if (ms < 0) ms += 86400000;
-  return Math.max(0, ms / 3600000 - (brk || 0) / 60);
 }
 
 function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
@@ -162,7 +157,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                       </tr>
                     );
                   }
-                  const h = netHours(e.start_time, e.end_time, e.break_minutes);
+                  const h = entryNetHours(e); // server paid_hours (DST-correct)
                   const isPrev = e.wage_type === 'prevailing';
                   return (
                     <tr key={e.id} style={s.tr}>

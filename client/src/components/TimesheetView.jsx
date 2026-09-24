@@ -5,6 +5,7 @@ import api from '../api';
 import { getT } from '../i18n';
 import { langToLocale } from '../utils';
 import { startOfWeek as computeStartOfWeek } from '../utils/weekBounds';
+import { entryNetHours } from '../utils/entryHours';
 
 function startOfWeekFor(date, ws) { return computeStartOfWeek(date, ws ?? 1); }
 
@@ -32,12 +33,8 @@ function formatTime(t) {
   return `${hour % 12 || 12}:${m}${hour < 12 ? 'a' : 'p'}`;
 }
 
-function netHours(start, end, breakMinutes) {
-  const s = new Date(`1970-01-01T${start}`);
-  let e = new Date(`1970-01-01T${end}`);
-  if (e <= s) e = new Date(`1970-01-02T${end}`); // midnight-crossing
-  return (e - s) / 3600000 - (breakMinutes || 0) / 60;
-}
+// Net hours per entry — same rule as the server's pay engine (incl. DST correction).
+const netHours = entryNetHours;
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -101,7 +98,7 @@ export default function TimesheetView({
 
   const weekTotalHours = useMemo(() => days.reduce((sum, d) => {
     const key = toDateKey(d);
-    return sum + (byDate[key] || []).reduce((s, e) => s + netHours(e.start_time, e.end_time, e.break_minutes), 0);
+    return sum + (byDate[key] || []).reduce((s, e) => s + netHours(e), 0);
   }, 0), [days, byDate]);
 
   const weekTotalMiles = useMemo(() => days.reduce((sum, d) => {
@@ -132,7 +129,7 @@ export default function TimesheetView({
         {days.map(day => {
           const key = toDateKey(day);
           const dayEntries = byDate[key] || [];
-          const dayHours = dayEntries.reduce((s, e) => s + netHours(e.start_time, e.end_time, e.break_minutes), 0);
+          const dayHours = dayEntries.reduce((s, e) => s + netHours(e), 0);
           const dayMiles = dayEntries.reduce((s, e) => s + (parseFloat(e.mileage) || 0), 0);
           const isToday = key === todayKey;
           const isWeekend = day.getDay() === 0 || day.getDay() === 6;
@@ -172,7 +169,7 @@ export default function TimesheetView({
                     >
                       <div style={styles.pillProject} title={e.project_name}>{e.project_name}</div>
                       <div style={styles.pillTimes}>{formatTime(e.start_time)}–{formatTime(e.end_time)}</div>
-                      <div style={styles.pillHours}>{fmtHours(netHours(e.start_time, e.end_time, e.break_minutes))}</div>
+                      <div style={styles.pillHours}>{fmtHours(netHours(e))}</div>
                       {e.break_minutes > 0 && <div style={styles.pillBreak}>☕ {e.break_minutes}m</div>}
                       {e.mileage > 0 && <div style={styles.pillMileage}>🚗 {parseFloat(e.mileage).toFixed(1)} mi</div>}
                     </div>
