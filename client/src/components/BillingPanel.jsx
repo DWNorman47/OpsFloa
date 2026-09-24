@@ -96,35 +96,27 @@ export default function BillingPanel() {
       .finally(() => setLoading(false));
   }, []);
 
-  const checkout = async (priceId, opts = {}) => {
+  // priceId only gates "is this plan configured" + tracks the in-flight button;
+  // the server is sent plan/interval/add-on NAMES and resolves the Stripe prices
+  // (and the Business per-worker seat count) itself — it no longer trusts
+  // client-supplied price ids or seat counts.
+  const checkout = async (priceId, plan) => {
     if (redirecting) return; // a checkout is already in flight — don't open a second one
     if (!priceId) { setBillingError(t.stripeNotConfigured); return; }
     setBillingError('');
     setRedirecting(priceId);
     try {
+      const addons = [
+        addQbo && plans?.qbo && 'qbo',
+        addTakeoff && plans?.takeoff && 'takeoff',
+        addPlanroom && plans?.planroom && 'planroom',
+        addStorm && plans?.storm && 'storm',
+        addRoof && plans?.roof && 'roof',
+      ].filter(Boolean);
       const r = await api.post('/stripe/checkout', {
-        price_id: priceId,
-        ...opts,
-        ...(addQbo && plans?.qbo ? {
-          add_qbo: true,
-          qbo_price_id: annual ? plans.qbo.annual_price_id : plans.qbo.monthly_price_id,
-        } : {}),
-        ...(addTakeoff && plans?.takeoff ? {
-          add_takeoff: true,
-          takeoff_price_id: annual ? plans.takeoff.annual_price_id : plans.takeoff.monthly_price_id,
-        } : {}),
-        ...(addPlanroom && plans?.planroom ? {
-          add_planroom: true,
-          planroom_price_id: annual ? plans.planroom.annual_price_id : plans.planroom.monthly_price_id,
-        } : {}),
-        ...(addStorm && plans?.storm ? {
-          add_storm: true,
-          storm_price_id: annual ? plans.storm.annual_price_id : plans.storm.monthly_price_id,
-        } : {}),
-        ...(addRoof && plans?.roof ? {
-          add_roof: true,
-          roof_price_id: annual ? plans.roof.annual_price_id : plans.roof.monthly_price_id,
-        } : {}),
+        plan,
+        interval: annual ? 'year' : 'month',
+        addons,
       });
       window.location.href = r.data.url;
     } catch (err) {
@@ -228,13 +220,11 @@ export default function BillingPanel() {
   const subscribeSelectedPlan = () => {
     if (!selectedPlan || selectedPlan === 'free') return;
     if (selectedPlan === 'starter') {
-      checkout(annual ? plans?.starter.annual_price_id : plans?.starter.monthly_price_id);
+      checkout(annual ? plans?.starter.annual_price_id : plans?.starter.monthly_price_id, 'starter');
     } else if (selectedPlan === 'business') {
       checkout(
         annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
-        annual
-          ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
-          : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
+        'business'
       );
     }
   };
@@ -514,7 +504,7 @@ export default function BillingPanel() {
                 ? setSelectedPlan('starter')
                 : isActive
                   ? changePlan('starter')
-                  : checkout(annual ? plans?.starter.annual_price_id : plans?.starter.monthly_price_id)
+                  : checkout(annual ? plans?.starter.annual_price_id : plans?.starter.monthly_price_id, 'starter')
               }
               t={t}
             />
@@ -568,9 +558,7 @@ export default function BillingPanel() {
                   ? changePlan('business')
                   : checkout(
                     annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
-                    annual
-                      ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
-                      : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
+                    'business'
                   )
               }
               t={t}

@@ -10,6 +10,11 @@
 //     writes are encrypted and old ones are re-encrypted on next write).
 //
 // Ciphertext format: "gcm:v1:<iv_b64>:<tag_b64>:<ciphertext_b64>".
+//
+// PRODUCTION: the plaintext fallback is a dev/test convenience only. With
+// NODE_ENV=production and no MFA_ENCRYPTION_KEY, the auth routes refuse to
+// start or complete an MFA enrollment (mfaEncryptionAvailable() → false) rather
+// than write a new TOTP seed in plaintext, and this module logs loudly at load.
 
 const crypto = require('crypto');
 
@@ -21,6 +26,21 @@ function getKey() {
   const raw = process.env.MFA_ENCRYPTION_KEY;
   if (!raw) return null;
   return crypto.createHash('sha256').update(String(raw)).digest(); // 32 bytes
+}
+
+function isProduction() {
+  return process.env.NODE_ENV === 'production';
+}
+
+// Can a NEW secret be stored safely? Always true outside production (tests/dev
+// keep the plaintext fallback); in production only when a key is configured.
+function mfaEncryptionAvailable() {
+  return !isProduction() || getKey() != null;
+}
+
+if (isProduction() && !getKey()) {
+  // eslint-disable-next-line no-console
+  console.error('[secretBox] SECURITY: MFA_ENCRYPTION_KEY is not set in production — MFA enrollment is DISABLED until it is configured (TOTP seeds would otherwise be stored in plaintext).');
 }
 
 function isEncrypted(value) {
@@ -55,4 +75,4 @@ function decrypt(stored) {
   return pt.toString('utf8');
 }
 
-module.exports = { encrypt, decrypt, isEncrypted };
+module.exports = { encrypt, decrypt, isEncrypted, mfaEncryptionAvailable };

@@ -2,6 +2,13 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const { markRequestCompany } = require('../demoMode');
 
+// Body for the 403 every request of a deactivated company gets (requireAuth /
+// checkSessionClaims) and that /auth/login returns after a correct password.
+const COMPANY_INACTIVE = Object.freeze({
+  error: 'This company account has been deactivated. Contact support to restore access.',
+  code: 'company_inactive',
+});
+
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -29,7 +36,7 @@ async function requireAuth(req, res, next) {
       // cached — so a deactivated user or a changed password still loses access at once.
       const { rows } = await pool.query(
         `SELECT u.token_version, u.active,
-                c.id AS _company_id, c.plan, c.subscription_status, c.trial_ends_at,
+                c.id AS _company_id, c.active AS _company_active, c.plan, c.subscription_status, c.trial_ends_at,
                 c.addon_qbo, c.addon_certified_payroll, c.addon_advanced_payroll,
                 c.addon_takeoff, c.addon_planroom, c.addon_roof
            FROM users u
@@ -47,6 +54,12 @@ async function requireAuth(req, res, next) {
       }
       if (u.token_version !== payload.tv) {
         return res.status(401).json({ error: 'Session invalidated, please log in again' });
+      }
+      // A deactivated COMPANY (super-admin "deactivate") must lock out all of its
+      // users at once — not just block new logins. Super-admin impersonation
+      // (imp tokens, below) is deliberately still allowed so support can look.
+      if (u._company_id != null && u._company_active === false) {
+        return res.status(403).json(COMPANY_INACTIVE);
       }
       req.company = u._company_id != null ? {
         plan: u.plan, subscription_status: u.subscription_status, trial_ends_at: u.trial_ends_at,
@@ -74,7 +87,8 @@ async function requireAuth(req, res, next) {
         [payload.id, payload.imp_by ?? null]
       );
       const row = rows[0] || {};
-      if (row.target_active === false) {
+      // NULL = the target row is gone (deleted user) — invalid, not "still active".
+      if (row.target_active !== true) {
         return res.status(401).json({ error: 'Account deactivated' });
       }
       // imp_by is absent on tokens minted before this claim existed; only
@@ -316,7 +330,7 @@ async function checkSessionClaims(claims) {
     if (c.tv != null) {
       const { rows } = await pool.query(
         `SELECT u.token_version, u.active,
-                c.id AS _company_id, ${COMPANY_AUTH_COLS.split(', ').map(k => 'c.' + k).join(', ')}
+                c.id AS _company_id, c.active AS _company_active, ${COMPANY_AUTH_COLS.split(', ').map(k => 'c.' + k).join(', ')}
            FROM users u
            LEFT JOIN companies c ON c.id = $2
           WHERE u.id = $1`,
@@ -326,6 +340,7 @@ async function checkSessionClaims(claims) {
       const u = rows[0];
       if (u.active === false) return { ok: false, status: 401, error: 'Account deactivated' };
       if (u.token_version !== c.tv) return { ok: false, status: 401, error: 'Session invalidated, please log in again' };
+      if (u._company_id != null && u._company_active === false) return { ok: false, status: 403, error: COMPANY_INACTIVE.error, code: COMPANY_INACTIVE.code };
       const company = u._company_id != null ? {
         plan: u.plan, subscription_status: u.subscription_status, trial_ends_at: u.trial_ends_at,
         addon_qbo: u.addon_qbo, addon_certified_payroll: u.addon_certified_payroll,
@@ -343,7 +358,7 @@ async function checkSessionClaims(claims) {
         [c.id, c.imp_by ?? null]
       );
       const row = rows[0] || {};
-      if (row.target_active === false) return { ok: false, status: 401, error: 'Account deactivated' };
+      if (row.target_active !== true) return { ok: false, status: 401, error: 'Account deactivated' };
       if (c.imp_by != null && (row.imp_active !== true || row.imp_role !== 'super_admin')) {
         return { ok: false, status: 401, error: 'Impersonation session ended' };
       }
@@ -389,4 +404,5 @@ module.exports = {
   hasAdminPermission, requirePermission,
   hasPerm, requirePerm,
   planToolsAllowed, checkSessionClaims,
+  COMPANY_INACTIVE,
 };

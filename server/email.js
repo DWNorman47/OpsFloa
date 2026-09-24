@@ -2,6 +2,7 @@ const { Resend } = require('resend');
 const logger = require('./logger');
 const { getStore } = require('./demoMode');
 const { isSuppressed } = require('./services/emailSuppression');
+const { escapeHtml } = require('./utils/htmlEscape');
 
 // Single place that talks to the email provider. Every send path in the app
 // routes through sendEmail() below so there is one transport, one from-address,
@@ -129,9 +130,9 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
         <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:16px 20px;margin-bottom:24px;font-family:system-ui,sans-serif">
           <strong style="color:#92400e">Non-production email intercept</strong><br>
           <span style="color:#78350f;font-size:13px">
-            Environment: <strong>${env}</strong><br>
-            Would have sent to: <strong>${to}</strong><br>
-            Subject: <strong>${subject}</strong>
+            Environment: <strong>${escapeHtml(env)}</strong><br>
+            Would have sent to: <strong>${escapeHtml(to)}</strong><br>
+            Subject: <strong>${escapeHtml(subject)}</strong>
           </span>
         </div>
         ${html}`,

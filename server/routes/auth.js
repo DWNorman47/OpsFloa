@@ -7,14 +7,15 @@ const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
 const { sendEmail } = require('../email');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const pool = require('../db');
 const { recordInitialRate } = require('../utils/rateHistoryStore');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, COMPANY_INACTIVE } = require('../middleware/auth');
 const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
 const { escapeHtml } = require('../utils/htmlEscape');
-const { encrypt: encryptSecret, decrypt: decryptSecret } = require('../utils/secretBox');
+const { encrypt: encryptSecret, decrypt: decryptSecret, mfaEncryptionAvailable } = require('../utils/secretBox');
 const { LEGAL_VERSION } = require('../constants/legal');
 
 // Hash a token for safe storage — raw token goes in the email, hash goes in the DB
@@ -47,6 +48,66 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Second-factor brute force: besides the per-IP loginLimiter, bucket /mfa/confirm
+// by the USER the challenge token was issued to, so rotating IPs doesn't buy an
+// attacker (who already has the password) more guesses at the 6-digit code. The
+// token is only decoded here for the bucket key — the route verifies it.
+const mfaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => {
+    try {
+      const d = jwt.decode(req.body && req.body.mfa_token);
+      if (d && d.mfa_pending && d.id != null) return `mfa:${d.id}`;
+    } catch { /* fall through to IP */ }
+    return userOrIpKey(req);
+  },
+  message: { error: 'Too many attempts. Please sign in again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Per-user second-factor lock: this many consecutive wrong TOTP codes locks the
+// second factor for MFA_LOCK_MINUTES (users.mfa_failed_attempts / mfa_locked_until,
+// migration 0212). Reset only by a correct code.
+const MFA_MAX_FAILURES = 5;
+const MFA_LOCK_MINUTES = 15;
+const TOTP_STEP_SECONDS = 30;
+
+// Verify a TOTP code and return the 30-second time-step it matched, or null.
+// Refuses a step at or before `lastUsedStep` — a code that was already accepted
+// (observed over a shoulder / in a log) can't be replayed inside its window.
+function verifyTotpStep(secret, code, lastUsedStep) {
+  const token = String(code == null ? '' : code).replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(token)) return null;
+  const match = speakeasy.totp.verifyDelta({ secret, encoding: 'base32', token, window: 1 });
+  if (!match) return null;
+  const step = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS) + match.delta;
+  if (lastUsedStep != null && step <= Number(lastUsedStep)) return null;
+  return step;
+}
+
+// Trial-abuse limits beyond the per-IP one. Corporate domains are limited per
+// domain; free-mail domains (anyone can mint addresses there) only per exact
+// address — "+tag" sub-addressing (and Gmail dots) folded away so they can't be
+// used to multiply trials.
+const FREE_MAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'rocketmail.com', 'yahoo.co.uk', 'yahoo.ca',
+  'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'hotmail.co.uk', 'icloud.com', 'me.com', 'mac.com',
+  'aol.com', 'proton.me', 'protonmail.com', 'pm.me', 'gmx.com', 'gmx.net', 'gmx.de', 'mail.com', 'zoho.com',
+  'yandex.com', 'yandex.ru', 'mail.ru', 'fastmail.com', 'tutanota.com', 'hey.com',
+  'comcast.net', 'att.net', 'sbcglobal.net', 'verizon.net', 'bellsouth.net', 'cox.net', 'charter.net', 'earthlink.net',
+]);
+function normalizeTrialEmail(email) {
+  const e = String(email || '').trim().toLowerCase();
+  const at = e.lastIndexOf('@');
+  if (at < 1) return { address: e, domain: '' };
+  const domain = e.slice(at + 1);
+  let local = e.slice(0, at).replace(/\+.*$/, '');
+  if (domain === 'gmail.com' || domain === 'googlemail.com') local = local.replace(/\./g, '');
+  return { address: `${local}@${domain}`, domain };
+}
 
 // The send call sites below use a legacy { to, subject, html } object shape and
 // rely on a throw to signal failure (registration rolls the account back if the
@@ -186,7 +247,7 @@ router.post('/login', loginLimiter, async (req, res) => {
   try {
     // Step 1: check company name
     const companyRes = await pool.query(
-      'SELECT id FROM companies WHERE LOWER(name) = LOWER($1)', [company_name]
+      'SELECT id, active FROM companies WHERE LOWER(name) = LOWER($1)', [company_name]
     );
     if (!companyRes.rows[0]) {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH); // equalize timing
@@ -194,6 +255,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const companyId = companyRes.rows[0].id;
+    const companyActive = companyRes.rows[0].active !== false;
 
     // Step 2: check username (or email) within that company. Accepting email
     // matches what users instinctively try — most SaaS apps use email as the
@@ -207,10 +269,14 @@ router.post('/login', loginLimiter, async (req, res) => {
     );
     const user = userRes.rows[0];
 
-    // Check lockout before verifying password (don't reveal whether user exists)
+    // Lockout is enforced before the password is checked, but answered with the
+    // SAME generic 401 as a wrong password / unknown user: a distinct 423 "account
+    // locked" only ever fired for real accounts, so it confirmed the username
+    // existed. Equalize timing like the miss paths.
     if (user && user.locked_until && new Date(user.locked_until) > new Date()) {
-      const minutesLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
-      return res.status(423).json({ error: `Account locked due to too many failed attempts. Try again in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}.` });
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      await logFailure('locked');
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     if (!user) {
@@ -239,8 +305,19 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Reset failed attempts on successful password match
-    await pool.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+    // A deactivated company locks every one of its users out (requireAuth also
+    // refuses their existing sessions). Only revealed after a correct password.
+    if (!companyActive) {
+      await logFailure('company_inactive');
+      return res.status(403).json(COMPANY_INACTIVE);
+    }
+
+    // Reset failed attempts on a successful password match — unless a second
+    // factor is still owed: then the reset waits for /mfa/confirm to succeed, so
+    // "right password, wrong/no code" doesn't wipe the brute-force counter.
+    if (!user.mfa_enabled) {
+      await pool.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+    }
 
     // Track first login for welcome modal
     let isFirstLogin = false;
@@ -350,6 +427,11 @@ router.post('/register', authLimiter, async (req, res) => {
 
   // Capture real client IP (req.ip respects trust proxy setting)
   const registrationIp = req.ip || 'unknown';
+  // IPv6: one subscriber usually holds a whole /56 (or more), so counting the
+  // exact address let a user mint a new trial per address. Compare at /56 — the
+  // same normalization the rate limiters use (express-rate-limit ipKeyGenerator).
+  const ipIsV6 = registrationIp.includes(':') && !/^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(registrationIp);
+  const registrationSubnet = ipIsV6 ? ipKeyGenerator(registrationIp) : registrationIp;
 
   // Owner/dev IPs bypass all trial-limit checks
   const whitelistedIps = (process.env.WHITELISTED_IPS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -359,9 +441,15 @@ router.post('/register', authLimiter, async (req, res) => {
   const TRIAL_LIMIT = parseInt(process.env.TRIAL_LIMIT_PER_IP) || 5;
   if (!ipIsWhitelisted) {
     const ipQuery = await pool.query(
-      `SELECT COUNT(*), array_agg(name ORDER BY created_at) as company_names
-       FROM companies WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '30 days'`,
-      [registrationIp]
+      ipIsV6
+        ? `SELECT COUNT(*), array_agg(name ORDER BY created_at) as company_names
+             FROM companies
+            WHERE created_at > NOW() - INTERVAL '30 days'
+              AND CASE WHEN registration_ip LIKE '%:%' AND registration_ip ~ '^[0-9A-Fa-f:.]+$'
+                       THEN registration_ip::inet <<= $1::cidr ELSE false END`
+        : `SELECT COUNT(*), array_agg(name ORDER BY created_at) as company_names
+           FROM companies WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '30 days'`,
+      [registrationSubnet]
     );
     const priorCount = parseInt(ipQuery.rows[0].count);
     if (priorCount >= TRIAL_LIMIT) {
@@ -389,6 +477,28 @@ router.post('/register', authLimiter, async (req, res) => {
       `,
     }).catch(err => logger.error({ err }, 'Trial abuse alert email failed'));
   }
+
+    // Per-email / per-domain trial limit (the IP limit alone is beaten by a VPN).
+    // Free-mail → per exact (normalized) address; any other domain → per domain.
+    const { address: normEmail, domain: emailDomain } = normalizeTrialEmail(email);
+    const freeMail = FREE_MAIL_DOMAINS.has(emailDomain);
+    const TRIAL_LIMIT_EMAIL = parseInt(process.env.TRIAL_LIMIT_PER_EMAIL) || 2;
+    const TRIAL_LIMIT_DOMAIN = parseInt(process.env.TRIAL_LIMIT_PER_DOMAIN) || 3;
+    const emailQuery = await pool.query(
+      `SELECT COUNT(DISTINCT c.id) AS count
+         FROM companies c JOIN users u ON u.company_id = c.id
+        WHERE c.created_at > NOW() - INTERVAL '30 days' AND u.role = 'admin'
+          AND ${freeMail
+            ? `regexp_replace(CASE WHEN split_part(LOWER(u.email), '@', 2) IN ('gmail.com','googlemail.com')
+                                   THEN replace(split_part(LOWER(u.email), '@', 1), '.', '') || '@' || split_part(LOWER(u.email), '@', 2)
+                                   ELSE LOWER(u.email) END, '\\+[^@]*@', '@') = $1`
+            : `split_part(LOWER(u.email), '@', 2) = $1`}`,
+      [freeMail ? normEmail : emailDomain]
+    );
+    const emailPrior = parseInt(emailQuery.rows[0]?.count) || 0;
+    if (emailPrior >= (freeMail ? TRIAL_LIMIT_EMAIL : TRIAL_LIMIT_DOMAIN)) {
+      return res.status(429).json({ error: 'A trial has already been started for this email address or organization. Contact support if you need another workspace.', code: 'trial_limit' });
+    }
   } // end if (!ipIsWhitelisted)
 
   const slug = company_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now();
@@ -513,13 +623,14 @@ router.post('/complete-setup', async (req, res) => {
   if (!payload.setup_pending) return res.status(400).json({ error: 'Invalid setup token' });
   try {
     const userRes = await pool.query(
-      `SELECT u.*, c.name as company_name FROM users u
+      `SELECT u.*, c.name as company_name, c.active AS company_active FROM users u
        JOIN companies c ON c.id = u.company_id
        WHERE u.id = $1 AND u.active = true`,
       [payload.id]
     );
     const user = userRes.rows[0];
     if (!user) return res.status(400).json({ error: 'User not found' });
+    if (user.company_active === false) return res.status(403).json(COMPANY_INACTIVE);
     // Validate after fetch so we can enforce the "password can't contain
     // your username" rule that validatePassword applies when given a username.
     const pwErr = validatePassword(new_password, user.username);
@@ -541,7 +652,7 @@ router.post('/complete-setup', async (req, res) => {
 });
 
 // Resend confirmation email
-router.post('/resend-confirmation', async (req, res) => {
+router.post('/resend-confirmation', authLimiter, async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
   try {
@@ -597,40 +708,57 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
         [email, company.trim()]
       );
     } else {
+      // No company given: the same address can belong to users in several
+      // tenants. Picking one arbitrarily (LIMIT 1) left the others unable to
+      // reset at all — send ONE email with a separate, company-labelled reset
+      // link for every account on this address.
       result = await pool.query(
-        'SELECT * FROM users WHERE email = $1 AND active = true LIMIT 1',
+        `SELECT u.*, c.name AS company_name FROM users u
+           JOIN companies c ON c.id = u.company_id
+          WHERE u.email = $1 AND u.active = true
+          ORDER BY c.name, u.id
+          LIMIT 20`,
         [email]
       );
     }
     // Always return success to avoid leaking whether the email exists
     if (result.rowCount === 0) return res.json({ success: true });
 
-    const user = result.rows[0];
-    const token = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-    await pool.query(
-      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
-      [sha256(token), expires, user.id]
-    );
-
-    const resetUrl = `${process.env.APP_URL}/reset-password?token=${token}`;
+    const links = [];
+    for (const user of result.rows) {
+      const token = crypto.randomBytes(32).toString('hex');
+      await pool.query(
+        'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+        [sha256(token), expires, user.id]
+      );
+      links.push({ user, url: `${process.env.APP_URL}/reset-password?token=${token}` });
+    }
 
     // Respond BEFORE sending so response time is uniform whether or not the
     // address exists — an awaited SendGrid call (hundreds of ms) for real
     // users vs an instant return for misses is a user-enumeration oracle.
     res.json({ success: true });
 
+    const button = url => `<a href="${url}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Reset password</a>`;
+    const body = links.length === 1
+      ? `<p style="color:#444;margin-bottom:24px">Hi ${escapeHtml(links[0].user.full_name)}, click the button below to reset your password. This link expires in 1 hour.</p>
+          ${button(links[0].url)}
+          <p style="color:#ccc;font-size:12px;margin-top:4px">${links[0].url}</p>`
+      : `<p style="color:#444;margin-bottom:16px">This email address is used by more than one OpsFloa account. Each link below resets the password for that account only, and expires in 1 hour.</p>
+          ${links.map(({ user, url }) => `
+          <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin-bottom:12px">
+            <p style="color:#111;margin:0 0 8px"><strong>${escapeHtml(user.company_name || '')}</strong> — ${escapeHtml(user.username || '')}</p>
+            ${button(url)}
+          </div>`).join('')}`;
     sgMail.send({
       to: email,
       subject: 'Reset your OpsFloa password',
       html: `
         <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
           <h2 style="color:#1a56db;margin-bottom:8px">Reset your password</h2>
-          <p style="color:#444;margin-bottom:24px">Hi ${escapeHtml(user.full_name)}, click the button below to reset your password. This link expires in 1 hour.</p>
-          <a href="${resetUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Reset password</a>
+          ${body}
           <p style="color:#999;font-size:13px;margin-top:24px">If you didn't request this, you can ignore this email.</p>
-          <p style="color:#ccc;font-size:12px;margin-top:4px">${resetUrl}</p>
         </div>
       `,
     }).catch(err => logger.error({ err }, 'reset password email send failed'));
@@ -658,7 +786,9 @@ router.post('/reset-password', authLimiter, async (req, res) => {
     // Bump token_version — if an attacker had stolen a token before the
     // legitimate user reset their password, that token is now dead.
     await pool.query(
-      'UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL, token_version = token_version + 1 WHERE id = $2',
+      // Proving control of the mailbox also clears the password lockout (a
+      // locked-out user resetting their password shouldn't stay locked out).
+      'UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL, failed_login_attempts = 0, locked_until = NULL, token_version = token_version + 1 WHERE id = $2',
       [hash, result.rows[0].id]
     );
     res.json({ success: true });
@@ -728,7 +858,7 @@ router.post('/change-password', requireAuth, authLimiter, async (req, res) => {
 });
 
 // MFA: complete login after TOTP verification
-router.post('/mfa/confirm', loginLimiter, async (req, res) => {
+router.post('/mfa/confirm', loginLimiter, mfaLimiter, async (req, res) => {
   const { mfa_token, code } = req.body;
   if (!mfa_token || !code) return res.status(400).json({ error: 'mfa_token and code required' });
   try {
@@ -741,16 +871,46 @@ router.post('/mfa/confirm', loginLimiter, async (req, res) => {
     if (!payload.mfa_pending) return res.status(400).json({ error: 'Invalid MFA token' });
 
     const result = await pool.query(
-      `SELECT u.*, c.name as company_name FROM users u
+      `SELECT u.*, c.name as company_name, c.active AS company_active FROM users u
        JOIN companies c ON c.id = u.company_id
        WHERE u.id = $1 AND u.active = true`,
       [payload.id]
     );
     const user = result.rows[0];
     if (!user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
+    if (user.company_active === false) return res.status(403).json(COMPANY_INACTIVE);
 
-    const valid = speakeasy.totp.verify({ secret: decryptSecret(user.mfa_secret), encoding: 'base32', token: code, window: 1 });
-    if (!valid) return res.status(401).json({ error: 'Invalid code. Try again.' });
+    // Per-user lock after MFA_MAX_FAILURES wrong codes (survives new mfa_tokens /
+    // new IPs — the attacker already has the password, so the IP limiter alone
+    // isn't the bound that matters).
+    if (user.mfa_locked_until && new Date(user.mfa_locked_until) > new Date()) {
+      return res.status(429).json({ error: 'Too many incorrect codes. Please wait 15 minutes and sign in again.', code: 'mfa_locked' });
+    }
+
+    const step = verifyTotpStep(decryptSecret(user.mfa_secret), code, user.mfa_last_used_step);
+    if (step == null) {
+      await pool.query(
+        `UPDATE users
+            SET mfa_failed_attempts = COALESCE(mfa_failed_attempts, 0) + 1,
+                mfa_locked_until = CASE WHEN COALESCE(mfa_failed_attempts, 0) + 1 >= $2
+                                        THEN NOW() + ($3 || ' minutes')::INTERVAL
+                                        ELSE mfa_locked_until END
+          WHERE id = $1`,
+        [user.id, MFA_MAX_FAILURES, String(MFA_LOCK_MINUTES)]
+      );
+      return res.status(401).json({ error: 'Invalid code. Try again.' });
+    }
+
+    // Accept: record the step (replay guard — the WHERE makes a concurrent replay
+    // of the same code lose the race) and only NOW clear both brute-force counters.
+    const accepted = await pool.query(
+      `UPDATE users
+          SET mfa_last_used_step = $2, mfa_failed_attempts = 0, mfa_locked_until = NULL,
+              failed_login_attempts = 0, locked_until = NULL
+        WHERE id = $1 AND (mfa_last_used_step IS NULL OR mfa_last_used_step < $2)`,
+      [user.id, step]
+    );
+    if (accepted.rowCount === 0) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
     const token = signToken(user);
     res.json({ token, user: await buildSessionUser(user) });
@@ -761,7 +921,17 @@ router.post('/mfa/confirm', loginLimiter, async (req, res) => {
 });
 
 // MFA: generate setup QR code
+// Production without MFA_ENCRYPTION_KEY: refuse to enroll rather than store a
+// TOTP seed in plaintext (secretBox logs this loudly at boot too).
+function mfaUnavailable(req, res) {
+  if (mfaEncryptionAvailable()) return false;
+  logger.error({ userId: req.user && req.user.id }, 'SECURITY: MFA enrollment refused — MFA_ENCRYPTION_KEY is not configured in production');
+  res.status(503).json({ error: 'Two-factor authentication is temporarily unavailable. Please try again later.', code: 'mfa_unavailable' });
+  return true;
+}
+
 router.get('/mfa/setup', requireAuth, async (req, res) => {
+  if (mfaUnavailable(req, res)) return;
   try {
     const secret = speakeasy.generateSecret({ name: `OpsFloa (${req.user.username})`, length: 20 });
     await pool.query('UPDATE users SET mfa_secret_pending = $1 WHERE id = $2', [encryptSecret(secret.base32), req.user.id]);
@@ -777,18 +947,20 @@ router.get('/mfa/setup', requireAuth, async (req, res) => {
 router.post('/mfa/enable', requireAuth, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'code required' });
+  if (mfaUnavailable(req, res)) return;
   try {
     const result = await pool.query('SELECT mfa_secret_pending FROM users WHERE id = $1', [req.user.id]);
     const stored = result.rows[0]?.mfa_secret_pending;
     if (!stored) return res.status(400).json({ error: 'No pending MFA setup. Start setup again.' });
     const secret = decryptSecret(stored); // plaintext base32 for verification
 
-    const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token: code, window: 1 });
-    if (!valid) return res.status(401).json({ error: 'Invalid code. Try again.' });
+    const step = verifyTotpStep(secret, code, null);
+    if (step == null) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
+    // Record the enrollment code's step so it can't be replayed at /mfa/confirm.
     await pool.query(
-      'UPDATE users SET mfa_secret = $1, mfa_secret_pending = NULL, mfa_enabled = true WHERE id = $2',
-      [encryptSecret(secret), req.user.id]
+      'UPDATE users SET mfa_secret = $1, mfa_secret_pending = NULL, mfa_enabled = true, mfa_last_used_step = $3, mfa_failed_attempts = 0, mfa_locked_until = NULL WHERE id = $2',
+      [encryptSecret(secret), req.user.id, step]
     );
     res.json({ enabled: true });
   } catch (err) {
@@ -797,18 +969,30 @@ router.post('/mfa/enable', requireAuth, async (req, res) => {
   }
 });
 
-// MFA: disable with password confirmation
-router.post('/mfa/disable', requireAuth, async (req, res) => {
-  const { password } = req.body;
+// MFA: disable — requires the password AND a current TOTP code. Password alone
+// meant a stolen session + a phished/reused password could strip the second
+// factor; the code proves possession of the authenticator.
+router.post('/mfa/disable', requireAuth, authLimiter, async (req, res) => {
+  const { password, code } = req.body;
   if (!password) return res.status(400).json({ error: 'password required' });
   try {
-    const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
-    if (!(await bcrypt.compare(password, result.rows[0].password_hash))) {
+    const result = await pool.query(
+      'SELECT password_hash, mfa_enabled, mfa_secret, mfa_last_used_step FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const row = result.rows[0];
+    if (!row || !(await bcrypt.compare(password, row.password_hash))) {
       return res.status(401).json({ error: 'Incorrect password' });
     }
+    let step = null;
+    if (row.mfa_enabled && row.mfa_secret) {
+      if (!code) return res.status(400).json({ error: 'Authentication code required', code: 'mfa_code_required' });
+      step = verifyTotpStep(decryptSecret(row.mfa_secret), code, row.mfa_last_used_step);
+      if (step == null) return res.status(401).json({ error: 'Invalid code. Try again.' });
+    }
     await pool.query(
-      'UPDATE users SET mfa_secret = NULL, mfa_secret_pending = NULL, mfa_enabled = false WHERE id = $1',
-      [req.user.id]
+      'UPDATE users SET mfa_secret = NULL, mfa_secret_pending = NULL, mfa_enabled = false, mfa_failed_attempts = 0, mfa_locked_until = NULL, mfa_last_used_step = COALESCE($2, mfa_last_used_step) WHERE id = $1',
+      [req.user.id, step]
     );
     res.json({ disabled: true });
   } catch (err) {

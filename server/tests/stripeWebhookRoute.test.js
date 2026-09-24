@@ -119,6 +119,27 @@ describe('customer.subscription.updated', () => {
     expect(params).toContain('sub_9');      // sub id re-asserted so it's never left unset
     expect(params).toContain(2000);
   });
+
+  test('never downgrades a superadmin-comped (exempt) company', async () => {
+    await send({
+      id: 'evt_3b', type: 'customer.subscription.updated', created: 2001,
+      data: { object: { id: 'sub_9', metadata: { company_id: 'co-1' }, status: 'canceled', items: { data: [] } } },
+    });
+    expect(updateCall().sql).toMatch(/subscription_status <> 'exempt'/);
+  });
+});
+
+describe('customer.subscription.deleted', () => {
+  test('cancels, but never an exempt company', async () => {
+    const res = await send({
+      id: 'evt_4', type: 'customer.subscription.deleted', created: 3000,
+      data: { object: { id: 'sub_9', metadata: { company_id: 'co-1' } } },
+    });
+    expect(res.status).toBe(200);
+    const { sql, params } = updateCall();
+    expect(params).toContain('canceled');
+    expect(sql).toMatch(/subscription_status <> 'exempt'/);
+  });
 });
 
 describe('invoice.payment_failed', () => {
@@ -146,5 +167,88 @@ describe('fail-open protection', () => {
       data: { object: { subscription: 'sub_1', metadata: { company_id: 'co-1' } } },
     });
     expect(res.status).toBe(500);
+  });
+});
+
+describe('security review hardening', () => {
+  const bizSub = (status = 'active') => ({
+    id: 'sub_1', metadata: { company_id: 'co-1' }, status,
+    items: { data: [{ price: { id: 'price_biz_base_m', unit_amount: 3500, recurring: { interval: 'month' } } }] },
+  });
+
+  test('checkout.session.completed writes the MAPPED subscription status and never downgrades exempt', async () => {
+    mockSubRetrieve.mockResolvedValue(bizSub('trialing'));
+    const res = await send({
+      id: 'evt_10', type: 'checkout.session.completed', created: 6000,
+      data: { object: { subscription: 'sub_1', metadata: { company_id: 'co-1' } } },
+    });
+    expect(res.status).toBe(200);
+    const { sql, params } = updateCall();
+    expect(params).toContain('trial');                // mapStripeStatus('trialing'), not a hard-coded 'active'
+    expect(params).not.toContain('active');
+    expect(sql).toMatch(/CASE WHEN subscription_status = 'exempt' THEN 'exempt' ELSE \$2 END/);
+  });
+
+  test('a repeat delivery of the same event id is a 200 no-op', async () => {
+    pool.query.mockImplementation((sql) => Promise.resolve(
+      /INSERT INTO stripe_webhook_events/.test(sql) ? { rows: [], rowCount: 0 } : { rows: [], rowCount: 1 }
+    ));
+    mockSubRetrieve.mockResolvedValue(bizSub());
+    const res = await send({
+      id: 'evt_dup', type: 'checkout.session.completed', created: 7000,
+      data: { object: { subscription: 'sub_1', metadata: { company_id: 'co-1' } } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
+    expect(updateCall()).toBeNull();
+    expect(mockSubRetrieve).not.toHaveBeenCalled();
+  });
+
+  test('the event id is claimed before processing, and released when processing fails (so the retry applies)', async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/INSERT INTO stripe_webhook_events/.test(sql)) return Promise.resolve({ rows: [], rowCount: 1 });
+      if (/UPDATE companies/.test(sql)) return Promise.reject(new Error('neon is down'));
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    });
+    mockSubRetrieve.mockResolvedValue(bizSub());
+    const res = await send({
+      id: 'evt_fail', type: 'checkout.session.completed', created: 8000,
+      data: { object: { subscription: 'sub_1', metadata: { company_id: 'co-1' } } },
+    });
+    expect(res.status).toBe(500);
+    const sqls = pool.query.mock.calls.map(c => c[0]);
+    expect(sqls[0]).toMatch(/INSERT INTO stripe_webhook_events/);
+    const del = pool.query.mock.calls.find(c => /DELETE FROM stripe_webhook_events/.test(c[0]));
+    expect(del[1]).toEqual(['evt_fail']);
+  });
+
+  test('invoice.payment_failed / payment_succeeded respect the last_stripe_event_at watermark', async () => {
+    mockSubRetrieve.mockResolvedValue({ metadata: { company_id: 'co-1' } });
+    await send({ id: 'evt_pf', type: 'invoice.payment_failed', created: 9000, data: { object: { subscription: 'sub_1' } } });
+    let { sql, params } = updateCall();
+    expect(sql).toMatch(/last_stripe_event_at IS NULL OR last_stripe_event_at <= \$2/);
+    expect(params).toEqual(['co-1', 9000]);
+
+    pool.query.mockClear();
+    await send({ id: 'evt_ps', type: 'invoice.payment_succeeded', created: 9100, data: { object: { subscription: 'sub_1' } } });
+    ({ sql, params } = updateCall());
+    expect(sql).toMatch(/last_stripe_event_at IS NULL OR last_stripe_event_at <= \$2/);
+    expect(params).toEqual(['co-1', 9100]);
+  });
+
+  test('payment_failed email escapes the company + admin names', async () => {
+    const { sendEmail } = require('../email');
+    sendEmail.mockClear();
+    mockSubRetrieve.mockResolvedValue({ metadata: { company_id: 'co-1' } });
+    pool.query.mockImplementation((sql) => {
+      if (/SELECT name FROM companies/.test(sql)) return Promise.resolve({ rows: [{ name: 'Acme <img src=x>' }] });
+      if (/SELECT email, full_name FROM users/.test(sql)) return Promise.resolve({ rows: [{ email: 'a@x.co', full_name: '<b>Al</b>' }] });
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    });
+    await send({ id: 'evt_pf2', type: 'invoice.payment_failed', created: 9200, data: { object: { subscription: 'sub_1', amount_due: 100 } } });
+    const html = sendEmail.mock.calls[0][2];
+    expect(html).toContain('Acme &lt;img src=x&gt;');
+    expect(html).toContain('&lt;b&gt;Al&lt;/b&gt;');
+    expect(html).not.toContain('<img');
   });
 });

@@ -26,6 +26,18 @@ jest.mock('../db', () => ({ query: jest.fn() }));
 
 process.env.STRIPE_SECRET_KEY = 'sk_test';
 process.env.APP_URL = 'https://app.test';
+// Configured prices: the route maps plan/interval/add-on NAMES onto these and
+// never trusts a client-supplied price id or seat count.
+process.env.STRIPE_PRICE_STARTER = 'price_starter';
+process.env.STRIPE_PRICE_STARTER_ANNUAL = 'price_starter_y';
+process.env.STRIPE_PRICE_BUSINESS_BASE = 'price_biz_m';
+process.env.STRIPE_PRICE_BUSINESS_BASE_ANNUAL = 'price_biz_y';
+process.env.STRIPE_PRICE_BUSINESS_WORKER = 'price_worker_m';
+process.env.STRIPE_PRICE_BUSINESS_WORKER_ANNUAL = 'price_worker_y';
+process.env.STRIPE_PRICE_QBO = 'price_qbo_m';
+process.env.STRIPE_PRICE_QBO_ANNUAL = 'price_qbo_y';
+process.env.STRIPE_PRICE_PLANROOM = 'price_pr_m';
+process.env.STRIPE_PRICE_PLANROOM_ANNUAL = 'price_pr_y';
 
 const express = require('express');
 const request = require('supertest');
@@ -112,5 +124,64 @@ describe('POST /stripe/checkout — double-subscription guard', () => {
   test('400 when price_id is missing', async () => {
     const res = await request(app()).post('/api/stripe/checkout').send({});
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /stripe/checkout — prices + seats are decided server-side', () => {
+  // Routes the company lookup and the live worker count.
+  function mockDb({ workers = 0, company = companyRow() } = {}) {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM companies c JOIN users/.test(sql)) return Promise.resolve({ rows: [company] });
+      if (/SELECT COUNT\(\*\) AS n FROM users/.test(sql)) return Promise.resolve({ rows: [{ n: String(workers) }] });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+  const lineItems = () => mockSessionCreate.mock.calls[0][0].line_items;
+
+  test('plan/interval/addons names map onto the configured prices', async () => {
+    mockDb();
+    const res = await request(app()).post('/api/stripe/checkout')
+      .send({ plan: 'starter', interval: 'year', addons: ['qbo', 'planroom', 'bogus'] });
+    expect(res.status).toBe(200);
+    expect(lineItems()).toEqual([
+      { price: 'price_starter_y', quantity: 1 },
+      { price: 'price_qbo_y', quantity: 1 },
+      { price: 'price_pr_y', quantity: 1 },
+    ]);
+  });
+
+  test('client-supplied price ids / worker counts are ignored; Business seats come from the LIVE worker count', async () => {
+    mockDb({ workers: 22 });
+    const res = await request(app()).post('/api/stripe/checkout').send({
+      plan: 'business', interval: 'month',
+      worker_price_id: 'price_attacker', worker_count: 0,
+      add_qbo: true, qbo_price_id: 'price_attacker_qbo',
+    });
+    expect(res.status).toBe(200);
+    expect(lineItems()).toEqual([
+      { price: 'price_biz_m', quantity: 1 },
+      { price: 'price_worker_m', quantity: 7 },   // 22 active workers − 15 included
+      { price: 'price_qbo_m', quantity: 1 },
+    ]);
+    expect(JSON.stringify(lineItems())).not.toMatch(/attacker/);
+  });
+
+  test('Business at or under the included 15 → no seat item', async () => {
+    mockDb({ workers: 15 });
+    await request(app()).post('/api/stripe/checkout').send({ plan: 'business' });
+    expect(lineItems()).toEqual([{ price: 'price_biz_m', quantity: 1 }]);
+  });
+
+  test('legacy price_id is only a lookup key — an arbitrary price id is refused', async () => {
+    mockDb();
+    const res = await request(app()).post('/api/stripe/checkout').send({ price_id: 'price_1Cheap_OtherProduct' });
+    expect(res.status).toBe(400);
+    expect(mockSessionCreate).not.toHaveBeenCalled();
+  });
+
+  test('legacy annual base price id resolves to the annual interval', async () => {
+    mockDb();
+    await request(app()).post('/api/stripe/checkout').send({ price_id: 'price_biz_y' });
+    expect(lineItems()[0]).toEqual({ price: 'price_biz_y', quantity: 1 });
   });
 });

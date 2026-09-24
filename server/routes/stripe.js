@@ -3,6 +3,7 @@ const Stripe = require('stripe');
 const pool = require('../db');
 const { requireAdmin, requirePerm } = require('../middleware/auth');
 const { mapStripeStatus } = require('../constants/companyEnums');
+const { escapeHtml } = require('../utils/htmlEscape');
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY not configured');
@@ -155,10 +156,47 @@ router.get('/status', requireAdmin, async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// Resolve what the client asked to buy into OUR price ids. The client sends
+// names — { plan: 'starter'|'business', interval: 'month'|'year', addons: [...] }
+// — never Stripe price ids or seat counts: those used to be trusted verbatim, so
+// a crafted request could check out any price on the account (a cheaper plan's,
+// a coupon'd one) or buy 0 worker seats. A legacy `price_id` is still accepted
+// but only as a lookup key into the configured base-plan prices (same for the
+// legacy add_* flags); every other client-supplied price id / count is ignored.
+const CHECKOUT_ADDONS = ['qbo', 'takeoff', 'planroom', 'storm', 'roof'];
+function resolveCheckoutRequest(body) {
+  const b = body || {};
+  let plan = b.plan;
+  let interval = b.interval === 'year' || b.interval === 'annual' || b.annual === true ? 'year' : (b.interval ? b.interval : null);
+  if (!plan && b.price_id) {
+    for (const [name, byInterval] of Object.entries(BASE_PLAN_PRICE)) {
+      for (const [iv, get] of Object.entries(byInterval)) {
+        if (get() && get() === b.price_id) { plan = name; interval = iv; }
+      }
+    }
+    if (!plan) return { error: 'Unknown plan' };
+  }
+  if (plan !== 'starter' && plan !== 'business') return { error: 'plan must be "starter" or "business"' };
+  if (!interval) interval = 'month';
+  if (interval !== 'month' && interval !== 'year') return { error: 'interval must be "month" or "year"' };
+  const basePrice = BASE_PLAN_PRICE[plan][interval]();
+  if (!basePrice) return { error: 'The plan price is not configured.' };
+  const requested = new Set(Array.isArray(b.addons) ? b.addons : []);
+  for (const a of CHECKOUT_ADDONS) if (b[`add_${a}`]) requested.add(a);
+  const addons = CHECKOUT_ADDONS.filter(a => requested.has(a));
+  return { plan, interval, basePrice, addons };
+}
+
 // POST /stripe/checkout — create Stripe Checkout session
 router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
-  const { price_id, worker_price_id, worker_count, add_qbo, qbo_price_id, add_takeoff, takeoff_price_id, add_planroom, planroom_price_id, add_storm, storm_price_id, add_roof, roof_price_id } = req.body;
-  if (!price_id) return res.status(400).json({ error: 'price_id required' });
+  const resolved = resolveCheckoutRequest(req.body);
+  if (resolved.error) return res.status(400).json({ error: resolved.error });
+  const { plan, interval, basePrice, addons } = resolved;
+  const add_qbo = addons.includes('qbo');
+  const add_takeoff = addons.includes('takeoff');
+  const add_planroom = addons.includes('planroom');
+  const add_storm = addons.includes('storm');
+  const add_roof = addons.includes('roof');
   try {
     const stripe = getStripe();
     const company = await pool.query(
@@ -208,25 +246,26 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
       ? Math.floor(new Date(c.trial_ends_at).getTime() / 1000)
       : undefined;
 
-    // Build line items — base plan + optional per-worker + optional pro add-on
-    const lineItems = [{ price: price_id, quantity: 1 }];
-    if (worker_price_id && worker_count > 0) {
-      lineItems.push({ price: worker_price_id, quantity: parseInt(worker_count, 10) });
+    // Build line items from OUR configured prices — base plan + per-worker seats
+    // (Business, from the LIVE active-worker count, not a client number) + add-ons
+    // at the same interval (Stripe requires one interval per subscription).
+    const lineItems = [{ price: basePrice, quantity: 1 }];
+    if (plan === 'business') {
+      const wc = await pool.query(
+        `SELECT COUNT(*) AS n FROM users WHERE company_id = $1 AND role = 'worker' AND active = true`,
+        [req.user.company_id]
+      );
+      const overage = Math.max(0, (parseInt(wc.rows[0]?.n, 10) || 0) - BUSINESS_INCLUDED_WORKERS);
+      if (overage > 0) {
+        const workerPrice = BUSINESS_WORKER_PRICE[interval]();
+        if (!workerPrice) return res.status(400).json({ error: 'The per-worker price is not configured.' });
+        lineItems.push({ price: workerPrice, quantity: overage });
+      }
     }
-    if (add_qbo && qbo_price_id) {
-      lineItems.push({ price: qbo_price_id, quantity: 1 });
-    }
-    if (add_takeoff && takeoff_price_id) {
-      lineItems.push({ price: takeoff_price_id, quantity: 1 });
-    }
-    if (add_planroom && planroom_price_id) {
-      lineItems.push({ price: planroom_price_id, quantity: 1 });
-    }
-    if (add_storm && storm_price_id) {
-      lineItems.push({ price: storm_price_id, quantity: 1 });
-    }
-    if (add_roof && roof_price_id) {
-      lineItems.push({ price: roof_price_id, quantity: 1 });
+    for (const a of addons) {
+      const priceId = interval === 'year' ? ADDON_PRICES[a].annual() : ADDON_PRICES[a].monthly();
+      if (!priceId) return res.status(400).json({ error: 'Add-on price is not configured.' });
+      lineItems.push({ price: priceId, quantity: 1 });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -617,6 +656,29 @@ router.post('/webhook', async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // De-dupe: Stripe delivers at-least-once (and retries on any non-2xx). Claim the
+  // event id first; a repeat delivery of an event we already processed is a 200
+  // no-op. If processing below FAILS, the claim is released so Stripe's retry
+  // is applied (see the catch).
+  let claimed = false;
+  try {
+    if (event.id) {
+      const claim = await pool.query(
+        'INSERT INTO stripe_webhook_events (event_id, event_type) VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING',
+        [event.id, event.type || null]
+      );
+      if (claim.rowCount === 0) return res.json({ received: true, duplicate: true });
+      claimed = true;
+    }
+  } catch (err) {
+    if (err && err.code === '42P01') {
+      req.log.warn('stripe_webhook_events missing — webhook de-dupe skipped (run migration 0212)');
+    } else {
+      req.log.error({ err, eventId: event.id }, 'stripe webhook de-dupe claim failed');
+      return res.status(500).json({ error: 'webhook handler failed' });
+    }
+  }
+
   try {
     const obj = event.data.object;
     // Stripe events carry no ordering guarantee. `event.created` (epoch seconds)
@@ -648,10 +710,15 @@ router.post('/webhook', async (req, res) => {
           const hasRoof = items.some(i => roofIds.includes(i.price.id));
           const mrrCents = calcMrrCents(items);
           const paidSeats = paidWorkerSeatsFromItems(items, plan);
+          // Status from the SUBSCRIPTION (a trialing / incomplete sub isn't
+          // 'active' just because checkout finished), mapped onto our enum; a
+          // super-admin-comped 'exempt' company is never downgraded by billing.
           await pool.query(
-            `UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, addon_roof = $8, mrr_cents = $9, paid_worker_seats = $12, last_stripe_event_at = $11
+            `UPDATE companies SET stripe_subscription_id = $1,
+                    subscription_status = CASE WHEN subscription_status = 'exempt' THEN 'exempt' ELSE $2 END,
+                    plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, addon_roof = $8, mrr_cents = $9, paid_worker_seats = $12, last_stripe_event_at = $11
               WHERE id = $10 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)`,
-            [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, eventCreated, paidSeats]
+            [obj.subscription, mapStripeStatus(sub.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, eventCreated, paidSeats]
           );
         }
       }
@@ -680,7 +747,8 @@ router.post('/webhook', async (req, res) => {
         // the watermark ever skips the checkout.session.completed event.
         await pool.query(
           `UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, addon_storm = $6, addon_roof = $7, mrr_cents = $8, stripe_subscription_id = $10, paid_worker_seats = $12, last_stripe_event_at = $11
-            WHERE id = $9 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)`,
+            WHERE id = $9 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)
+              AND subscription_status <> 'exempt'`, // superadmin-comped: Stripe never downgrades it
           [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, obj.id, eventCreated, paidSeats]
         );
       }
@@ -689,7 +757,8 @@ router.post('/webhook', async (req, res) => {
       if (companyId) {
         await pool.query(
           `UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false, addon_planroom = false, addon_storm = false, addon_roof = false, last_stripe_event_at = $3
-            WHERE id = $2 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $3)`,
+            WHERE id = $2 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $3)
+              AND subscription_status <> 'exempt'`, // canceling a leftover sub must not cancel a comped company
           ['canceled', companyId, eventCreated]
         );
       }
@@ -702,10 +771,13 @@ router.post('/webhook', async (req, res) => {
           // Only a live-ish subscription can go past_due. Guard so a late-retried
           // payment_failed can't resurrect a company that's already canceled,
           // exempt (superadmin-comped), or trial_expired.
+          // Watermarked like the lifecycle events: a payment_failed delivered
+          // after a newer event (e.g. the retry already succeeded) must not win.
           await pool.query(
-            `UPDATE companies SET subscription_status = 'past_due'
-              WHERE id = $1 AND subscription_status IN ('active','trial','past_due')`,
-            [companyId]
+            `UPDATE companies SET subscription_status = 'past_due', last_stripe_event_at = $2
+              WHERE id = $1 AND subscription_status IN ('active','trial','past_due')
+                AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $2)`,
+            [companyId, eventCreated]
           );
 
           // Email every admin so they can update the payment method before
@@ -732,7 +804,7 @@ router.post('/webhook', async (req, res) => {
                   `
                     <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                       <h2 style="color:#b91c1c;margin-bottom:8px">Payment failed</h2>
-                      <p style="color:#444">Hi ${admin.full_name || ''}, we weren't able to charge your payment method${amountStr ? ` for ${amountStr}` : ''} for <strong>${company.name}</strong>.</p>
+                      <p style="color:#444">Hi ${escapeHtml(admin.full_name || '')}, we weren't able to charge your payment method${amountStr ? ` for ${amountStr}` : ''} for <strong>${escapeHtml(company.name)}</strong>.</p>
                       <p style="color:#444">Stripe will automatically retry, but to avoid losing access, please update your payment method in billing.</p>
                       <a href="${process.env.APP_URL}/administration#billing"
                          style="display:inline-block;background:#1a56db;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:12px">
@@ -760,10 +832,11 @@ router.post('/webhook', async (req, res) => {
         if (companyId) {
           await pool.query(
             `UPDATE companies
-                SET subscription_status = 'active'
+                SET subscription_status = 'active', last_stripe_event_at = $2
               WHERE id = $1
-                AND subscription_status IN ('past_due', 'trial', 'trial_expired')`,
-            [companyId]
+                AND subscription_status IN ('past_due', 'trial', 'trial_expired')
+                AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $2)`,
+            [companyId, eventCreated]
           );
         }
       }
@@ -791,7 +864,7 @@ router.post('/webhook', async (req, res) => {
                 `
                   <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                     <h2 style="color:#1a56db;margin-bottom:8px">Trial ending soon</h2>
-                    <p style="color:#444">Hi ${admin.full_name || ''}, your OpsFloa trial for <strong>${company.name}</strong> ends on <strong>${endsStr}</strong>.</p>
+                    <p style="color:#444">Hi ${escapeHtml(admin.full_name || '')}, your OpsFloa trial for <strong>${escapeHtml(company.name)}</strong> ends on <strong>${escapeHtml(endsStr)}</strong>.</p>
                     <p style="color:#444">To keep your team's access, add a payment method in Administration → Billing before the trial ends.</p>
                     <a href="${process.env.APP_URL}/administration#billing"
                        style="display:inline-block;background:#1a56db;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:12px">
@@ -816,6 +889,10 @@ router.post('/webhook', async (req, res) => {
     // retries of a genuinely deterministic failure; Sentry still surfaces the
     // latter so we can fix the root cause.
     req.log.error({ err, eventType: event?.type, eventId: event?.id }, 'stripe webhook handler failed');
+    if (claimed) {
+      await pool.query('DELETE FROM stripe_webhook_events WHERE event_id = $1', [event.id])
+        .catch(e => req.log.warn({ err: e, eventId: event.id }, 'could not release webhook de-dupe claim'));
+    }
     if (process.env.SENTRY_DSN) {
       const Sentry = require('@sentry/node');
       Sentry.captureException(err, {

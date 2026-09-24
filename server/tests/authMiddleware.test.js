@@ -265,3 +265,53 @@ describe('requirePermission', () => {
     expect(next).toHaveBeenCalled();
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Company deactivation + deleted impersonation target
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('requireAuth — company deactivation', () => {
+  const { checkSessionClaims } = require('../middleware/auth');
+  beforeEach(() => pool.query.mockReset());
+
+  test('403 company_inactive for a normal session of a deactivated company', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ token_version: 1, active: true, _company_id: 'c1', _company_active: false }] });
+    const res = makeRes();
+    const next = jest.fn();
+    await requireAuth(makeReq(sign({ id: 1, role: 'admin', tv: 1, company_id: 'c1' })), res, next);
+    expect(res.statusCode).toBe(403);
+    expect(res.body.code).toBe('company_inactive');
+    expect(next).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls[0][0]).toMatch(/c\.active AS _company_active/);
+  });
+
+  test('an active company passes', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ token_version: 1, active: true, _company_id: 'c1', _company_active: true }] });
+    const next = jest.fn();
+    await requireAuth(makeReq(sign({ id: 1, role: 'admin', tv: 1, company_id: 'c1' })), makeRes(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  test('super-admin impersonation of a deactivated company is still allowed (support access)', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ target_active: true, imp_active: true, imp_role: 'super_admin' }] });
+    const next = jest.fn();
+    await requireAuth(makeReq(sign({ id: 1, role: 'admin', imp: true, imp_by: 9, company_id: 'c1' })), makeRes(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  test('impersonation token whose target user no longer exists (NULL) is rejected', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ target_active: null, imp_active: true, imp_role: 'super_admin' }] });
+    const res = makeRes();
+    const next = jest.fn();
+    await requireAuth(makeReq(sign({ id: 404, role: 'admin', imp: true, imp_by: 9 })), res, next);
+    expect(res.statusCode).toBe(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  test('checkSessionClaims mirrors both rules', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ token_version: 1, active: true, _company_id: 'c1', _company_active: false }] });
+    expect(await checkSessionClaims({ id: 1, tv: 1, company_id: 'c1' })).toMatchObject({ ok: false, status: 403, code: 'company_inactive' });
+    pool.query.mockResolvedValueOnce({ rows: [{ target_active: null, imp_active: true, imp_role: 'super_admin' }] });
+    expect(await checkSessionClaims({ id: 404, imp: true, imp_by: 9 })).toMatchObject({ ok: false, status: 401 });
+  });
+});

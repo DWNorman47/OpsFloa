@@ -239,3 +239,92 @@ describe('DELETE /superadmin/companies/:id', () => {
     expect(res.body.media_files).toBe(4);
   });
 });
+
+describe('DELETE /superadmin/companies/:id — registry-driven purge', () => {
+  test('purges haul_tickets (NO-ACTION created_by) and the other previously-missed tables before users', async () => {
+    pool.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ name: 'Acme', stripe_subscription_id: null, subscription_status: 'trial' }],
+    });
+    pool.__mockClient.query.mockResolvedValue({ rowCount: 0, rows: [] });
+    const res = await request(makeApp())
+      .delete(`/api/superadmin/companies/${COMPANY_ID}`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(res.status).toBe(200);
+    const sqls = pool.__mockClient.query.mock.calls.map(c => c[0]);
+    const idxOf = re => sqls.findIndex(sql => re.test(sql));
+    for (const t of ['haul_tickets', 'payroll_run_checks', 'payroll_runs', 'takeoff_projects', 'live_sessions',
+      'closeout_checklist_template', 'estimate_assemblies', 'worker_rate_history', 'project_prevailing_rate_history',
+      'company_default_rate_history', 'qbo_payroll_journals', 'work_orders', 'invoice_payments', 'direct_messages', 'recordings']) {
+      expect({ t, hit: idxOf(new RegExp(`^DELETE FROM ${t} `)) > -1 }).toEqual({ t, hit: true });
+    }
+    expect(idxOf(/^DELETE FROM haul_tickets\b/)).toBeLessThan(idxOf(/^DELETE FROM users\b/));
+  });
+
+  test('collects the previously-missed R2 urls (recordings, takeoff pdf, logo) and de-dupes', async () => {
+    pool.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ name: 'Acme', stripe_subscription_id: null, subscription_status: 'trial' }],
+    });
+    pool.__mockClient.query.mockImplementation((sql) => {
+      if (/audio_url AS url FROM recordings/.test(sql)) return Promise.resolve({ rows: [{ url: 'https://r2/a.webm' }] });
+      if (/pdf_url AS url FROM takeoff_projects/.test(sql)) return Promise.resolve({ rows: [{ url: 'https://r2/plan.pdf' }] });
+      if (/pdf_url AS url FROM live_sessions/.test(sql)) return Promise.resolve({ rows: [{ url: 'https://r2/plan.pdf' }] }); // same doc
+      if (/logo_url AS url FROM companies/.test(sql)) return Promise.resolve({ rows: [{ url: 'https://r2/logo.png' }] });
+      return Promise.resolve({ rows: [] });
+    });
+    const res = await request(makeApp())
+      .delete(`/api/superadmin/companies/${COMPANY_ID}`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.media_files).toBe(3);
+  });
+});
+
+describe('GET /superadmin/companies/:id/export', () => {
+  test('exports registry tables (incl. child tables via parent) and scrubs secrets everywhere', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: COMPANY_ID, name: 'Acme', qbo_access_token: 'AT', qbo_refresh_token: 'RT' }] });
+    const seen = [];
+    pool.queryLong = jest.fn(async (sql) => {
+      seen.push(sql);
+      if (/FROM users WHERE/.test(sql)) {
+        return { rows: [{ id: 5, username: 'a', password_hash: 'h', mfa_secret: 's', mfa_secret_pending: 'p', reset_token: 't' }] };
+      }
+      return { rows: [] };
+    });
+    const res = await request(makeApp())
+      .get(`/api/superadmin/companies/${COMPANY_ID}/export`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.text);
+    expect(body.company.qbo_access_token).toBeUndefined();
+    expect(body.company.qbo_refresh_token).toBeUndefined();
+    expect(body.tables.users).toEqual([{ id: 5, username: 'a' }]);
+    for (const t of ['invoice_payments', 'work_orders', 'haul_tickets', 'payroll_runs', 'worker_rate_history',
+      'direct_messages', 'recordings', 'daily_checklists', 'invoice_lines', 'estimate_lines']) {
+      expect(body.tables).toHaveProperty(t);
+    }
+    expect(body.tables).not.toHaveProperty('impersonation_log');
+    expect(seen.find(s => /FROM invoice_lines WHERE invoice_id IN \(SELECT id FROM invoices WHERE company_id = \$1\)/.test(s))).toBeTruthy();
+  });
+});
+
+describe('POST /superadmin/companies/:id/impersonate', () => {
+  test("carries the target's real worker scoping and logs req.ip, not X-Forwarded-For", async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, username: 'boss', role: 'admin', full_name: 'Boss', company_id: COMPANY_ID, company_name: 'Acme', worker_access_ids: [3, 4], role_id: 2 }] })
+      .mockResolvedValue({ rows: [] }); // impersonation_log insert
+    const res = await request(makeApp())
+      .post(`/api/superadmin/companies/${COMPANY_ID}/impersonate`)
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .set('X-Forwarded-For', '6.6.6.6')
+      .send({ user_id: 7 });
+    expect(res.status).toBe(200);
+    const claims = jwt.verify(res.body.token, process.env.JWT_SECRET);
+    expect(claims.worker_access_ids).toEqual([3, 4]);
+    expect(claims.imp).toBe(true);
+    await new Promise(r => setImmediate(r));
+    const logCall = pool.query.mock.calls.find(c => /INSERT INTO impersonation_log/.test(c[0]));
+    expect(logCall[1][7]).not.toBe('6.6.6.6');
+  });
+});

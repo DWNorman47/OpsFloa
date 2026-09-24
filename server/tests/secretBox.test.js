@@ -65,3 +65,30 @@ describe('secretBox', () => {
     expect(decrypt(undefined)).toBeUndefined();
   });
 });
+
+describe('secretBox — production key requirement', () => {
+  const ORIGINAL_ENV = process.env.NODE_ENV;
+  afterEach(() => { process.env.NODE_ENV = ORIGINAL_ENV; });
+
+  test('production without a key: MFA enrollment unavailable and a loud log at load', () => {
+    delete process.env.MFA_ENCRYPTION_KEY;
+    process.env.NODE_ENV = 'production';
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { mfaEncryptionAvailable } = load();
+    expect(mfaEncryptionAvailable()).toBe(false);
+    expect(spy).toHaveBeenCalledWith(expect.stringMatching(/MFA_ENCRYPTION_KEY is not set in production/));
+    spy.mockRestore();
+  });
+
+  test('production with a key: available', () => {
+    process.env.MFA_ENCRYPTION_KEY = 'k';
+    process.env.NODE_ENV = 'production';
+    expect(load().mfaEncryptionAvailable()).toBe(true);
+  });
+
+  test('non-production without a key keeps the plaintext fallback (dev/test)', () => {
+    delete process.env.MFA_ENCRYPTION_KEY;
+    process.env.NODE_ENV = 'test';
+    expect(load().mfaEncryptionAvailable()).toBe(true);
+  });
+});

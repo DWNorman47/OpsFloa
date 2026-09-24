@@ -11,6 +11,7 @@ export default function MFASetup() {
   const [secret, setSecret] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
+  const [disableCode, setDisableCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -52,19 +53,22 @@ export default function MFASetup() {
     setError('');
     setLoading(true);
     try {
-      await api.post('/auth/mfa/disable', { password });
+      // The server requires the password AND a current authenticator code.
+      await api.post('/auth/mfa/disable', { password, code: disableCode });
       updateUser({ mfa_enabled: false });
       setStep('idle');
       setPassword('');
+      setDisableCode('');
     } catch (err) {
       setError(err.response?.data?.error || t.mfaFailedDisable);
       setPassword('');
+      setDisableCode('');
     } finally {
       setLoading(false);
     }
   };
 
-  const cancel = () => { setStep('idle'); setCode(''); setPassword(''); setError(''); };
+  const cancel = () => { setStep('idle'); setCode(''); setPassword(''); setDisableCode(''); setError(''); };
 
   return (
     <div style={s.card}>
@@ -117,7 +121,7 @@ export default function MFASetup() {
 
       {step === 'disable' && (
         <div style={s.setupBox}>
-          <p style={s.hint}>{t.mfaDisableHint}</p>
+          <p style={s.hint}>{t.mfaDisableHint} {t.mfaDisableCodeHint}</p>
           <form onSubmit={handleDisable} style={s.form}>
             <input
               style={s.codeInput}
@@ -128,10 +132,21 @@ export default function MFASetup() {
               autoFocus
               required
             />
+            <input
+              style={s.codeInput}
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder={t.mfaCodePlaceholder}
+              value={disableCode}
+              onChange={e => setDisableCode(e.target.value.replace(/\D/g, ''))}
+              required
+            />
             {error && <p style={s.error}>{error}</p>}
             <div style={s.btnRow}>
               <button type="button" style={s.cancelBtn} onClick={cancel}>{t.cancel}</button>
-              <button style={{ ...s.confirmBtn, background: '#dc2626', ...(loading || !password ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} type="submit" disabled={loading || !password}>
+              <button style={{ ...s.confirmBtn, background: '#dc2626', ...(loading || !password || disableCode.length !== 6 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} type="submit" disabled={loading || !password || disableCode.length !== 6}>
                 {loading ? t.mfaDisabling : t.mfaDisableMFA}
               </button>
             </div>

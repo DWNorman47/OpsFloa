@@ -28,6 +28,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sessionExpired = searchParams.get('session') === 'expired';
+  const companyInactive = searchParams.get('session') === 'inactive';
   const inviteCompany = searchParams.get('company') || '';
   const savedCompanies = getSavedCompanies();
   const [selected, setSelected] = useState(inviteCompany ? OTHER : (savedCompanies[0] || OTHER));
@@ -223,6 +224,9 @@ export default function Login() {
         <p style={styles.subtitle}>{t.loginSubtitle}</p>
         {sessionExpired && (
           <p style={styles.sessionMsg}>{t.loginSessionExpired}</p>
+        )}
+        {companyInactive && (
+          <p style={styles.sessionMsg} role="alert">{t.loginCompanyInactive}</p>
         )}
         <form onSubmit={handleSubmit} style={styles.form}>
           <label htmlFor="company" style={styles.label}>{t.loginCompanyLabel}</label>
