@@ -12,10 +12,16 @@ export const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 export const NETWORK_TIMEOUT_MS = 15000;
 
 // Upload budget for a big body: assume a poor-but-working jobsite uplink of ~16 KB/s. A field
-// report with 10 base64 photos (~4 MB) gets ~4.5 min instead of 15 s, which used to abort every
+// report with 10 base64 photos (~4 MB) gets minutes instead of 15 s, which used to abort every
 // attempt mid-upload, forever.
 export const MIN_UPLINK_BYTES_PER_SEC = 16 * 1024;
-export const MAX_NETWORK_TIMEOUT_MS = 10 * 60 * 1000;
+// Capped well under Chrome's ~5-minute limit on a service-worker event (fetch / message / sync):
+// a longer timeout never fires — the browser kills the worker first, the attempt is never
+// recorded, and the same megabytes re-upload on every pass forever.
+export const MAX_NETWORK_TIMEOUT_MS = 4 * 60 * 1000;
+// Wall-clock budget for one replay pass (one SW event). A pass stops starting new requests once
+// what's left of it can't fit even a small one; leftover items wait for the next pass.
+export const REPLAY_PASS_BUDGET_MS = 4 * 60 * 1000 + 20 * 1000;
 // Bodies at/over this size are "large": a timeout on one counts toward backoff / the poison cap
 // (a small body timing out means the device is effectively offline — that is not counted).
 export const LARGE_QUEUE_BODY_CHARS = 256 * 1024;
@@ -31,6 +37,29 @@ export function requestTimeoutMs(bodyChars = 0) {
 /** True when a fetch rejection was our own timeout abort (vs. a plain network failure). */
 export function isAbortTimeout(err) {
   return err?.name === 'TimeoutError' || err?.name === 'AbortError';
+}
+
+/**
+ * Fetch timeout for one replay inside a pass that started `elapsedMs` ago: the size-scaled timeout,
+ * clipped to what's left of REPLAY_PASS_BUDGET_MS. Returns 0 when not even a small request fits
+ * (the pass should stop and leave the item for the next one).
+ */
+export function replayTimeoutMs(bodyChars = 0, elapsedMs = 0) {
+  const remaining = REPLAY_PASS_BUDGET_MS - Math.max(0, Number(elapsedMs) || 0);
+  if (remaining < NETWORK_TIMEOUT_MS) return 0;
+  return Math.min(requestTimeoutMs(bodyChars), remaining);
+}
+
+/**
+ * The item with this attempt recorded BEFORE its fetch starts (large bodies only — a small request
+ * can't outlive the SW event). If the browser kills the worker mid-upload, the attempt + backoff
+ * are already in IndexedDB, so the item still moves toward the poison cap instead of re-uploading
+ * forever. Returns null when no pre-record is needed. Post-fetch bookkeeping keeps using the
+ * ORIGINAL item as its base, so a completed attempt is never counted twice.
+ */
+export function withAttemptStarted(item, { bodyChars = 0, now = Date.now() } = {}) {
+  if ((Number(bodyChars) || 0) < LARGE_QUEUE_BODY_CHARS) return null;
+  return withFailedAttempt(item, { status: item?.last_status ?? null, now, countAttempt: true });
 }
 
 /** Whether a failed replay fetch should count toward backoff / the poison cap. */
@@ -91,7 +120,8 @@ const BACKOFF_MAX_MS = 10 * 60 * 1000;
 //   'done'  — the server has it (2xx, or 409 = already applied, e.g. "Already clocked in").
 //   'retry' — transient: 5xx (Render cold start / deploy), 429, 408, and anything unexpected
 //             (3xx / opaque). Keep the item and try again later.
-//   'auth'  — 401: keep the item and pause this user's replay until they log in again.
+//   'auth'  — 401, or 403 `company_inactive` (the company was deactivated — it may be restored):
+//             keep the item and pause this user's replay until they log in again.
 //   'drop'  — permanent client error (400/403/404/410/413/422 and other 4xx): the request can
 //             never succeed, so remove it and report it as a failure.
 // `code` is the JSON error code, when known: a 409 `project_frozen` (job closed) is permanent,
@@ -99,6 +129,7 @@ const BACKOFF_MAX_MS = 10 * 60 * 1000;
 export function classifyReplayStatus(status, code) {
   if (status >= 200 && status < 300) return 'done';
   if (status === 401) return 'auth';
+  if (status === 403 && code === 'company_inactive') return 'auth';
   if (status === 409) return code === 'project_frozen' ? 'drop' : 'done';
   if (status === 408 || status === 429) return 'retry';
   if (status >= 400 && status < 500) return 'drop';

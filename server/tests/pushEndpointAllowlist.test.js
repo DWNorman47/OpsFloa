@@ -72,7 +72,7 @@ test('POST /subscribe rejects an arbitrary endpoint without touching the DB', as
 
 test('sender skips and prunes a stored disallowed endpoint, still sends to good ones', async () => {
   pool.query.mockImplementation(async (sql) => {
-    if (/SELECT \* FROM push_subscriptions/.test(sql)) {
+    if (/SELECT ps\.\* FROM push_subscriptions/.test(sql)) {
       return { rows: [
         { id: 1, user_id: 5, endpoint: 'https://10.0.0.5/admin', p256dh: 'k', auth: 'a' },
         { id: 2, user_id: 5, endpoint: GOOD[0], p256dh: 'k', auth: 'a' },

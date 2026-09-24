@@ -6,7 +6,35 @@ import { langToLocale } from '../utils';
 import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
-import { safeLocal } from '../utils/safeStorage';
+import { syncLegacyAdminReadKey } from '../chatReadSync';
+// Server page size (server/routes/chat.js PAGE_SIZE): a thread fetch returns the NEWEST page;
+// `?before=<oldest id>` pages back. (DMs report `has_more` themselves.)
+const CHAT_PAGE = 100;
+
+// A poll returns the newest page — keep any older messages the user already paged in.
+function mergeNewest(prev, page) {
+  if (!page.length) return page;
+  const minId = page[0].id;
+  return [...prev.filter(m => m.id < minId), ...page];
+}
+function prependOlder(prev, older) {
+  const have = new Set(prev.map(m => m.id));
+  return [...older.filter(m => !have.has(m.id)), ...prev];
+}
+
+// After new messages: stick to the bottom — unless older ones were just prepended, in which
+// case keep the reader where they were (same distance from the bottom as before).
+function scrollThread(bottomRef, keepScrollRef) {
+  const container = bottomRef.current?.parentElement;
+  if (!container) return;
+  if (keepScrollRef.current != null) {
+    container.scrollTop = container.scrollHeight - keepScrollRef.current;
+    keepScrollRef.current = null;
+    return;
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
 function formatTime(str, locale = 'en-US') {
   return new Date(str).toLocaleString(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
@@ -25,8 +53,12 @@ function WorkerChat({ settings, onRead }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
+  const olderLoadedRef = useRef(false);
+  const keepScrollRef = useRef(null);
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -41,9 +73,43 @@ function WorkerChat({ settings, onRead }) {
     const stale = () => activeRef.current !== cur;
     const done = () => { if (!stale()) setLoading(false); };
     if (cur === 'admins') {
-      return api.get('/chat').then(r => { if (stale()) return; setMessages(r.data); onRead?.(); }).catch(silentError('companychat')).finally(done);
+      return api.get('/chat').then(r => {
+        if (stale()) return;
+        const page = r.data || [];
+        setMessages(prev => mergeNewest(prev, page));
+        if (!olderLoadedRef.current) setHasOlder(page.length >= CHAT_PAGE);
+        onRead?.();
+      }).catch(silentError('companychat')).finally(done);
     }
-    return api.get(`/dm/${cur}`).then(r => { if (!stale()) setMessages(r.data?.messages || []); }).catch(silentError('companychat')).finally(done);
+    return api.get(`/dm/${cur}`).then(r => {
+      if (stale()) return;
+      setMessages(prev => mergeNewest(prev, r.data?.messages || []));
+      if (!olderLoadedRef.current) setHasOlder(!!r.data?.has_more);
+    }).catch(silentError('companychat')).finally(done);
+  };
+
+  const loadOlder = async (container) => {
+    const target = activeRef.current;
+    const oldest = messages[0]?.id;
+    if (!oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      let older; let more;
+      if (target === 'admins') {
+        const r = await api.get('/chat', { params: { before: oldest } });
+        older = r.data || []; more = older.length >= CHAT_PAGE;
+      } else {
+        const r = await api.get(`/dm/${target}`, { params: { before: oldest } });
+        older = r.data?.messages || []; more = !!r.data?.has_more;
+      }
+      if (activeRef.current !== target) return;
+      olderLoadedRef.current = true;
+      keepScrollRef.current = container ? container.scrollHeight - container.scrollTop : null;
+      setMessages(prev => prependOlder(prev, older));
+      setHasOlder(more);
+    } catch (err) {
+      silentError('companychat')(err);
+    } finally { setLoadingOlder(false); }
   };
 
   useEffect(() => { loadContacts(); const iv = setInterval(loadContacts, 60000); return () => clearInterval(iv); }, []);
@@ -52,6 +118,8 @@ function WorkerChat({ settings, onRead }) {
   useEffect(() => {
     setLoading(true);
     setMessages([]); // don't show the previous thread's messages while this one loads
+    setHasOlder(false);
+    olderLoadedRef.current = false;
     clearInterval(pollRef.current);
     load();
     pollRef.current = setInterval(load, 30000);
@@ -60,12 +128,7 @@ function WorkerChat({ settings, onRead }) {
     return () => { clearInterval(pollRef.current); document.removeEventListener('visibilitychange', onVisible); };
   }, [active]);
 
-  useEffect(() => {
-    if (bottomRef.current) {
-      const container = bottomRef.current.parentElement;
-      if (container) container.scrollTop = container.scrollHeight;
-    }
-  }, [messages]);
+  useEffect(() => { scrollThread(bottomRef, keepScrollRef); }, [messages]);
 
   const send = async e => {
     e.preventDefault();
@@ -102,7 +165,8 @@ function WorkerChat({ settings, onRead }) {
           </select>
         </div>
       )}
-      <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale} />
+      <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale}
+        hasOlder={hasOlder} loadingOlder={loadingOlder} onLoadOlder={loadOlder} />
       <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} />
     </div>
   );
@@ -124,20 +188,26 @@ function AdminChat({ workers, settings }) {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [unreadByWorker, setUnreadByWorker] = useState({});
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
+  const olderLoadedRef = useRef(false);
+  const keepScrollRef = useRef(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
+  // Unread is server-side (per-admin read markers): `unread` counts the WORKER's messages this
+  // admin hasn't seen — their own / other admins' replies never count, on any device.
   const loadThreads = () => {
     if (document.visibilityState !== 'visible' || !navigator.onLine) return Promise.resolve();
     return api.get('/chat').then(r => {
-      setThreads(r.data);
+      const list = r.data || [];
+      setThreads(list);
       const unread = {};
-      r.data.forEach(thread => {
-        const key = `chatLastRead_admin_${thread.worker_id}`;
-        const lastRead = safeLocal.getItem(key);
-        if (!lastRead || new Date(thread.last_at) > new Date(lastRead)) unread[thread.worker_id] = true;
+      list.forEach(thread => {
+        if (thread.unread > 0) unread[thread.worker_id] = true;
+        syncLegacyAdminReadKey(thread);
       });
       setUnreadByWorker(unread);
     }).catch(silentError('companychat'));
@@ -156,6 +226,8 @@ function AdminChat({ workers, settings }) {
   // Load the selected thread (worker company_chat or a DM) + poll it.
   useEffect(() => {
     setMessages([]); // never show the previous thread's messages under the new one
+    setHasOlder(false);
+    olderLoadedRef.current = false;
     if (!selected) return undefined;
     setLoading(true);
     clearInterval(pollRef.current);
@@ -168,14 +240,23 @@ function AdminChat({ workers, settings }) {
     const fetch = () => {
       if (document.visibilityState !== 'visible' || !navigator.onLine) { setLoading(false); return Promise.resolve(); }
       if (kind === 'worker') {
-        return api.get(`/chat?worker_id=${otherId}`).then(r => {
+        // The newest-page fetch marks the thread read for this admin server-side.
+        return api.get('/chat', { params: { worker_id: otherId } }).then(r => {
           if (cancelled) return;
-          setMessages(r.data);
-          safeLocal.setItem(`chatLastRead_admin_${otherId}`, new Date().toISOString());
+          const page = r.data || [];
+          setMessages(prev => mergeNewest(prev, page));
+          if (!olderLoadedRef.current) setHasOlder(page.length >= CHAT_PAGE);
+          const last = page[page.length - 1];
+          if (last) syncLegacyAdminReadKey({ worker_id: otherId, unread: 0, last_at: last.created_at });
           setUnreadByWorker(prev => { const n = { ...prev }; delete n[otherId]; return n; });
         }).catch(silentError('companychat')).finally(done);
       }
-      return api.get(`/dm/${otherId}`).then(r => { if (cancelled) return; setMessages(r.data?.messages || []); loadContacts(); }).catch(silentError('companychat')).finally(done);
+      return api.get(`/dm/${otherId}`).then(r => {
+        if (cancelled) return;
+        setMessages(prev => mergeNewest(prev, r.data?.messages || []));
+        if (!olderLoadedRef.current) setHasOlder(!!r.data?.has_more);
+        loadContacts();
+      }).catch(silentError('companychat')).finally(done);
     };
     fetch();
     pollRef.current = setInterval(fetch, 30000);
@@ -184,12 +265,32 @@ function AdminChat({ workers, settings }) {
     return () => { cancelled = true; clearInterval(pollRef.current); document.removeEventListener('visibilitychange', fetch); window.removeEventListener('online', fetch); };
   }, [selected]);
 
-  useEffect(() => {
-    if (bottomRef.current) {
-      const container = bottomRef.current.parentElement;
-      if (container) container.scrollTop = container.scrollHeight;
-    }
-  }, [messages]);
+  useEffect(() => { scrollThread(bottomRef, keepScrollRef); }, [messages]);
+
+  const loadOlder = async (container) => {
+    const target = selectedRef.current;
+    const oldest = messages[0]?.id;
+    if (!target || !oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const otherId = target.slice(2);
+      let older; let more;
+      if (target.startsWith('d:')) {
+        const r = await api.get(`/dm/${otherId}`, { params: { before: oldest } });
+        older = r.data?.messages || []; more = !!r.data?.has_more;
+      } else {
+        const r = await api.get('/chat', { params: { worker_id: otherId, before: oldest } });
+        older = r.data || []; more = older.length >= CHAT_PAGE;
+      }
+      if (selectedRef.current !== target) return;
+      olderLoadedRef.current = true;
+      keepScrollRef.current = container ? container.scrollHeight - container.scrollTop : null;
+      setMessages(prev => prependOlder(prev, older));
+      setHasOlder(more);
+    } catch (err) {
+      silentError('companychat')(err);
+    } finally { setLoadingOlder(false); }
+  };
 
   const send = async e => {
     e.preventDefault();
@@ -241,7 +342,8 @@ function AdminChat({ workers, settings }) {
       </div>
       {selected ? (
         <>
-          <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale} />
+          <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale}
+            hasOlder={hasOlder} loadingOlder={loadingOlder} onLoadOlder={loadOlder} />
           <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} />
         </>
       ) : (
@@ -251,9 +353,19 @@ function AdminChat({ workers, settings }) {
   );
 }
 
-function Thread({ messages, loading, currentUserId, bottomRef, t, locale }) {
+function Thread({ messages, loading, currentUserId, bottomRef, t, locale, hasOlder, loadingOlder, onLoadOlder }) {
   return (
     <div style={styles.thread}>
+      {!loading && hasOlder && messages.length > 0 && (
+        <button
+          type="button"
+          style={styles.olderBtn}
+          disabled={loadingOlder}
+          onClick={e => onLoadOlder?.(e.currentTarget.parentElement)}
+        >
+          {loadingOlder ? t.loading : t.chatLoadOlder}
+        </button>
+      )}
       {loading ? (
         <p style={styles.hintCenter}>{t.loading}</p>
       ) : messages.length === 0 ? (
@@ -316,6 +428,7 @@ const styles = {
   pickerSelect: { width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13, color: '#374151' },
   thread: { flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 200, maxHeight: 340, background: '#fafafa' },
   hint: { padding: '16px', color: '#6b7280', fontSize: 13 },
+  olderBtn: { alignSelf: 'center', background: '#fff', border: '1px solid #d1d5db', borderRadius: 16, padding: '6px 14px', minHeight: 32, fontSize: 12, fontWeight: 600, color: '#374151', cursor: 'pointer' },
   hintCenter: { color: '#6b7280', fontSize: 13, textAlign: 'center', margin: 'auto' },
   bubbleWrap: { display: 'flex' },
   bubble: { maxWidth: '80%', padding: '8px 12px', borderRadius: 10, fontSize: 13 },

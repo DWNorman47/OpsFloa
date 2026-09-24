@@ -12,9 +12,11 @@ import {
   newIdempotencyKey,
   parseQueueableBody,
   replayLane,
+  replayTimeoutMs,
   requestTimeoutMs,
   timeoutSignal,
   tokenSig,
+  withAttemptStarted,
   withFailedAttempt,
 } from './offlineQueuePolicy';
 
@@ -259,24 +261,30 @@ async function collectClientAuth() {
 // A manual Retry that arrives while an AUTOMATIC pass is running must not be swallowed (the auto
 // pass skips the backing-off / stuck items the user explicitly asked to retry), so it queues ONE
 // follow-up manual pass that starts as soon as the current pass finishes.
+// Same for a SCOPE the running pass doesn't cover: a pass for user A (shared phone) skips user
+// B's items, so B's request queues one follow-up pass for B instead of joining A's and waiting for
+// the next automatic tick. A scope-less pass (Background Sync) covers every open page's scope.
 let replayInFlight = null;
-let inFlightManual = false;
-let manualFollowUp = null;
+let inFlightOpts = { manual: false, scope: null };
+const replayFollowUps = new Map(); // `${manual}|${scope}` → promise of the follow-up pass
 function replayQueue(opts = {}) {
+  const manual = !!opts.manual;
+  const scope = opts.scope || null;
   if (replayInFlight) {
-    if (opts.manual && !inFlightManual) {
-      if (!manualFollowUp) {
-        manualFollowUp = replayInFlight.catch(() => {}).then(() => {
-          manualFollowUp = null;
-          return replayQueue(opts);
-        });
-      }
-      return manualFollowUp;
+    const covered = (!manual || inFlightOpts.manual)
+      && (inFlightOpts.scope == null || inFlightOpts.scope === scope);
+    if (covered) return replayInFlight;
+    const key = `${manual ? 'm' : 'a'}|${scope || ''}`;
+    if (!replayFollowUps.has(key)) {
+      replayFollowUps.set(key, replayInFlight.catch(() => {}).then(() => {
+        replayFollowUps.delete(key);
+        return replayQueue({ manual, scope });
+      }));
     }
-    return replayInFlight;
+    return replayFollowUps.get(key);
   }
-  inFlightManual = !!opts.manual;
-  replayInFlight = doReplayQueue(opts).finally(() => { replayInFlight = null; });
+  inFlightOpts = { manual, scope };
+  replayInFlight = doReplayQueue({ manual, scope }).finally(() => { replayInFlight = null; });
   return replayInFlight;
 }
 
@@ -304,8 +312,10 @@ async function errorCode(res) {
 async function doReplayQueue({ manual = false, scope: requestedScope = null } = {}) {
   const items = (await getAllQueued()).sort((a, b) => a.id - b.id);
   const now = Date.now();
+  const passStart = now;
   let replayed = 0;
   let authFailed = false;
+  let companyInactive = false;
   let partialFailure = false;
   let retryPending = false;
   let newlyStuck = 0;
@@ -358,6 +368,18 @@ async function doReplayQueue({ manual = false, scope: requestedScope = null } = 
         await updateQueued(current);
       }
       const bodyText = JSON.stringify(current.body);
+      // One pass is one SW event, which the browser kills after ~5 min. Out of budget → leave
+      // the rest for the next pass rather than start an upload that can't finish.
+      const timeoutMs = replayTimeoutMs(bodyText.length, Date.now() - passStart);
+      if (!timeoutMs) {
+        retryPending = true;
+        break;
+      }
+      // Large upload: record the attempt (+ backoff) BEFORE sending, so a worker killed
+      // mid-upload still counts it. Everything below keeps `current` as the base, so a finished
+      // attempt is counted exactly once.
+      const started = withAttemptStarted(current, { bodyChars: bodyText.length, now });
+      if (started) await updateQueued(started);
       let res;
       try {
         res = await fetch(current.url, {
@@ -368,7 +390,7 @@ async function doReplayQueue({ manual = false, scope: requestedScope = null } = 
             ...(auth ? { Authorization: auth } : {}),
           },
           body: bodyText,
-          signal: timeoutSignal(requestTimeoutMs(bodyText.length)),
+          signal: timeoutSignal(timeoutMs),
         });
       } catch (err) {
         // Still offline → keep it, not counted. A TIMEOUT on a large body (slow uplink /
@@ -382,7 +404,10 @@ async function doReplayQueue({ manual = false, scope: requestedScope = null } = 
         blockedLanes.add(laneKey);
         continue;
       }
-      const outcome = classifyReplayStatus(res.status, res.status === 409 ? await errorCode(res) : null);
+      const outcome = classifyReplayStatus(
+        res.status,
+        res.status === 409 || res.status === 403 ? await errorCode(res) : null,
+      );
       if (outcome === 'done') {
         await dequeue(current.id);
         replayed++;
@@ -390,11 +415,13 @@ async function doReplayQueue({ manual = false, scope: requestedScope = null } = 
         await dequeue(current.id);
         partialFailure = true;
       } else if (outcome === 'auth') {
-        // Even the freshest token we have was rejected. KEEP the request (dropping it lost
+        // Even the freshest token we have was rejected (401), or the company is deactivated
+        // (403 company_inactive — it may be restored). KEEP the request (dropping it lost
         // clock-outs), remember WHICH token failed, and stop this user's pass until they
         // re-authenticate. Reported once: later passes with the same token skip silently.
-        await updateQueued({ ...current, auth_failed_sig: tokenSig(auth), last_status: 401 });
+        await updateQueued({ ...current, auth_failed_sig: tokenSig(auth), last_status: res.status });
         authFailed = true;
+        if (res.status === 403) companyInactive = true;
         blockedScopes.add(scopeKey);
       } else {
         const next = withFailedAttempt(current, { status: res.status, now });
@@ -412,7 +439,7 @@ async function doReplayQueue({ manual = false, scope: requestedScope = null } = 
   await broadcastQueueCount();
   const clients = await self.clients.matchAll();
   if (authFailed) {
-    clients.forEach(c => c.postMessage({ type: 'REPLAY_AUTH_FAILED' }));
+    clients.forEach(c => c.postMessage({ type: 'REPLAY_AUTH_FAILED', reason: companyInactive ? 'company_inactive' : 'unauthorized' }));
   }
   if (partialFailure) {
     clients.forEach(c => c.postMessage({ type: 'REPLAY_PARTIAL_FAILURE' }));
@@ -453,8 +480,13 @@ self.addEventListener('activate', event => {
 // ── Push notifications ─────────────────────────────────────────────────────────
 
 self.addEventListener('push', event => {
-  const data = event.data?.json() ?? {};
-  const isMessage = data.type === 'message';
+  let data = {};
+  try { data = event.data?.json() ?? {}; } catch { data = { body: event.data?.text?.() || '' }; }
+  const isMessage = data.type === 'message' || data.type === 'direct_message';
+  // One notification per conversation (dm-<from_user_id> / chat-<worker_id>, set by the server):
+  // a new message replaces that thread's previous one and re-alerts (renotify) instead of
+  // stacking, and different threads stay separate.
+  const tag = typeof data.tag === 'string' && data.tag ? data.tag : (isMessage ? 'chat' : undefined);
   event.waitUntil(
     self.registration.showNotification(data.title || 'OpsFloa', {
       body: data.body || '',
@@ -463,7 +495,8 @@ self.addEventListener('push', event => {
       // Web push can't set a custom sound file reliably — rely on the OS
       // notification sound plus a vibration pattern for message pushes.
       // tag+renotify groups a thread but still re-alerts on each new message.
-      ...(isMessage ? { vibrate: [200, 100, 200], tag: 'chat', renotify: true } : {}),
+      ...(isMessage ? { vibrate: [200, 100, 200] } : {}),
+      ...(tag ? { tag, renotify: true } : {}),
       data: { url: data.url || '/' },
     })
   );

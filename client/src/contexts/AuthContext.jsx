@@ -195,6 +195,12 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
+    // Stop this device's push notifications for the user logging out (a shared phone must not
+    // keep getting their chat / shift pushes). The token is captured before the stores are
+    // cleared below; the request + unsubscribe finish in the background. Skipped for an
+    // impersonation tab (sessionStorage token): the browser's push subscription belongs to
+    // the real signed-in account, not the impersonated one.
+    if (!safeSession.getItem('tc_token')) removePushSubscription(safeLocal.getItem('tc_token'));
     clearCache();
     clearPendingSyncs();
     clearOfflineQueue();
@@ -235,3 +241,23 @@ export function AuthProvider({ children }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
+
+// Remove this browser's push subscription: server row first (authenticated with the
+// outgoing user's token), then the browser subscription itself. Best-effort — offline or
+// failing, the next user's subscribe takes the endpoint over (server/routes/push.js) and a
+// dead endpoint is pruned on its first 404/410.
+async function removePushSubscription(token) {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker?.getRegistration) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager?.getSubscription();
+    if (!sub) return;
+    if (token) {
+      await api.delete('/push/subscribe', {
+        data: { endpoint: sub.endpoint },
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+    await sub.unsubscribe().catch(() => {});
+  } catch { /* push unsupported / blocked — nothing to remove */ }
+}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { fmtHours } from '../utils';
 import EntryPanel from './EntryPanel';
 import api from '../api';
@@ -38,6 +38,26 @@ const netHours = entryNetHours;
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Under this width the 7-column week grid can't fit without horizontal scrolling, so the
+// days stack into a vertical list instead.
+const STACK_QUERY = '(max-width: 480px)';
+function useStacked() {
+  const mq = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(STACK_QUERY) : null;
+  const [stacked, setStacked] = useState(() => !!mq?.matches);
+  useEffect(() => {
+    if (!mq) return undefined;
+    const onChange = () => setStacked(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else mq.addListener?.(onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+      else mq.removeListener?.(onChange);
+    };
+  }, []);
+  return stacked;
+}
+
 export default function TimesheetView({
   entries,
   language,
@@ -53,6 +73,11 @@ export default function TimesheetView({
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [copying, setCopying] = useState(false);
   const [copyMsg, setCopyMsg] = useState('');
+  const stacked = useStacked();
+  const panelRef = useRef(null);
+  const closeBtnRef = useRef(null);
+  const pillRefs = useRef(new Map());
+  const returnFocusIdRef = useRef(null);
   const weekStart = selectedWeekStart || internalWeekStart;
   const setWeekStart = updater => {
     const next = typeof updater === 'function' ? updater(weekStart) : updater;
@@ -95,6 +120,22 @@ export default function TimesheetView({
     return map;
   }, [entries]);
 
+  // Opening an entry: bring its edit panel into view (it renders below the whole week grid,
+  // often off-screen on a phone) and move focus to its close button. Closing it returns focus
+  // to the entry that opened it.
+  const selectedId = selectedEntry?.id ?? null;
+  useEffect(() => {
+    if (selectedId == null) {
+      const back = returnFocusIdRef.current != null ? pillRefs.current.get(returnFocusIdRef.current) : null;
+      returnFocusIdRef.current = null;
+      back?.focus?.();
+      return;
+    }
+    returnFocusIdRef.current = selectedId;
+    panelRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    closeBtnRef.current?.focus?.({ preventScroll: true });
+  }, [selectedId]);
+
   const weekLabel = `${formatMonthDay(days[0], locale)} \u2013 ${formatMonthDay(days[6], locale)}, ${days[6].getFullYear()}`;
 
   const weekTotalHours = useMemo(() => days.reduce((sum, d) => {
@@ -115,7 +156,7 @@ export default function TimesheetView({
           <span style={styles.weekLabel}>{weekLabel}</span>
           <button style={styles.navBtn} aria-label={t.nextWeekLabel} onClick={nextWeek}>›</button>
         </div>
-        <div style={styles.headerRight}>
+        <div style={{ ...styles.headerRight, flexWrap: 'wrap' }}>
           <span style={styles.weekTotal}>{fmtHours(weekTotalHours)}</span>
           {weekTotalMiles > 0 && <span style={styles.weekMiles}>🚗 {weekTotalMiles.toFixed(1)} mi</span>}
           <button style={styles.todayBtn} onClick={goToday}>{t.todayBtn}</button>
@@ -126,7 +167,7 @@ export default function TimesheetView({
         </div>
       </div>
 
-      <div style={styles.grid}>
+      <div style={stacked ? styles.gridStacked : styles.grid}>
         {days.map(day => {
           const key = toDateKey(day);
           const dayEntries = byDate[key] || [];
@@ -140,11 +181,12 @@ export default function TimesheetView({
               key={key}
               style={{
                 ...styles.dayCol,
+                ...(stacked ? styles.dayColStacked : {}),
                 background: isToday ? '#eff6ff' : isWeekend ? '#fafafa' : '#fff',
                 borderTop: isToday ? '3px solid var(--ops-page-accent)' : '3px solid transparent',
               }}
             >
-              <div style={styles.dayHeader}>
+              <div style={stacked ? styles.dayHeaderStacked : styles.dayHeader}>
                 <span style={{ ...styles.dayName, color: isToday ? 'var(--ops-page-accent)' : '#6b7280' }}>
                   {formatWeekDay(day, locale)}
                 </span>
@@ -155,16 +197,18 @@ export default function TimesheetView({
 
               <div style={styles.entriesArea}>
                 {dayEntries.length === 0 ? (
-                  <div style={styles.emptyDay} />
+                  <div style={stacked ? styles.emptyDayStacked : styles.emptyDay} />
                 ) : (
                   dayEntries.map(e => (
-                    <div
+                    <button
+                      type="button"
                       key={e.id}
+                      ref={el => { if (el) pillRefs.current.set(e.id, el); else pillRefs.current.delete(e.id); }}
+                      aria-expanded={selectedEntry?.id === e.id}
                       style={{
                         ...styles.entryPill,
                         borderLeft: `3px solid ${e.wage_type === 'prevailing' ? '#d97706' : 'var(--ops-page-accent)'}`,
-                        cursor: 'pointer',
-                        outline: selectedEntry?.id === e.id ? '2px solid var(--ops-page-accent)' : 'none',
+                        outline: selectedEntry?.id === e.id ? '2px solid var(--ops-page-accent)' : undefined,
                       }}
                       onClick={() => setSelectedEntry(selectedEntry?.id === e.id ? null : e)}
                     >
@@ -173,7 +217,7 @@ export default function TimesheetView({
                       <div style={styles.pillHours}>{fmtHours(netHours(e))}</div>
                       {e.break_minutes > 0 && <div style={styles.pillBreak}>☕ {e.break_minutes}m</div>}
                       {e.mileage > 0 && <div style={styles.pillMileage}>🚗 {parseFloat(e.mileage).toFixed(1)} mi</div>}
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -190,10 +234,10 @@ export default function TimesheetView({
       </div>
 
       {selectedEntry && (
-        <div style={styles.selectedPanel}>
+        <div ref={panelRef} style={styles.selectedPanel}>
           <div style={styles.selectedHeader}>
             <span style={styles.selectedTitle}>{selectedEntry.project_name} — {formatTime(selectedEntry.start_time)}–{formatTime(selectedEntry.end_time)}</span>
-            <button style={styles.closeBtn} aria-label={t.labelModalClose} onClick={() => setSelectedEntry(null)}>✕</button>
+            <button ref={closeBtnRef} type="button" style={styles.closeBtn} aria-label={t.labelModalClose} onClick={() => setSelectedEntry(null)}>✕</button>
           </div>
           <EntryPanel
             entry={selectedEntry}
@@ -219,13 +263,18 @@ const styles = {
   weekMiles: { fontSize: 13, color: '#6b7280' },
   todayBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', color: '#374151' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(80px, 1fr))', gap: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' },
+  gridStacked: { display: 'flex', flexDirection: 'column', gap: 4 },
+  dayColStacked: { minHeight: 0, minWidth: 0, padding: '8px 10px' },
+  dayHeaderStacked: { display: 'flex', flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 4 },
+  emptyDayStacked: { display: 'none' },
   dayCol: { borderRadius: 8, padding: '8px 6px', minHeight: 120, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 80 },
   dayHeader: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 6 },
   dayName: { fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' },
   dayNum: { fontSize: 18, lineHeight: 1.2 },
   entriesArea: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
   emptyDay: { flex: 1 },
-  entryPill: { background: '#f8faff', borderRadius: 5, padding: '5px 6px', fontSize: 11 },
+  // A real <button> (keyboard + screen reader), reset to look like the old pill.
+  entryPill: { display: 'block', width: '100%', textAlign: 'left', font: 'inherit', background: '#f8faff', border: 'none', borderRadius: 5, padding: '5px 6px', fontSize: 11, cursor: 'pointer', minWidth: 0 },
   pillProject: { fontWeight: 700, color: '#1e3a5f', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   pillTimes: { color: '#6b7280', fontSize: 10 },
   pillHours: { fontWeight: 700, color: 'var(--ops-page-accent)', marginTop: 2 },
@@ -237,5 +286,5 @@ const styles = {
   selectedPanel: { marginTop: 16, padding: 16, background: '#f8faff', borderRadius: 10, border: '1px solid #93c5fd' },
   selectedHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   selectedTitle: { fontWeight: 700, fontSize: 14, color: '#1e3a5f' },
-  closeBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '2px 6px' },
+  closeBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '2px 6px', minWidth: 36, minHeight: 36 },
 };

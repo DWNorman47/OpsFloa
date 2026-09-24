@@ -622,6 +622,8 @@ export const English = {
     aqLongShiftTitle: 'This shift spans more than a day, so the hours shown are truncated. Verify the real duration (likely a forgotten clock-out) before approving.',
     aqLateClockIn: 'Late clock-in',
     aqLateClockInTitle: 'The clock-in time on this shift is earlier than when the server received it by this much. That is normal for a phone that was offline, but it can also mean the start time was set after the fact. Verify the start time before approving.',
+    aqLateClockOut: 'Late clock-out',
+    aqLateClockOutTitle: 'The clock-out time on this shift is earlier than when the server received it by this much. That is normal for a phone that was offline, but it can also mean the end time was set after the fact (a shortened or backdated shift). Verify the end time before approving.',
     aqHideMap: 'Hide Map',
     aqViewLocation: 'View Location',
     aqExpandRow: 'Show details',
@@ -5022,6 +5024,13 @@ export const English = {
     showOlderEntries: 'Show entries older than 90 days',
     invAlreadyInvoiced: 'Already invoiced ({number}) — open it',
     mfaDisableCodeHint: 'Then enter the current 6-digit code from your authenticator app.',
+    // ── Chat / offline / field-report a11y (client+chat+push fixes) ──
+    chatLoadOlder: 'Load older messages',
+    offlineReplayCompanyInactive: 'This company account is deactivated, so your offline entries can’t sync. They are saved on this device and will sync if the account is restored.',
+    drTemperatureF: 'Temperature (°F)',
+    plAtLocation: 'At {location}',
+    plAssignedTo: 'Assigned to {name}',
+    plChecklistDone: '{done}/{total} done',
 };
 
 export const Spanish = {
@@ -5638,6 +5647,8 @@ export const Spanish = {
     aqLongShiftTitle: 'Este turno abarca más de un día, así que las horas mostradas están truncadas. Verifique la duración real (probablemente una salida olvidada) antes de aprobar.',
     aqLateClockIn: 'Entrada tardía',
     aqLateClockInTitle: 'La hora de entrada de este turno es anterior, por este tiempo, a cuando el servidor la recibió. Es normal si el teléfono estaba sin conexión, pero también puede significar que la hora de inicio se fijó después. Verifique la hora de inicio antes de aprobar.',
+    aqLateClockOut: 'Salida tardía',
+    aqLateClockOutTitle: 'La hora de salida de este turno es anterior, por este tiempo, a cuando el servidor la recibió. Es normal si el teléfono estaba sin conexión, pero también puede significar que la hora de salida se fijó después (un turno acortado o con fecha anterior). Verifique la hora de salida antes de aprobar.',
     aqHideMap: 'Ocultar Mapa',
     aqViewLocation: 'Ver Ubicación',
     aqExpandRow: 'Ver detalles',
@@ -10028,6 +10039,13 @@ export const Spanish = {
     showOlderEntries: 'Mostrar entradas de hace más de 90 días',
     invAlreadyInvoiced: 'Ya facturado ({number}) — abrirla',
     mfaDisableCodeHint: 'Luego ingresa el código actual de 6 dígitos de tu app de autenticación.',
+    // ── Chat / offline / field-report a11y (client+chat+push fixes) ──
+    chatLoadOlder: 'Cargar mensajes anteriores',
+    offlineReplayCompanyInactive: 'Esta cuenta de empresa está desactivada, así que tus entradas sin conexión no se pueden sincronizar. Están guardadas en este dispositivo y se sincronizarán si se restaura la cuenta.',
+    drTemperatureF: 'Temperatura (°F)',
+    plAtLocation: 'En {location}',
+    plAssignedTo: 'Asignado a {name}',
+    plChecklistDone: '{done}/{total} hechos',
 };
 
 // ── Runtime: lazy per-language dictionaries ─────────────────────────────────

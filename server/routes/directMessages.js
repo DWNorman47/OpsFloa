@@ -6,6 +6,11 @@ const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { sendPushToUser } = require('../push');
 const { canMessage } = require('../utils/messaging');
+const { loadChatRetentionDays } = require('../utils/chatRetention');
+
+// Newest PAGE_SIZE messages of a conversation, returned oldest-first; `?before=<message id>`
+// pages back. (ASC LIMIT 200 used to return the FIRST 200 ever — new messages never showed.)
+const PAGE_SIZE = 200;
 
 // 1:1 direct messages. company_chat still owns the shared worker↔admins thread
 // (the "Admins" recipient); this is pairwise person-to-person. Who a WORKER may
@@ -76,12 +81,18 @@ router.get('/contacts', requireAuth, requirePerm('view_company_chat'), async (re
   }
 });
 
-// GET /api/dm/:userId — the conversation between the caller and :userId; stamps
-// read_at on the messages the caller is now viewing.
+// GET /api/dm/:userId[?before=<message id>] — the conversation between the caller and :userId
+// (newest page, or the page older than `before`); the newest page stamps read_at on the
+// messages the caller is now viewing. `has_more` → older messages exist.
 router.get('/:userId', requireAuth, requirePerm('view_company_chat'), async (req, res) => {
   const companyId = req.user.company_id;
   const other = parseInt(req.params.userId, 10);
   if (!other) return res.status(400).json({ error: 'user id required' });
+  let before = null;
+  if (req.query.before != null && req.query.before !== '') {
+    before = Number(req.query.before);
+    if (!Number.isInteger(before) || before <= 0) return res.status(400).json({ error: 'Invalid before cursor' });
+  }
   try {
     const chk = await pool.query(`SELECT id, full_name, role FROM users WHERE id = $1 AND company_id = $2`, [other, companyId]);
     if (chk.rowCount === 0) return res.status(404).json({ error: 'User not found' });
@@ -90,16 +101,21 @@ router.get('/:userId', requireAuth, requirePerm('view_company_chat'), async (req
        FROM direct_messages m JOIN users u ON m.sender_id = u.id
        WHERE m.company_id = $1
          AND ((m.sender_id = $2 AND m.recipient_id = $3) OR (m.sender_id = $3 AND m.recipient_id = $2))
-       ORDER BY m.created_at ASC
-       LIMIT 200`,
-      [companyId, req.user.id, other]
+         AND ($4::int IS NULL OR m.id < $4::int)
+       ORDER BY m.id DESC
+       LIMIT ${PAGE_SIZE + 1}`,
+      [companyId, req.user.id, other, before]
     );
-    await pool.query(
-      `UPDATE direct_messages SET read_at = NOW()
-       WHERE company_id = $1 AND recipient_id = $2 AND sender_id = $3 AND read_at IS NULL`,
-      [companyId, req.user.id, other]
-    );
-    res.json({ user: chk.rows[0], messages: rows.rows });
+    const hasMore = rows.rows.length > PAGE_SIZE;
+    const messages = rows.rows.slice(0, PAGE_SIZE).reverse();
+    if (!before) {
+      await pool.query(
+        `UPDATE direct_messages SET read_at = NOW()
+         WHERE company_id = $1 AND recipient_id = $2 AND sender_id = $3 AND read_at IS NULL`,
+        [companyId, req.user.id, other]
+      );
+    }
+    res.json({ user: chk.rows[0], messages, has_more: hasMore });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -131,11 +147,11 @@ router.post('/:userId', requireAuth, requirePerm('send_company_chat'), dmWriteLi
       [companyId, req.user.id, other, body]
     );
 
-    // Prune old direct messages by the company's chat_retention_days (mirrors chat.js).
-    const s = await pool.query(`SELECT value FROM settings WHERE company_id = $1 AND key = 'chat_retention_days'`, [companyId]);
-    const days = s.rowCount > 0 ? parseFloat(s.rows[0].value) : 3;
+    // Prune old direct messages by the company's chat_retention_days (mirrors chat.js) —
+    // whole days, clamped to >= 1 so a bad stored value can never wipe every conversation.
+    const days = await loadChatRetentionDays(pool, companyId);
     await pool.query(
-      `DELETE FROM direct_messages WHERE company_id = $1 AND created_at < NOW() - ($2 || ' days')::INTERVAL`,
+      `DELETE FROM direct_messages WHERE company_id = $1 AND created_at < NOW() - make_interval(days => $2::int)`,
       [companyId, days]
     );
 
@@ -144,6 +160,7 @@ router.post('/:userId', requireAuth, requirePerm('send_company_chat'), dmWriteLi
       body: body.substring(0, 100),
       url: '/timeclock#messages',
       type: 'direct_message',
+      tag: `dm-${req.user.id}`, // one notification per conversation on the device (sw.js)
       from_user_id: req.user.id,
     });
 
@@ -155,3 +172,4 @@ router.post('/:userId', requireAuth, requirePerm('send_company_chat'), dmWriteLi
 });
 
 module.exports = router;
+module.exports.PAGE_SIZE = PAGE_SIZE;

@@ -125,7 +125,9 @@ export function OfflineProvider({ children }) {
         listenersRef.current.forEach(fn => fn(count ?? 0));
       }
       if (type === 'REPLAY_AUTH_FAILED') {
-        addToast(tr.offlineReplayAuthFailed, 'error');
+        // 403 company_inactive: the items are kept (the company may be restored), but "log in
+        // again" wouldn't help — say what actually happened.
+        addToast(event.data?.reason === 'company_inactive' ? tr.offlineReplayCompanyInactive : tr.offlineReplayAuthFailed, 'error');
         // Fire sync listeners so views (e.g. ClockInOut) can refresh from
         // the server and reveal any active_clock that didn't get cleared.
         listenersRef.current.forEach(fn => fn(0));

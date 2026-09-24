@@ -68,27 +68,65 @@ async function sendToAll(subs, payload) {
   await Promise.all(Array.from({ length: Math.min(PUSH_CONCURRENCY, subs.length) }, worker));
 }
 
+// Coalescing: a burst of messages in one conversation (payload.tag, e.g. dm-<from> /
+// chat-<worker>) pushes the same recipient at most once per COALESCE_MS. The device's
+// notification is grouped by that tag anyway, and a flurry of "new message" alerts within a few
+// seconds is noise. In-memory per process — a best-effort throttle, not a guarantee.
+const COALESCE_MS = 30 * 1000;
+const lastSentAt = new Map(); // `${userId}|${tag}` → ms
+function coalesceSubs(subs, payload, now = Date.now()) {
+  const tag = payload && typeof payload.tag === 'string' ? payload.tag : null;
+  if (!tag) return subs;
+  if (lastSentAt.size > 5000) {
+    for (const [k, ts] of lastSentAt) if (now - ts >= COALESCE_MS) lastSentAt.delete(k);
+  }
+  const allowed = new Set();
+  for (const uid of new Set(subs.map(s => s.user_id))) {
+    const key = `${uid}|${tag}`;
+    const prev = lastSentAt.get(key);
+    if (prev != null && now - prev < COALESCE_MS) continue;
+    lastSentAt.set(key, now);
+    allowed.add(uid);
+  }
+  return subs.filter(s => allowed.has(s.user_id));
+}
+function _resetCoalesce() { lastSentAt.clear(); }
+
+// Every send path joins users.active: a deactivated user's devices must stop getting pushes.
 async function sendPushToUser(userId, payload) {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
   try {
-    const subs = await pool.query('SELECT * FROM push_subscriptions WHERE user_id = $1', [userId]);
-    await sendToAll(subs.rows, payload);
+    const subs = await pool.query(
+      `SELECT ps.* FROM push_subscriptions ps
+       JOIN users u ON ps.user_id = u.id
+       WHERE ps.user_id = $1 AND u.active = true`,
+      [userId]
+    );
+    await sendToAll(coalesceSubs(subs.rows, payload), payload);
   } catch (err) {
     // Bulk push failure (e.g. DB query failed) — log but don't fail caller.
     logger.error({ err }, 'push broadcast failed');
   }
 }
 
-async function sendPushToCompanyAdmins(companyId, payload) {
+// `opts.workerId`: the push is about that worker (e.g. their company-chat thread), so a partial
+// admin restricted to other workers (users.worker_access_ids non-empty and not containing it)
+// is skipped — they can't open that thread anyway.
+async function sendPushToCompanyAdmins(companyId, payload, opts = {}) {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
   try {
+    const workerId = opts.workerId != null ? Number(opts.workerId) : null;
     const subs = await pool.query(
       `SELECT ps.* FROM push_subscriptions ps
        JOIN users u ON ps.user_id = u.id
-       WHERE ps.company_id = $1 AND u.role = 'admin' AND u.active = true`,
-      [companyId]
+       WHERE ps.company_id = $1 AND u.role = 'admin' AND u.active = true
+         AND ($2::int IS NULL
+              OR u.worker_access_ids IS NULL
+              OR cardinality(u.worker_access_ids) = 0
+              OR $2::int = ANY(u.worker_access_ids))`,
+      [companyId, Number.isFinite(workerId) ? workerId : null]
     );
-    await sendToAll(subs.rows, payload);
+    await sendToAll(coalesceSubs(subs.rows, payload), payload);
   } catch (err) {
     // Bulk push failure (e.g. DB query failed) — log but don't fail caller.
     logger.error({ err }, 'push broadcast failed');
@@ -111,4 +149,4 @@ async function sendPushToAllWorkers(companyId, payload) {
   }
 }
 
-module.exports = { isAllowedPushEndpoint, sendPushToUser, sendPushToCompanyAdmins, sendPushToAllWorkers };
+module.exports = { isAllowedPushEndpoint, sendPushToUser, sendPushToCompanyAdmins, sendPushToAllWorkers, COALESCE_MS, _resetCoalesce };

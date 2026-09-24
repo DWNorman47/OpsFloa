@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useId } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useOffline } from '../contexts/OfflineContext';
@@ -73,6 +73,7 @@ function ReportEditor({ report: initial, projects, onSaved, onCancel, companyNam
   const [suggesting, setSuggesting] = useState(false);
   const [gettingWeather, setGettingWeather] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const fid = useId(); // label ↔ control ids for the header fields
   useDirtyForm(dirty, 'daily-report'); // hold off the background auto-update reload
   const [pdfGenerating, setPdfGenerating] = useState(false);
 
@@ -199,33 +200,33 @@ function ReportEditor({ report: initial, projects, onSaved, onCancel, companyNam
       {/* Header fields */}
       <div style={styles.fieldGrid}>
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>{t.date}</label>
-          <input style={styles.input} type="date" value={form.report_date} onChange={e => set('report_date', e.target.value)} max={new Date().toLocaleDateString('en-CA')} />
+          <label style={styles.label} htmlFor={`${fid}-date`}>{t.date}</label>
+          <input id={`${fid}-date`} style={styles.input} type="date" value={form.report_date} onChange={e => set('report_date', e.target.value)} max={new Date().toLocaleDateString('en-CA')} />
         </div>
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>Project</label>
-          <select style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-            <option value="">{`No project`}</option>
+          <label style={styles.label} htmlFor={`${fid}-project`}>{t.project}</label>
+          <select id={`${fid}-project`} style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
+            <option value="">{t.noProject}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>{t.superintendent}</label>
-          <input style={styles.input} type="text" placeholder={t.superintendent} value={form.superintendent} onChange={e => set('superintendent', e.target.value)} maxLength={255} />
+          <label style={styles.label} htmlFor={`${fid}-super`}>{t.superintendent}</label>
+          <input id={`${fid}-super`} style={styles.input} type="text" placeholder={t.superintendent} value={form.superintendent} onChange={e => set('superintendent', e.target.value)} maxLength={255} />
         </div>
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>
+          <label style={styles.label} htmlFor={`${fid}-weather`}>
             {t.weather}
             <button type="button" style={{ ...styles.weatherBtn, ...(gettingWeather ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={autoFillWeather} disabled={gettingWeather} title={t.autoFillLocation}>
               {gettingWeather ? t.loading : '🌤 Auto'}
             </button>
           </label>
           <div style={{ display: 'flex', gap: 6 }}>
-            <select style={{ ...styles.input, flex: 1 }} value={form.weather_condition} onChange={e => set('weather_condition', e.target.value)}>
+            <select id={`${fid}-weather`} style={{ ...styles.input, flex: 1 }} value={form.weather_condition} onChange={e => set('weather_condition', e.target.value)}>
               <option value="">{t.select}</option>
               {WEATHER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-            <input style={{ ...styles.input, width: 70 }} type="number" placeholder="°F" min="-50" max="130" value={form.weather_temp} onChange={e => set('weather_temp', e.target.value)} />
+            <input style={{ ...styles.input, width: 70 }} type="number" placeholder="°F" aria-label={t.drTemperatureF} min="-50" max="130" value={form.weather_temp} onChange={e => set('weather_temp', e.target.value)} />
           </div>
         </div>
       </div>
@@ -432,7 +433,7 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
     <div style={styles.reportRow}>
       <div style={styles.rowLeft} onClick={() => !report.pending && onEdit(report)} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && !report.pending && onEdit(report)}>
         <div style={styles.rowDate}>{fmtDate(report.report_date, locale)}{report.pending && <span style={styles.pendingBadge}>⏳ {t.pendingSync}</span>}</div>
-        <div style={styles.rowProject}>{report.project_name || `No project`}</div>
+        <div style={styles.rowProject}>{report.project_name || t.noProject}</div>
         {weather && <div style={styles.rowMeta}>{weather}{report.weather_temp != null ? ` · ${report.weather_temp}°F` : ''}</div>}
         {report.manpower_count > 0 && <div style={styles.rowMeta}>{report.manpower_count} {report.manpower_count !== 1 ? t.crewEntries : t.crewEntry}</div>}
         {isReviewed && report.reviewed_by && (
@@ -650,7 +651,8 @@ const styles = {
   th: { textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', padding: '6px 8px', borderBottom: '2px solid #e5e7eb' },
   td: { padding: '4px 8px', borderBottom: '1px solid #f3f4f6' },
   cellInput: { padding: '5px 7px', border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 13, width: '100%' },
-  removeRowBtn: { background: 'none', border: 'none', color: '#fca5a5', fontSize: 14, cursor: 'pointer', padding: '2px 4px' },
+  // ≥40×40 tap target; #dc2626 meets contrast on white (the old #fca5a5 didn't).
+  removeRowBtn: { background: 'none', border: 'none', color: '#dc2626', fontSize: 16, cursor: 'pointer', padding: 0, minWidth: 40, minHeight: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6 },
   addRowBtn: { fontSize: 12, color: '#6b7280', background: 'none', border: '1px dashed #d1d5db', padding: '5px 12px', borderRadius: 6, cursor: 'pointer', marginTop: 4 },
   textarea: { width: '100%', padding: '9px 11px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 },
   photoStrip: { display: 'flex', gap: 8, flexWrap: 'wrap' },

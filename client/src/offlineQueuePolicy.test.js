@@ -3,6 +3,9 @@ import {
   LARGE_QUEUE_BODY_CHARS,
   MAX_NETWORK_TIMEOUT_MS,
   NETWORK_TIMEOUT_MS,
+  REPLAY_PASS_BUDGET_MS,
+  replayTimeoutMs,
+  withAttemptStarted,
   countsTowardBackoff,
   isAbortTimeout,
   isAuthPaused,
@@ -43,6 +46,12 @@ describe('classifyReplayStatus', () => {
   test('401 keeps the item and pauses for re-auth', () => {
     expect(classifyReplayStatus(401)).toBe('auth');
     expect(shouldDropOnStatus(401)).toBe(false);
+  });
+
+  test('403 company_inactive keeps the item and pauses (company may be restored)', () => {
+    expect(classifyReplayStatus(403, 'company_inactive')).toBe('auth');
+    expect(shouldDropOnStatus(403, 'company_inactive')).toBe(false);
+    expect(classifyReplayStatus(403, 'forbidden')).toBe('drop');
   });
 
   test('permanent client errors are dropped (and reported by the SW)', () => {
@@ -111,9 +120,28 @@ describe('slow uplinks + large bodies', () => {
   test('timeout scales with body size, capped', () => {
     expect(requestTimeoutMs(0)).toBe(NETWORK_TIMEOUT_MS);
     expect(requestTimeoutMs(200)).toBeGreaterThanOrEqual(NETWORK_TIMEOUT_MS);
-    // ~4 MB of base64 photos gets minutes, not 15 s
-    expect(requestTimeoutMs(4 * 1024 * 1024)).toBeGreaterThan(4 * 60 * 1000);
+    // ~2 MB of base64 photos gets minutes, not 15 s
+    expect(requestTimeoutMs(2 * 1024 * 1024)).toBeGreaterThan(2 * 60 * 1000);
     expect(requestTimeoutMs(500 * 1024 * 1024)).toBe(MAX_NETWORK_TIMEOUT_MS);
+    // never outlives Chrome's ~5-minute SW event limit
+    expect(MAX_NETWORK_TIMEOUT_MS).toBeLessThan(4.5 * 60 * 1000);
+    expect(REPLAY_PASS_BUDGET_MS).toBeLessThan(5 * 60 * 1000);
+  });
+
+  test('replay timeout is clipped to what is left of the pass budget', () => {
+    expect(replayTimeoutMs(0, 0)).toBe(NETWORK_TIMEOUT_MS);
+    expect(replayTimeoutMs(500 * 1024 * 1024, 0)).toBe(MAX_NETWORK_TIMEOUT_MS);
+    expect(replayTimeoutMs(500 * 1024 * 1024, REPLAY_PASS_BUDGET_MS - 60000)).toBe(60000);
+    expect(replayTimeoutMs(0, REPLAY_PASS_BUDGET_MS - 1000)).toBe(0);
+  });
+
+  test('a large replay records its attempt before the fetch; a small one does not', () => {
+    const item = { id: 1, attempts: 2, last_status: 503 };
+    const pre = withAttemptStarted(item, { bodyChars: LARGE_QUEUE_BODY_CHARS, now: 1000 });
+    expect(pre.attempts).toBe(3);
+    expect(pre.last_attempt_at).toBe(1000);
+    expect(pre.next_attempt_at).toBeGreaterThan(1000);
+    expect(withAttemptStarted(item, { bodyChars: 300, now: 1000 })).toBeNull();
   });
 
   test('only a timeout on a LARGE body counts toward backoff', () => {

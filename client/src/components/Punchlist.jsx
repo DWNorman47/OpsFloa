@@ -72,9 +72,9 @@ function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPh
         </div>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label htmlFor="pl-project" style={styles.label}>Project</label>
+            <label htmlFor="pl-project" style={styles.label}>{t.project}</label>
             <select id="pl-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No project`}</option>
+              <option value="">{t.noProject}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -227,11 +227,11 @@ function PunchItem({ item: initialItem, isAdmin, workers, onUpdated, onDeleted, 
           <div style={styles.itemMeta}>
             {item.project_name && <span style={styles.metaTag}>{item.project_name}</span>}
             {item.phase && <span style={styles.phaseTag}>{item.phase}</span>}
-            {item.location && <span style={styles.metaLoc}>At {item.location}</span>}
-            {item.assigned_to_name && <span style={styles.metaAssign}>Assigned to {item.assigned_to_name}</span>}
+            {item.location && <span style={styles.metaLoc}>{t.plAtLocation.replace('{location}', item.location)}</span>}
+            {item.assigned_to_name && <span style={styles.metaAssign}>{t.plAssignedTo.replace('{name}', item.assigned_to_name)}</span>}
             {checkTotal > 0 && (
               <span style={{ ...styles.checkProgress, ...(checkDone === checkTotal ? styles.checkProgressDone : {}) }}>
-                {checkDone}/{checkTotal} done
+                {t.plChecklistDone.replace('{done}', checkDone).replace('{total}', checkTotal)}
               </span>
             )}
           </div>

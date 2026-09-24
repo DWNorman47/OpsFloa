@@ -6,16 +6,21 @@ import { playMessageChime } from '../chime';
 import { silentError } from '../errorReporter';
 import { safeLocal } from '../utils/safeStorage';
 import { setChatUnread } from '../chatUnreadStore';
+import { syncLegacyAdminReadKey } from '../chatReadSync';
 
 /**
  * Speech-bubble bell that sits to the LEFT of the notifications bell. Its badge
  * counts unread chat messages and its dropdown lists them, styled to match
  * NotificationBell.
  *
- * Unread state reuses the same client-side localStorage keys that drive the
- * Messages / Live tab dots, so the bell, the dots, and CompanyChat stay in sync:
- *   - Worker: single `chatLastRead` timestamp for their own thread.
- *   - Admin:  per-worker `chatLastRead_admin_<worker_id>` timestamps.
+ * Unread state:
+ *   - Worker: single client-side `chatLastRead` timestamp for their own thread (shared with
+ *     the Messages tab dot + CompanyChat).
+ *   - Admin:  SERVER-side per-admin read markers — each thread from GET /chat carries
+ *     `unread` (the worker's messages this admin hasn't seen; admins' replies never count),
+ *     so it's right on every device. Opening / clicking a thread or "Mark all read" moves
+ *     the marker (POST /chat/read). The legacy `chatLastRead_admin_<id>` keys are kept in
+ *     step for AdminDashboard's Live-tab dot (chatReadSync.js).
  *
  * When a new unread message appears since the previous poll, it plays a short
  * in-app chime (the device push handles sound/vibration when the app is closed).
@@ -38,19 +43,18 @@ export default function MessagesBell() {
     ]).then(([data, contacts]) => {
       let unread;
       if (isAdmin) {
-        // Admin sees a list of worker threads; a thread is unread when its last
-        // message is newer than the last time this admin opened it.
+        // Admin sees a list of worker threads; the server says which have messages
+        // from the worker this admin hasn't read yet.
+        data.forEach(syncLegacyAdminReadKey);
         unread = data
-          .filter(thread => {
-            const lr = safeLocal.getItem(`chatLastRead_admin_${thread.worker_id}`);
-            return !lr || new Date(thread.last_at) > new Date(lr);
-          })
+          .filter(thread => thread.unread > 0)
           .map(thread => ({
             key: `t${thread.worker_id}:${thread.last_at}`,
             title: thread.worker_name,
             body: thread.last_message,
             time: thread.last_at,
-            readKey: `chatLastRead_admin_${thread.worker_id}`,
+            readKey: null,
+            workerId: thread.worker_id,
           }));
       } else {
         // Worker has a single thread; unread = messages from someone else newer
@@ -123,13 +127,25 @@ export default function MessagesBell() {
     // CompanyChat all agree the thread(s) have been seen.
     const keys = new Set(items.map(i => i.readKey).filter(Boolean));
     keys.forEach(k => safeLocal.setItem(k, now));
+    // Admin threads: move the server-side read markers (every thread in this admin's scope).
+    const threads = items.filter(i => i.workerId != null);
+    if (isAdmin && threads.length) {
+      api.post('/chat/read', {}).catch(silentError('messagesbell'));
+      threads.forEach(i => syncLegacyAdminReadKey({ worker_id: i.workerId, unread: 0, last_at: i.time }));
+    }
     prevKeysRef.current = new Set();
     setItems([]);
   };
 
   const handleItemClick = (item) => {
-    safeLocal.setItem(item.readKey, new Date().toISOString());
-    setItems(prev => prev.filter(i => i.readKey !== item.readKey));
+    if (item.readKey) {
+      safeLocal.setItem(item.readKey, new Date().toISOString());
+      setItems(prev => prev.filter(i => i.readKey !== item.readKey));
+    } else if (item.workerId != null) {
+      api.post('/chat/read', { worker_id: item.workerId }).catch(silentError('messagesbell'));
+      syncLegacyAdminReadKey({ worker_id: item.workerId, unread: 0, last_at: item.time });
+      setItems(prev => prev.filter(i => i.key !== item.key));
+    }
     setOpen(false);
     // Both worker messages and admin workforce chat live under /timeclock. Using
     // location.assign fires a hashchange on the same page (no reload) and does a

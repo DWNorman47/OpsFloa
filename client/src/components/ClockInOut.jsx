@@ -878,6 +878,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
                     <input
                       style={styles.checklistGateTextInput}
                       type="text"
+                      aria-label={item.label}
                       placeholder={t.notesPlaceholder}
                       value={checklistAnswers[i] || ''}
                       onChange={e => setChecklistAnswers(a => ({ ...a, [i]: e.target.value }))}
@@ -888,6 +889,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProj
                   <label style={styles.checklistGateCheckRow}>
                     <input
                       type="checkbox"
+                      aria-label={item.label}
                       checked={!!checklistAnswers[i]}
                       onChange={e => setChecklistAnswers(a => ({ ...a, [i]: e.target.checked }))}
                       style={{ width: 18, height: 18, flexShrink: 0 }}

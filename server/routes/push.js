@@ -36,10 +36,16 @@ router.post('/subscribe', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid subscription keys' });
   }
   try {
+    // One browser = one endpoint = one person. A shared device that someone else subscribed
+    // earlier (and never logged out of) must not keep getting THEIR pushes, so the endpoint is
+    // taken over: other users' rows for it are removed in the same statement.
     await pool.query(
-      `INSERT INTO push_subscriptions (user_id, company_id, endpoint, p256dh, auth)
+      `WITH taken_over AS (
+         DELETE FROM push_subscriptions WHERE endpoint = $3 AND user_id <> $1
+       )
+       INSERT INTO push_subscriptions (user_id, company_id, endpoint, p256dh, auth)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (user_id, endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+       ON CONFLICT (user_id, endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, company_id = EXCLUDED.company_id`,
       [req.user.id, req.user.company_id, endpoint, p256dh, auth]
     );
     res.json({ ok: true });
