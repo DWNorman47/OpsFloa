@@ -2,6 +2,8 @@ const axios = require('axios');
 const pool = require('../db');
 const { encrypt, decrypt } = require('./encryption');
 const { sendEmail } = require('../email');
+const { roundEntriesFromSettings, ymd } = require('../utils/hoursRules');
+const { hoursWorked } = require('../utils/payCalculations');
 
 const IS_PRODUCTION = process.env.QBO_ENVIRONMENT === 'production';
 const QBO_BASE = IS_PRODUCTION
@@ -263,7 +265,8 @@ async function createPurchase(companyId, { bankAccountId, expenseAccountId, vend
  * account-based (reimbursement) line items.
  *
  * lines: Array<
- *   | { type: 'item',    itemId, qty, unitPrice, description, customerId?, classId? }
+ *   | { type: 'item',    itemId, qty, unitPrice, amount?, description, customerId?, classId? }
+ *     (amount, when given, is the exact line amount — see below)
  *   | { type: 'account', accountId, amount,                 description, customerId?, classId? }
  * >
  */
@@ -273,13 +276,28 @@ async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines, 
       // Derive Amount from the ROUNDED qty/unitPrice we actually send — QBO recomputes the
       // line as Qty × UnitPrice, so computing Amount off the full-precision qty made the
       // posted line differ from our Amount (and drift from the push-bills-preview total).
-      const qty = parseFloat(l.qty.toFixed(2));
-      const unitPrice = parseFloat(l.unitPrice.toFixed(2));
-      const amount = parseFloat((qty * unitPrice).toFixed(2));
+      let qty = parseFloat((Number(l.qty) || 0).toFixed(2));
+      let unitPrice = parseFloat((Number(l.unitPrice) || 0).toFixed(2));
+      let amount = parseFloat((qty * unitPrice).toFixed(2));
+      let description = l.description || '';
+      if (l.amount != null) {
+        // An EXACT line amount (from the pay engine) wins. Keep Qty × UnitPrice
+        // consistent with it: use the 2-dp qty/price when they reproduce the amount
+        // to the cent, otherwise post 1 × amount and keep the hours in the text.
+        amount = Math.round(Number(l.amount) * 100) / 100;
+        const price = qty > 0 ? Math.round((amount / qty) * 100) / 100 : null;
+        if (price != null && Math.round(qty * price * 100) === Math.round(amount * 100)) {
+          unitPrice = price;
+        } else {
+          if (qty > 0 && qty !== 1) description = `${description}${description ? ' ' : ''}(${qty} h)`;
+          qty = 1;
+          unitPrice = amount;
+        }
+      }
       return {
         DetailType: 'ItemBasedExpenseLineDetail',
         Amount: amount,
-        Description: l.description || '',
+        Description: description.slice(0, 4000),
         ItemBasedExpenseLineDetail: {
           ItemRef: { value: String(l.itemId) },
           UnitPrice: unitPrice,
@@ -311,8 +329,33 @@ async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines, 
   return data.Bill;
 }
 
+/**
+ * The hours a TimeActivity carries for each time entry: the PAID punch (the
+ * company's hours-rules rounding applied, same as every pay surface) net of the
+ * logged break, clamped at 0. Every push path — manual /push, retry-error and the
+ * auto-push on approval — goes through this so they can't disagree about the same
+ * entry (auto-push used to send the raw punch).
+ *
+ * @param rows        time_entries rows (work_date may be a pg Date or 'YYYY-MM-DD')
+ * @param settings    loadSettings() result (hours_rules is what matters)
+ * @param roleById    { user_id: role_id } for role-scoped rules
+ * @returns [{ entry, hours, workDate }] in input order
+ */
+function timeActivityHours(rows, settings, roleById = {}) {
+  // Rules key on a 'YYYY-MM-DD' string (a Date silently no-ops date-scoped rules),
+  // and toISOString() on a pg local-midnight Date can shift the day off UTC.
+  const normalized = (rows || []).map(r => ({ ...r, work_date: ymd(r.work_date) }));
+  const paid = roundEntriesFromSettings(normalized, settings || {}, { workerRoleById: roleById || {} });
+  return paid.map(e => ({
+    entry: e,
+    hours: Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60),
+    workDate: e.work_date,
+  }));
+}
+
 async function pushTimeActivity(companyId, { employeeId, vendorId, customerId, classId, workDate, hours, description, requestId }) {
   const useVendor = !!vendorId;
+  const totalMinutes = Math.max(0, Math.round((Number(hours) || 0) * 60));
   const body = {
     NameOf: useVendor ? 'Vendor' : 'Employee',
     ...(useVendor
@@ -321,8 +364,10 @@ async function pushTimeActivity(companyId, { employeeId, vendorId, customerId, c
     CustomerRef: { value: String(customerId) },
     ...(classId ? { ClassRef: { value: String(classId) } } : {}),
     TxnDate: workDate,
-    Hours: Math.floor(hours),
-    Minutes: Math.round((hours % 1) * 60),
+    // Round the TOTAL minutes first: rounding only the fractional part sent
+    // 7.9958h as 7h 60m (Minutes must be 0-59).
+    Hours: Math.floor(totalMinutes / 60),
+    Minutes: totalMinutes % 60,
     Description: description || '',
   };
   const data = await qboPost(companyId, '/timeactivity?minorversion=65', body, requestId);
@@ -391,4 +436,4 @@ async function createJournalEntry(companyId, { txnDate, description, debitAccoun
   return data.JournalEntry;
 }
 
-module.exports = { getAuthUrl, exchangeCode, refreshAccessToken, getCompanyInfo, listEmployees, listCustomers, listVendors, listItems, listAccounts, listClasses, createInvoice, getInvoice, createPurchase, createCustomer, createVendor, createJournalEntry, createBill, deleteTimeActivity, pushTimeActivity };
+module.exports = { getAuthUrl, exchangeCode, refreshAccessToken, timeActivityHours, getCompanyInfo, listEmployees, listCustomers, listVendors, listItems, listAccounts, listClasses, createInvoice, getInvoice, createPurchase, createCustomer, createVendor, createJournalEntry, createBill, deleteTimeActivity, pushTimeActivity };

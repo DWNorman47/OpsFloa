@@ -6,7 +6,7 @@ import { SkeletonList } from './Skeleton';
 import { weekRange } from '../utils/weekBounds';
 
 import { silentError } from '../errorReporter';
-import { safeLocal } from '../utils/safeStorage';
+import { safeLocal, safeSession } from '../utils/safeStorage';
 const VENDOR_TYPES = ['contractor', 'subcontractor'];
 const EMPLOYEE_TYPES = ['employee', 'owner'];
 const IMPORT_PAGE_SIZE = 15;
@@ -167,7 +167,30 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
   }, [importSearch]);
 
   useEffect(() => {
-    api.get('/qbo/status').then(r => setStatus(r.data)).catch(silentError('quickbooks'));
+    // Returning from Intuit: the API callback only verifies the signed state and
+    // hands the code here; the link is completed by THIS signed-in admin (the
+    // server checks they're the one who clicked Connect). Strip the params first
+    // so a refresh can't replay them.
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('qbo_code');
+    const state = params.get('qbo_state');
+    const realmId = params.get('qbo_realm');
+    const oauthError = params.get('qbo_error');
+    if (code || oauthError) {
+      ['qbo_code', 'qbo_state', 'qbo_realm', 'qbo_error'].forEach(k => params.delete(k));
+      const qs = params.toString();
+      window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+    }
+    const loadStatus = () => api.get('/qbo/status').then(r => setStatus(r.data)).catch(silentError('quickbooks'));
+    if (code && state && realmId) {
+      api.post('/qbo/callback/complete', { code, state, realmId })
+        .then(() => toast(t.qboConnected, 'success'))
+        .catch(err => setError(err.response?.data?.error || 'Failed to connect'))
+        .finally(loadStatus);
+    } else {
+      if (oauthError) setError(`QuickBooks connection failed (${oauthError}).`);
+      loadStatus();
+    }
   }, []);
 
   useEffect(() => {
@@ -225,6 +248,8 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
   const handleConnect = async () => {
     try {
       const r = await api.get('/qbo/connect');
+      // Come back to this screen so the link can be completed (see the mount effect).
+      safeSession.setItem('admin_integration_view', 'quickbooks');
       window.location.href = r.data.url;
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to connect');
@@ -1028,7 +1053,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
             {payResult && (
               <div style={styles.resultBox}>
                 <p style={{ margin: 0, fontWeight: 600, color: '#166534' }}>
-                Journal entry created — ${payResult.amount?.toFixed(2)} across {payResult.workers} workers.
+                {payResult.message || `Journal entry created — $${payResult.amount?.toFixed(2)} across ${payResult.workers} workers.`}
                 </p>
                 <p style={{ margin: '4px 0 0', fontSize: 13, color: '#6b7280' }}>{payResult.description}</p>
               </div>

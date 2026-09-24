@@ -34,7 +34,7 @@ jest.mock('../services/qbo', () => ({
 }));
 
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
-jest.mock('../utils/payStatement', () => ({ companyStatements: jest.fn() }));
+jest.mock('../utils/payStatement', () => ({ ...jest.requireActual('../utils/payStatement'), companyStatements: jest.fn() }));
 
 const express = require('express');
 const request = require('supertest');
@@ -114,6 +114,8 @@ function reimbRow(overrides = {}) {
 describe('POST /api/qbo/push-bills-preview', () => {
   beforeEach(() => {
     pool.query.mockReset();
+    // Unqueued queries (e.g. the paid-leave lookup bills now make) return empty.
+    pool.query.mockResolvedValue({ rows: [], rowCount: 0 });
     qbo.createBill.mockReset();
   });
 
@@ -240,6 +242,8 @@ describe('POST /api/qbo/push-bills-preview', () => {
 describe('POST /api/qbo/push-payroll', () => {
   beforeEach(() => {
     pool.query.mockReset();
+    // Unqueued queries (e.g. the paid-leave lookup bills now make) return empty.
+    pool.query.mockResolvedValue({ rows: [], rowCount: 0 });
     qbo.createJournalEntry.mockReset();
     companyStatements.mockReset();
   });
@@ -299,6 +303,8 @@ describe('POST /api/qbo/push-payroll', () => {
 describe('POST /api/qbo/push-bills', () => {
   beforeEach(() => {
     pool.query.mockReset();
+    // Unqueued queries (e.g. the paid-leave lookup bills now make) return empty.
+    pool.query.mockResolvedValue({ rows: [], rowCount: 0 });
     qbo.createBill.mockReset();
   });
 
@@ -346,6 +352,7 @@ describe('POST /api/qbo/push-bills', () => {
       .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [] })                        // no reimbs
+      .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }) // paid-leave lookup (requests, shifts)
       .mockResolvedValueOnce({ rowCount: 1 });
 
     qbo.createBill.mockResolvedValueOnce({ Id: 'BILL-NO-REIMB' });
@@ -378,6 +385,7 @@ describe('POST /api/qbo/push-bills', () => {
       .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [reimbRow()] })
+      .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }) // paid-leave lookup (requests, shifts)
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 });
 
@@ -423,8 +431,8 @@ describe('POST /api/qbo/push-bills', () => {
     expect(res.body.pushed).toEqual([]);
     expect(res.body.skipped).toHaveLength(1);
     expect(res.body.skipped[0].reason).toMatch(/Item inactive/);
-    // 5 reads (settings, realm, time, reimb, ot), 0 updates = 5 total
-    expect(pool.query).toHaveBeenCalledTimes(5);
+    // 7 reads (settings, realm, ot settings, time, reimb, leave requests, leave shifts), 0 updates
+    expect(pool.query).toHaveBeenCalledTimes(7);
   });
 
   test('pushes an overtime premium line for OT hours', async () => {
@@ -435,6 +443,7 @@ describe('POST /api/qbo/push-bills', () => {
       .mockResolvedValueOnce(otDaily({ threshold: 8, multiplier: 1.5 }))   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ start_time: '08:00:00', end_time: '18:00:00' })] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }) // paid-leave lookup (requests, shifts)
       .mockResolvedValueOnce({ rowCount: 1 });
 
     qbo.createBill.mockResolvedValueOnce({ Id: 'BILL-OT-1' });
@@ -460,6 +469,7 @@ describe('POST /api/qbo/push-bills', () => {
       .mockResolvedValueOnce(otNight({ pct: 25, fromHour: 19, toHour: 5 }))
       .mockResolvedValueOnce({ rows: [timeRow({ start_time: '22:00:00', end_time: '06:00:00' })] }) // 8h, 7h in window
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }) // paid-leave lookup (requests, shifts)
       .mockResolvedValueOnce({ rowCount: 1 });
 
     qbo.createBill.mockResolvedValueOnce({ Id: 'BILL-NIGHT-1' });

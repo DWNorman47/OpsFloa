@@ -7,17 +7,15 @@ const { requireAuth, requireAdmin, requirePerm } = require('../middleware/auth')
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
 const { USER_WORKER_TYPES } = require('../constants/userEnums');
-// Every punch this file bills from must be the PAID punch, not the raw one.
-// qbo.js never imported the hours-rules engine, so a company with a policy
-// enabled would have had OpsFloa's own invoice and its QuickBooks bill disagree
-// about the same day. Rounding is applied at each point entries are fetched, so
-// the four separate hour calculations below can't drift apart again.
-const { loadSettings, computePaid, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
+// Every punch this file bills or syncs is the PAID punch (hours-rules rounding),
+// and every labor dollar on a bill comes from the pay engine (buildPayStatement),
+// so OpsFloa's own pay surfaces and QuickBooks can't disagree about the same day.
+const { loadSettings, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
-const { otBandsCost, nightPremiumCost, nightHoursForEntry } = require('../utils/payCalculations');
-const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
+const { hoursWorked } = require('../utils/payCalculations');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
-const { companyStatements } = require('../utils/payStatement');
+const { companyStatements, buildPayStatement } = require('../utils/payStatement');
+const { startOfWeek, toYMD } = require('../utils/weekBounds');
 const { isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 
 const { logAudit } = require('../auditLog');
@@ -55,36 +53,125 @@ router.get('/status', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── OAuth account linking ───────────────────────────────────────────────────
+// The flow is bound to the admin who STARTED it. `state` is an HMAC-signed
+// {company, user, nonce, issued_at}; the unauthenticated Intuit callback only
+// checks the signature and hands code/state/realmId to the SPA, which POSTs them
+// back to /callback/complete with its Bearer token. The code is redeemed only
+// when that token's user + company match the state, the nonce is the one stored
+// for the company (single use), and the state is < 15 min old.
+//
+// Why not just a cookie: the API and SPA can be on different sites, and a cookie
+// set by a cross-site XHR response is often blocked (SameSite / 3rd-party cookie
+// rules), so the Bearer-token round trip is the one binding that works here.
+//
+// Before: state was unsigned base64 {company_id, nonce} and the callback linked
+// whichever QuickBooks company approved it — an attacker admin could send their
+// authorize URL to another company's admin and link THAT QuickBooks to theirs.
+const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+
+function oauthStateSecret() {
+  const s = process.env.JWT_SECRET;
+  if (!s) throw new Error('JWT_SECRET is not set');
+  return s;
+}
+function signOAuthBody(body) {
+  return crypto.createHmac('sha256', oauthStateSecret()).update(`qbo-oauth-state|${body}`).digest('base64url');
+}
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a || ''));
+  const y = Buffer.from(String(b || ''));
+  return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
+}
+function makeOAuthState({ companyId, userId, nonce, issuedAt }) {
+  const body = Buffer.from(JSON.stringify({ c: companyId, u: userId, n: nonce, t: issuedAt })).toString('base64url');
+  return `${body}.${signOAuthBody(body)}`;
+}
+/** → { ok: true, payload } | { ok: false, code } — signature + shape + expiry. */
+function verifyOAuthState(state) {
+  if (typeof state !== 'string' || state.length > 2048) return { ok: false, code: 'invalid_state' };
+  const dot = state.indexOf('.');
+  if (dot <= 0) return { ok: false, code: 'invalid_state' };
+  const body = state.slice(0, dot);
+  const sig = state.slice(dot + 1);
+  if (!safeEqual(sig, signOAuthBody(body))) return { ok: false, code: 'invalid_state' };
+  let payload;
+  try { payload = JSON.parse(Buffer.from(body, 'base64url').toString()); } catch { return { ok: false, code: 'invalid_state' }; }
+  if (!payload || payload.c == null || payload.u == null || !payload.n || !Number.isFinite(payload.t)) {
+    return { ok: false, code: 'invalid_state' };
+  }
+  const age = Date.now() - payload.t;
+  if (age < 0 || age > OAUTH_STATE_TTL_MS) return { ok: false, code: 'qbo_state_expired' };
+  return { ok: true, payload };
+}
+
 // GET /api/qbo/connect — returns the Intuit OAuth URL to redirect the user to
 router.get('/connect', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   if (!process.env.QBO_CLIENT_ID || !process.env.QBO_REDIRECT_URI) {
     return res.status(503).json({ error: 'QuickBooks integration not configured' });
   }
-  // Generate a CSRF nonce, store it, encode it in state
-  const nonce = crypto.randomBytes(16).toString('hex');
-  await pool.query('UPDATE companies SET qbo_oauth_nonce = $1 WHERE id = $2', [nonce, req.user.company_id]);
-  const state = Buffer.from(JSON.stringify({ company_id: req.user.company_id, nonce })).toString('base64');
-  res.json({ url: qbo.getAuthUrl(state) });
+  try {
+    // One pending flow per company: a new /connect replaces the stored nonce.
+    const nonce = crypto.randomBytes(16).toString('hex');
+    await pool.query('UPDATE companies SET qbo_oauth_nonce = $1 WHERE id = $2', [nonce, req.user.company_id]);
+    const state = makeOAuthState({ companyId: req.user.company_id, userId: req.user.id, nonce, issuedAt: Date.now() });
+    res.json({ url: qbo.getAuthUrl(state) });
+  } catch (err) {
+    logger.error({ err }, '[QBO connect]');
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
-// GET /api/qbo/callback — Intuit redirects here after user authorizes
-// This handler is exported and registered WITHOUT auth middleware in index.js
+function spaRedirect(res, params) {
+  const qs = new URLSearchParams(params).toString();
+  res.redirect(`${process.env.APP_URL}/administration?${qs}#integrations`);
+}
+
+// GET /api/qbo/callback — Intuit redirects here after the user authorizes.
+// Exported and registered WITHOUT auth middleware in index.js — so it links
+// NOTHING itself: it checks the state signature and forwards to the SPA, where
+// the signed-in initiator completes the link via POST /callback/complete.
 async function oauthCallback(req, res) {
-  const { code, state, realmId } = req.query;
-  if (!code || !state || !realmId) {
-    return res.redirect(`${process.env.APP_URL}/administration#qbo?error=missing_params`);
-  }
+  const { code, state, realmId, error } = req.query;
+  if (error) return spaRedirect(res, { qbo_error: String(error).slice(0, 64) });
+  if (!code || !state || !realmId) return spaRedirect(res, { qbo_error: 'missing_params' });
   try {
-    const { company_id, nonce } = JSON.parse(Buffer.from(state, 'base64').toString());
+    const v = verifyOAuthState(String(state));
+    if (!v.ok) return spaRedirect(res, { qbo_error: v.code === 'qbo_state_expired' ? 'expired' : 'invalid_state' });
+    spaRedirect(res, { qbo_code: String(code), qbo_state: String(state), qbo_realm: String(realmId) });
+  } catch (err) {
+    logger.error({ err }, '[QBO callback]');
+    spaRedirect(res, { qbo_error: 'auth_failed' });
+  }
+}
+router.get('/callback', oauthCallback);
 
-    // CSRF check — verify nonce matches what we stored
-    const nonceResult = await pool.query('SELECT qbo_oauth_nonce FROM companies WHERE id = $1', [company_id]);
-    const storedNonce = nonceResult.rows[0]?.qbo_oauth_nonce;
-    if (!nonce || !storedNonce || nonce !== storedNonce) {
-      return res.redirect(`${process.env.APP_URL}/administration#qbo?error=invalid_state`);
+// POST /api/qbo/callback/complete — { code, state, realmId }, authenticated.
+router.post('/callback/complete', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
+  const { code, state, realmId } = req.body || {};
+  if (!code || !state || !realmId) return res.status(400).json({ error: 'code, state and realmId are required', code: 'missing_params' });
+  try {
+    const v = verifyOAuthState(String(state));
+    if (!v.ok) {
+      return res.status(400).json({
+        error: v.code === 'qbo_state_expired' ? 'The QuickBooks connection request expired — click Connect again.' : 'Invalid QuickBooks connection request.',
+        code: v.code,
+      });
     }
+    const { c: companyId, u: userId, n: nonce } = v.payload;
+    // The binding: only the admin who started this flow, in their own company.
+    if (String(companyId) !== String(req.user.company_id) || String(userId) !== String(req.user.id)) {
+      logger.warn({ stateCompany: companyId, stateUser: userId, company: req.user.company_id, user: req.user.id }, '[QBO callback] state/user mismatch');
+      return res.status(403).json({ error: 'This QuickBooks connection was started by a different user. Click Connect again.', code: 'qbo_state_mismatch' });
+    }
+    // Consume the nonce atomically (single use; a replay finds it already cleared).
+    const consumed = await pool.query(
+      'UPDATE companies SET qbo_oauth_nonce = NULL WHERE id = $1 AND qbo_oauth_nonce = $2 RETURNING id',
+      [req.user.company_id, nonce]
+    );
+    if (!consumed.rowCount) return res.status(400).json({ error: 'Invalid or already-used QuickBooks connection request.', code: 'invalid_state' });
 
-    const tokens = await qbo.exchangeCode(code);
+    const tokens = await qbo.exchangeCode(String(code));
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
     await pool.query(
       `UPDATE companies
@@ -92,15 +179,15 @@ async function oauthCallback(req, res) {
            qbo_token_expires_at = $4, qbo_connected_at = NOW(),
            qbo_oauth_nonce = NULL, qbo_disconnected = false
        WHERE id = $5`,
-      [encrypt(realmId), encrypt(tokens.access_token), encrypt(tokens.refresh_token), expiresAt, company_id]
+      [encrypt(String(realmId)), encrypt(tokens.access_token), encrypt(tokens.refresh_token), expiresAt, req.user.company_id]
     );
-    res.redirect(`${process.env.APP_URL}/administration#integrations`);
+    logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.connected', 'company', req.user.company_id, null, null);
+    res.json({ connected: true });
   } catch (err) {
-    logger.error({ err }, 'catch block error');
-    res.redirect(`${process.env.APP_URL}/administration#integrations?error=auth_failed`);
+    logger.error({ err }, '[QBO callback complete]');
+    res.status(500).json({ error: 'Failed to connect QuickBooks', code: 'auth_failed' });
   }
-}
-router.get('/callback', oauthCallback);
+});
 
 // DELETE /api/qbo/disconnect
 router.delete('/disconnect', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
@@ -402,6 +489,16 @@ router.post('/expenses', requireAdmin, requirePerm('manage_integrations'), async
   }
 });
 
+const sha = (s, n = 32) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, n);
+
+// Intuit requestid for a TimeActivity (max 50 chars). Normal pushes, retry and the
+// auto-push on approval all use `ops-ta-<id>` so a lost response dedupes; a forced
+// re-push of an already-synced entry is versioned by what it replaces.
+function timeActivityRequestId(entry, hours, force) {
+  if (!force || !entry.qbo_activity_id) return `ops-ta-${entry.id}`;
+  return `ops-ta-${entry.id}-v${sha(`${entry.qbo_activity_id}|${Math.round(hours * 60)}`, 16)}`;
+}
+
 // POST /api/qbo/push — push time entries to QBO for a date range
 // Body: { from, to, force } — force=true re-pushes already-synced entries
 router.post('/push', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
@@ -423,12 +520,13 @@ router.post('/push', requireAdmin, requirePerm('manage_integrations'), async (re
 
     const pushRoleById = {};
     result.rows.forEach(e => { pushRoleById[e.user_id] = e.role_id; });
-    const entries = roundEntriesFromSettings(result.rows, await loadSettings(companyId), { workerRoleById: pushRoleById });
+    // Paid (rounded) punch, break-net — the same helper the retry + auto-push use.
+    const entries = qbo.timeActivityHours(result.rows, await loadSettings(companyId), pushRoleById);
     const skipped = [];
     const pushed = [];
     let alreadySynced = 0;
 
-    for (const entry of entries) {
+    for (const { entry, hours, workDate } of entries) {
       // Skip already-synced entries unless force re-push requested
       if (entry.qbo_activity_id && !force) {
         alreadySynced++;
@@ -449,12 +547,6 @@ router.post('/push', requireAdmin, requirePerm('manage_integrations'), async (re
         continue;
       }
 
-      // Correct hours: handle midnight-crossing and subtract break minutes
-      let ms = new Date(`1970-01-01T${entry.end_time}`) - new Date(`1970-01-01T${entry.start_time}`);
-      if (ms < 0) ms += 86400000;
-      const hours = Math.max(0, ms / 3600000 - (entry.break_minutes || 0) / 60);
-      const workDate = entry.work_date.toISOString().substring(0, 10);
-
       try {
         const activity = await qbo.pushTimeActivity(companyId, {
           ...(usesVendor ? { vendorId: entry.qbo_vendor_id } : { employeeId: entry.qbo_employee_id }),
@@ -464,8 +556,11 @@ router.post('/push', requireAdmin, requirePerm('manage_integrations'), async (re
           hours,
           description: entry.notes || '',
           // One activity per time entry — a double-click sends the same key so Intuit
-          // dedupes instead of creating a duplicate.
-          requestId: `ops-ta-${entry.id}`,
+          // dedupes instead of creating a duplicate. A FORCE re-push of an already-synced
+          // entry must create a new activity, so it carries a version suffix derived from
+          // the activity it replaces + the hours (reusing ops-ta-<id> just got the old one
+          // back from Intuit's dedupe); a double-click of the same force still dedupes.
+          requestId: timeActivityRequestId(entry, hours, force),
         });
         // Record the QB activity ID to prevent future duplicates
         await pool.query(
@@ -689,17 +784,65 @@ router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), 
 // ─── Push Bills ──────────────────────────────────────────────────────────
 // Gathers approved time entries + approved reimbursements in a date range for
 // the selected contractor-mapped workers, groups by vendor, and creates one
-// QBO Bill per vendor. Labor lines are item-based (hours × rate on an Item),
-// reimbursement lines are account-based (against qbo_expense_account_id).
+// QBO Bill per vendor. Labor lines are item-based, reimbursement lines are
+// account-based (against qbo_expense_account_id).
+//
+// Every labor dollar comes from the PAY ENGINE (buildPayStatement, the same
+// assembler behind the invoice / stubs / payroll CSV), so a bill is what the
+// worker is paid. Before, bills re-derived pay on their own: gross punch hours
+// (break ignored — 07:00–15:30 with a 30-min break billed 8.5h), every hour at
+// the worker's hourly rate (prevailing + daily-rate workers mispriced), and an
+// OT line of OT hours × rate × (multiplier − 1) that mispriced tiers / rest-day /
+// 7th-day / weighted-average configs.
+//
+// Lines: one straight-time line per entry (paid hours × the rate that entry
+// earns — job-costed to its customer/class), then the OT premium, night
+// differential and rule-generated pay (min-daily floors, weekly guarantee, paid
+// leave) as their own lines. The OT line is the remainder that makes the bill
+// equal the statement to the cent.
+//
+// Range-level pay (floors, weekly guarantee, leave) isn't tied to one entry, so
+// it's billed only on the FIRST bill for a worker+range (nothing in range billed
+// yet) or a forced re-push — a re-push after late approvals bills only the new
+// entries, and can't bill a guarantee twice.
+
+const toCents = n => Math.round((Number(n) || 0) * 100);
+const RANGE_LEVEL_KINDS = new Set(['weekly_guarantee', 'sick', 'vacation']);
+const NO_LEAVE = { sick: 0, vacation: 0 };
+
+function isoDate(d) {
+  if (!d) return null;
+  if (typeof d === 'string') return d.substring(0, 10);
+  try { return d.toISOString().substring(0, 10); } catch { return String(d).substring(0, 10); }
+}
+
+// The week_start-aligned full weeks touching [from,to], so weekly OT sees the
+// whole week (same idea as the pay-statement loaders).
+function billWeekSpan(from, to, weekStart) {
+  if (!from || !to) return null;
+  const end = startOfWeek(to, weekStart);
+  end.setDate(end.getDate() + 6);
+  return { from: toYMD(startOfWeek(from, weekStart)), to: toYMD(end) };
+}
+
+function badRange(from, to) {
+  return (from && !isValidIsoDate(from)) || (to && !isValidIsoDate(to)) || (from && to && from > to);
+}
 
 async function gatherBillData(companyId, { from, to, workerIds, force }, settings) {
   const ids = Array.isArray(workerIds) && workerIds.length ? workerIds : null;
+  const span = billWeekSpan(from, to, settings.week_start);
   const [timeRows, reimbRows] = await Promise.all([
     pool.query(
-      `SELECT te.id, te.user_id, te.project_id, te.work_date, te.start_time, te.end_time,
-              te.notes, te.qbo_bill_id, te.qbo_activity_id, te.wage_type, te.break_minutes,
-              u.full_name, u.qbo_vendor_id, u.hourly_rate, u.worker_type, u.overtime_rule, u.role_id,
-              p.qbo_class_id, p.qbo_customer_id, p.name AS project_name
+      // work_date as 'YYYY-MM-DD' text: the rules engine keys on the string (a
+      // Date silently no-ops date-scoped rules). Fetches the full weeks touching
+      // the range — out-of-range rows are weekly-OT context only, never billed.
+      `SELECT te.id, te.user_id, te.project_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date,
+              te.start_time, te.end_time, te.notes, te.qbo_bill_id, te.qbo_activity_id, te.wage_type,
+              te.break_minutes, te.mileage, te.overtime_hours_override,
+              u.full_name, u.qbo_vendor_id, u.hourly_rate, u.rate_type, u.worker_type, u.overtime_rule,
+              u.role_id, u.guaranteed_weekly_hours,
+              p.qbo_class_id, p.qbo_customer_id, p.name AS project_name, p.prevailing_wage_rate
          FROM time_entries te
          JOIN users u    ON te.user_id = u.id
          LEFT JOIN projects p ON te.project_id = p.id
@@ -711,7 +854,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
           AND u.qbo_vendor_id IS NOT NULL
           AND u.worker_type <> 'unpaid'
         ORDER BY te.user_id, te.work_date, te.start_time`,
-      [companyId, from || null, to || null, ids]
+      [companyId, (span ? span.from : from) || null, (span ? span.to : to) || null, ids]
     ),
     pool.query(
       `SELECT r.id, r.user_id, r.project_id, r.expense_date, r.amount, r.description, r.category,
@@ -731,184 +874,280 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     ),
   ]);
 
-  const billRoleById = {};
-  timeRows.rows.forEach(e => { billRoleById[e.user_id] = e.role_id; });
-  const paidTimeRows = roundEntriesFromSettings(timeRows.rows, settings, { workerRoleById: billRoleById });
+  const roleById = {};
+  timeRows.rows.forEach(e => { roleById[e.user_id] = e.role_id; });
+  // Every punch billed is the PAID punch (hours-rules rounding), like every pay surface.
+  const paidRows = roundEntriesFromSettings(timeRows.rows, settings, { workerRoleById: roleById });
 
-  // Group per worker (vendor)
+  const projectRateMap = {};
+  for (const e of paidRows) {
+    if (e.project_id != null && e.prevailing_wage_rate != null) projectRateMap[e.project_id] = parseFloat(e.prevailing_wage_rate);
+  }
+
   const byUser = new Map();
-  const get = (uid) => {
-    if (!byUser.has(uid)) byUser.set(uid, { userId: uid, fullName: '', vendorId: '', hourlyRate: 0, overtimeRule: null, roleId: null, timeEntries: [], reimbursements: [] });
+  const get = (uid, row) => {
+    if (!byUser.has(uid)) {
+      byUser.set(uid, {
+        userId: uid, fullName: row.full_name, vendorId: row.qbo_vendor_id, worker: null,
+        billable: [], context: [], alreadyBilled: 0, workedDates: new Set(), reimbursements: [],
+      });
+    }
     return byUser.get(uid);
   };
-  for (const te of paidTimeRows) {
-    if (te.qbo_bill_id && !force) continue;
-    const hours = hoursBetween(te.start_time, te.end_time);
-    if (hours <= 0) continue;
-    const g = get(te.user_id);
-    g.fullName = te.full_name;
-    g.vendorId = te.qbo_vendor_id;
-    g.hourlyRate = parseFloat(te.hourly_rate) || 0;
-    g.overtimeRule = te.overtime_rule || g.overtimeRule;
-    g.roleId = te.role_id ?? g.roleId;
-    g.timeEntries.push({
-      id: te.id, workDate: te.work_date, hours,
-      wageType: te.wage_type || 'regular',
-      breakMinutes: te.break_minutes || 0,
-      startTime: te.start_time,
-      endTime: te.end_time,
-      classId: te.qbo_class_id || null,
-      customerId: te.qbo_customer_id || null,
-      projectName: te.project_name || '',
-      description: te.notes || '',
-    });
+  const inRange = d => (!from || d >= from) && (!to || d <= to);
+  for (const te of paidRows) {
+    const g = get(te.user_id, te);
+    g.worker = g.worker || {
+      id: te.user_id, full_name: te.full_name, hourly_rate: te.hourly_rate, rate_type: te.rate_type || 'hourly',
+      overtime_rule: te.overtime_rule, role_id: te.role_id, worker_type: te.worker_type,
+      guaranteed_weekly_hours: te.guaranteed_weekly_hours || 0,
+    };
+    if (te.wage_type === 'regular') g.workedDates.add(te.work_date);
+    if (!inRange(te.work_date)) { g.context.push(te); continue; }
+    if (te.qbo_bill_id && !force) { g.alreadyBilled++; continue; }
+    g.billable.push(te);
   }
   for (const r of reimbRows.rows) {
     if (r.qbo_bill_id && !force) continue;
-    const g = get(r.user_id);
-    g.fullName = r.full_name;
-    g.vendorId = r.qbo_vendor_id;
+    const g = get(r.user_id, r);
     g.reimbursements.push({
       id: r.id, expenseDate: r.expense_date, amount: parseFloat(r.amount) || 0,
+      qboBillId: r.qbo_bill_id || null,
       classId: r.qbo_class_id || null,
       customerId: r.qbo_customer_id || null,
       projectName: r.project_name || '',
       description: r.description || r.category || '',
     });
   }
-  return Array.from(byUser.values()).filter(g => g.timeEntries.length || g.reimbursements.length);
-}
+  const groups = Array.from(byUser.values()).filter(g => g.billable.length || g.reimbursements.length);
 
-function hoursBetween(start, end) {
-  if (!start || !end) return 0;
-  const s = new Date(`1970-01-01T${start}`);
-  let e = new Date(`1970-01-01T${end}`);
-  if (e < s) e = new Date(e.getTime() + 24 * 3600 * 1000);
-  return Math.max(0, (e - s) / 3600000);
-}
+  // Paid leave for the workers whose FIRST bill for this range this is (see header).
+  const firstBill = g => !!force || g.alreadyBilled === 0;
+  const leaveWorkers = groups.filter(g => g.worker && g.billable.length && firstBill(g)).map(g => g.worker);
+  const leaveByUser = (from && to && leaveWorkers.length)
+    ? await computeCompanyLeave({ companyId, workers: leaveWorkers, settings, from, to })
+    : new Map();
 
-function isoDate(d) {
-  if (!d) return null;
-  if (typeof d === 'string') return d.substring(0, 10);
-  try { return d.toISOString().substring(0, 10); } catch { return String(d).substring(0, 10); }
+  for (const g of groups) {
+    g.labor = g.worker && g.billable.length
+      ? billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel: firstBill(g), leave: leaveByUser.get(g.worker.id) || NO_LEAVE })
+      : null;
+  }
+  return groups;
 }
 
 /**
- * Pull overtime settings the bill push needs. Returns company defaults; the
- * per-entry wage_type and per-user overtime_rule override-selection happens
- * inside computeOT / computeGroupOvertime.
+ * Price one worker's billable entries with the pay engine and split the result
+ * into bill lines (amounts in integer cents). Sum of every line === the
+ * statement's labor pay (minus range-level pay when it's excluded).
  */
-async function getOvertimeSettings(companyId) {
-  // Loads the WHOLE settings object, not the four overtime keys it used to
-  // cherry-pick. That narrow SELECT is exactly why QuickBooks never saw
-  // `hours_rules`: the policy wasn't in the list, so it couldn't be applied.
-  const settings = await loadSettings(companyId);
-  const rule = settings.overtime_rule || 'daily';
-  const threshold = otThreshold(settings, rule);
-  const multiplier = parseFloat(settings.overtime_multiplier) || 1.5;
-  const weekStart = parseInt(settings.week_start ?? 1, 10);
-  return { rule, threshold, multiplier, weekStart, settings };
-}
+function billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel, leave }) {
+  const worker = includeRangeLevel ? g.worker : { ...g.worker, guaranteed_weekly_hours: 0 };
+  const stmt = buildPayStatement({
+    worker,
+    entries: g.billable,
+    weekContextEntries: g.context,
+    reimbursements: [],
+    leave: includeRangeLevel ? leave : NO_LEAVE,
+    deductions: [], // a bill is gross pay; deductions are the payer's side
+    otConfig: otConfigFromSettings(settings, worker.role_id ?? null, worker.id),
+    projectRateMap,
+    settings,
+    from: from || null,
+    to: to || null,
+    weekWorkedDays: g.workedDates,
+  });
+  const { rate, rateType, prevailingWageRate } = stmt.rates;
+  const shiftHours = parseFloat(settings.regular_shift_hours) || 8;
+  const hourly = rateType === 'daily' ? (shiftHours > 0 ? rate / shiftHours : 0) : rate;
+  const paidHoursOf = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
+  const baseRateOf = e => (e.wage_type === 'prevailing'
+    ? (projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevailingWageRate)
+    : rate);
 
-/**
- * Compute overtime hours and premium dollars for one contractor group.
- * Uses the worker's overtime_rule if set, else the company default.
- * Premium = ot_hours × base_rate × (multiplier - 1), which is what needs to
- * be added on top of the straight hours × base_rate already billed per entry.
- */
-function computeGroupOvertime(group, ot) {
-  // Honor "Allow overtime = off" (feature_overtime) the same as the pay engine.
-  const rule = otRuleFromSettings(ot.settings, group.overtimeRule || ot.rule);
-  if (rule === 'none' || !group.timeEntries.length) {
-    return { overtimeHours: 0, overtimePremium: 0, nightHours: 0, nightPremium: 0, rule };
-  }
-  // These punches are already the paid ones — gatherBillData rounds at fetch.
-  const entries = group.timeEntries.map(te => ({
-    work_date:     te.workDate,
-    start_time:    te.startTime,
-    end_time:      te.endTime,
-    wage_type:     te.wageType,
-    break_minutes: te.breakMinutes,
-  }));
-  const otConfig = otConfigFromSettings(ot.settings, group.roleId ?? null, group.userId ?? null);
-  if (hasSimpleOtConfig(otConfig)) {
-    // ALL worked hours (incl. prevailing) count toward the threshold — before,
-    // prevailing hours never earned OT here. QBO bills labor flat at the worker's
-    // rate, so OT is priced at that same rate; the premium is what's added on top
-    // of the straight time already billed per entry.
-    const method = ot.settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
-    // Threshold for THIS worker's effective rule — the company threshold only
-    // applies when their rule matches the company rule (see otThreshold).
-    const ra = rateAwarePay(entries, { rule, threshold: otThreshold(ot.settings, rule), weekStart: ot.weekStart, otMult: ot.multiplier, baseRateOf: () => group.hourlyRate, method });
-    const premium = ra.cost - (ra.straightHours + ra.overtimeHours) * group.hourlyRate;
-    // Simple configs never carry a night differential (that routes to the per-band path).
-    return { overtimeHours: ra.overtimeHours, overtimePremium: premium, nightHours: 0, nightPremium: 0, rule };
-  }
-  // Premium OT configs (tiers / rest-day / 7th-day / window / night): keep the
-  // per-band path — OT on regular only, tiers billed at their own multipliers.
-  const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null, userId: group.userId ?? null });
-  const premium = otBandsCost(otBands, group.hourlyRate, ot.multiplier)
-                - overtimeHours * group.hourlyRate;
-  // Night differential is billed as its own premium line (before, QBO omitted it
-  // entirely — a night-shift company's bill underpaid by the night premium).
-  let nightHours = 0, nightPremium = 0;
-  const nd = otConfig && otConfig.nightDifferential;
-  if (nd) {
-    const npct = parseFloat(nd.pct) || 0, nfrom = parseFloat(nd.fromHour), nto = parseFloat(nd.toHour);
-    if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
-      nightPremium = nightPremiumCost(entries, nd, group.hourlyRate);
-      for (const e of entries) if (e.wage_type === 'regular') nightHours += nightHoursForEntry(e, nfrom, nto);
+  const real = stmt.entries.filter(e => !e.synthetic);
+  // Daily-rate workers: each worked day pays the daily rate once — split it across
+  // that day's entries by hours so every project still gets its share.
+  const dayHours = new Map(), dayCount = new Map();
+  if (rateType === 'daily') {
+    for (const e of real) {
+      if (e.wage_type !== 'regular') continue;
+      dayHours.set(e.work_date, (dayHours.get(e.work_date) || 0) + paidHoursOf(e));
+      dayCount.set(e.work_date, (dayCount.get(e.work_date) || 0) + 1);
     }
   }
-  return { overtimeHours, overtimePremium: premium, nightHours, nightPremium, rule };
+  const entryLines = real.map(e => {
+    const hours = paidHoursOf(e);
+    if (rateType === 'daily' && e.wage_type === 'regular') {
+      const dh = dayHours.get(e.work_date) || 0;
+      const share = dh > 0 ? hours / dh : 1 / (dayCount.get(e.work_date) || 1);
+      const amount = rate * share;
+      return { entry: e, hours, unitPrice: hours > 0 ? amount / hours : amount, amountC: toCents(amount) };
+    }
+    const base = baseRateOf(e);
+    return { entry: e, hours, unitPrice: base, amountC: toCents(hours * base) };
+  });
+
+  // Rule-generated hours (min-daily floor top-ups, no-clock-in guarantee days) are
+  // inside the statement's regular pay; price them out as their own lines.
+  const floorLines = stmt.entries
+    .filter(e => e.synthetic && !RANGE_LEVEL_KINDS.has(e.kind))
+    .map(f => {
+      const perHour = rateType === 'daily' ? (f.kind === 'guarantee' ? hourly : 0) : rate;
+      return {
+        hours: parseFloat(f.hours) || 0,
+        amountC: toCents((parseFloat(f.hours) || 0) * perHour),
+        description: `${isoDate(f.work_date)} · ${f.kind === 'guarantee' ? 'Guaranteed hours (no clock-in)' : 'Minimum daily hours top-up'}`,
+      };
+    })
+    .filter(l => l.amountC !== 0);
+  const floorC = floorLines.reduce((s, l) => s + l.amountC, 0);
+
+  const c = stmt.cost;
+  let targetC = toCents(c.regular) + toCents(c.overtime) + toCents(c.prevailing) + toCents(c.night)
+    + toCents(c.guarantee) + toCents(c.sick) + toCents(c.vacation);
+  const rangeLines = [];
+  if (includeRangeLevel) {
+    rangeLines.push(...floorLines);
+    if (toCents(c.guarantee)) rangeLines.push({ hours: stmt.hours.guaranteeShortfall, amountC: toCents(c.guarantee), description: 'Weekly guaranteed-hours top-up' });
+    if (toCents(c.sick)) rangeLines.push({ hours: stmt.hours.sick, amountC: toCents(c.sick), description: 'Paid sick leave' });
+    if (toCents(c.vacation)) rangeLines.push({ hours: stmt.hours.vacation, amountC: toCents(c.vacation), description: 'Paid vacation' });
+  } else {
+    targetC -= floorC; // not billed on a follow-up bill (see header)
+  }
+  const nightC = toCents(c.night);
+  const straightC = entryLines.reduce((s, l) => s + l.amountC, 0);
+  const rangeC = rangeLines.reduce((s, l) => s + l.amountC, 0);
+  // The OT premium is what the engine paid beyond straight time — tiers, rest-day,
+  // 7th-day, weighted-average and prevailing OT all land here at their real price.
+  const premiumC = targetC - straightC - nightC - rangeC;
+  const overtimeHours = stmt.hours.overtime || 0;
+  const bands = (stmt.hours.overtimeBands || []).map(b => `${Number(b.hours).toFixed(2)} h @ ${b.mult}×`).join(', ');
+  const rule = otRuleFromSettings(settings, worker.overtime_rule);
+
+  return {
+    entryLines,
+    rangeLines,
+    premium: {
+      hours: overtimeHours,
+      amountC: premiumC,
+      description: overtimeHours > 0
+        ? `Overtime premium — ${bands || `${overtimeHours.toFixed(2)} h`} (${rule}${rule === 'none' ? '' : `, threshold ${otThreshold(settings, rule)} h`})`
+        : 'Pay rounding adjustment',
+    },
+    night: { hours: stmt.hours.night || 0, amountC: nightC },
+    hours: entryLines.reduce((s, l) => s + l.hours, 0),
+    rate,
+    totalC: targetC,
+    includeRangeLevel,
+  };
+}
+
+// Bill lines for one vendor group (labor from billLabor + reimbursements).
+function billLinesFor(g, { laborItemId, expenseAccountId }) {
+  const lines = [];
+  const L = g.labor;
+  if (L) {
+    for (const l of L.entryLines) {
+      if (l.amountC === 0 && l.hours <= 0) continue;
+      const e = l.entry;
+      lines.push({
+        type: 'item', itemId: laborItemId,
+        qty: l.hours, unitPrice: l.unitPrice, amount: l.amountC / 100,
+        description: `${isoDate(e.work_date)}${e.project_name ? ' · ' + e.project_name : ''}${e.wage_type === 'prevailing' ? ' (prevailing)' : ''}${e.notes ? ' — ' + e.notes : ''}`.slice(0, 4000),
+        customerId: e.qbo_customer_id || null,
+        classId: e.qbo_class_id || null,
+      });
+    }
+    for (const l of L.rangeLines) {
+      lines.push({ type: 'item', itemId: laborItemId, qty: l.hours, unitPrice: l.hours > 0 ? l.amountC / 100 / l.hours : l.amountC / 100, amount: l.amountC / 100, description: l.description });
+    }
+    if (L.premium.amountC !== 0) {
+      const h = L.premium.hours;
+      lines.push({ type: 'item', itemId: laborItemId, qty: h > 0 ? h : 1, unitPrice: h > 0 ? L.premium.amountC / 100 / h : L.premium.amountC / 100, amount: L.premium.amountC / 100, description: L.premium.description });
+    }
+    if (L.night.amountC !== 0) {
+      const h = L.night.hours;
+      lines.push({ type: 'item', itemId: laborItemId, qty: h > 0 ? h : 1, unitPrice: h > 0 ? L.night.amountC / 100 / h : L.night.amountC / 100, amount: L.night.amountC / 100, description: `Night differential premium on ${h.toFixed(2)} h` });
+    }
+  }
+  for (const r of g.reimbursements) {
+    lines.push({
+      type: 'account',
+      accountId: expenseAccountId,
+      amount: r.amount,
+      description: `${isoDate(r.expenseDate)}${r.projectName ? ' · ' + r.projectName : ''}${r.description ? ' — ' + r.description : ''}`.slice(0, 4000),
+      customerId: r.customerId,
+      classId: r.classId,
+    });
+  }
+  return lines;
+}
+
+// Intuit requestid for a vendor bill: the CONTENT (entry + reimbursement ids and
+// amounts), not just vendor+range. Keyed by range alone, re-pushing the range after
+// a late approval got the ORIGINAL bill back from Intuit's dedupe and stamped the
+// new entries with it, so they were never billed. A force re-push is versioned by
+// the bill(s) it replaces, so it creates a new bill but a double-click still dedupes.
+function billRequestId(companyId, g, { from, to, force, totalC }) {
+  const te = (g.labor ? g.labor.entryLines : []).map(l => `${l.entry.id}:${l.amountC}`).sort().join(',');
+  const rb = g.reimbursements.map(r => `${r.id}:${toCents(r.amount)}`).sort().join(',');
+  const prior = force
+    ? [...new Set([...g.billable.map(e => e.qbo_bill_id), ...g.reimbursements.map(r => r.qboBillId)].filter(Boolean))].sort().join(',')
+    : '';
+  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, `t:${totalC}`, force ? `f:${prior}` : ''].join('|'))}`;
 }
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
 // Body: { from, to, worker_ids, force }
 router.post('/push-bills-preview', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, worker_ids, force } = req.body;
+  if (badRange(from, to)) return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
   try {
     // Settings first: gatherBillData needs the policy to compute the PAID punch.
-    const ot = await getOvertimeSettings(req.user.company_id);
-    const groups = await gatherBillData(
-      req.user.company_id, { from, to, workerIds: worker_ids, force }, ot.settings);
+    const settings = await loadSettings(req.user.company_id);
+    const groups = await gatherBillData(req.user.company_id, { from, to, workerIds: worker_ids, force }, settings);
     const result = groups.map(g => {
-      const laborHours = g.timeEntries.reduce((s, t) => s + t.hours, 0);
-      const laborAmount = laborHours * g.hourlyRate;
-      const reimbAmount = g.reimbursements.reduce((s, r) => s + r.amount, 0);
-      const { overtimeHours, overtimePremium, nightHours, nightPremium } = computeGroupOvertime(g, ot);
+      const L = g.labor;
+      const reimbC = g.reimbursements.reduce((s, r) => s + toCents(r.amount), 0);
+      const straightC = L ? L.entryLines.reduce((s, l) => s + l.amountC, 0) : 0;
+      const rangeC = L ? L.rangeLines.reduce((s, l) => s + l.amountC, 0) : 0;
       return {
         user_id: g.userId,
         full_name: g.fullName,
-        hourly_rate: g.hourlyRate,
-        time_entries: g.timeEntries.length,
-        hours: parseFloat(laborHours.toFixed(2)),
-        labor_amount: parseFloat(laborAmount.toFixed(2)),
-        overtime_hours: parseFloat(overtimeHours.toFixed(2)),
-        overtime_premium: parseFloat(overtimePremium.toFixed(2)),
-        night_hours: parseFloat((nightHours || 0).toFixed(2)),
-        night_premium: parseFloat((nightPremium || 0).toFixed(2)),
+        hourly_rate: L ? L.rate : (parseFloat(g.worker?.hourly_rate) || 0),
+        time_entries: g.billable.length,
+        hours: L ? parseFloat(L.hours.toFixed(2)) : 0,
+        // Straight time + rule-generated pay (floors, weekly guarantee, leave).
+        labor_amount: (straightC + rangeC) / 100,
+        other_pay: rangeC / 100,
+        overtime_hours: L ? parseFloat((L.premium.hours || 0).toFixed(2)) : 0,
+        overtime_premium: L ? L.premium.amountC / 100 : 0,
+        night_hours: L ? parseFloat((L.night.hours || 0).toFixed(2)) : 0,
+        night_premium: L ? L.night.amountC / 100 : 0,
+        range_level_pay_included: L ? L.includeRangeLevel : true,
         reimbursements: g.reimbursements.length,
-        reimb_amount: parseFloat(reimbAmount.toFixed(2)),
-        time_entry_rows: g.timeEntries.map(te => ({
-          id: te.id,
-          work_date: isoDate(te.workDate),
-          hours: parseFloat(te.hours.toFixed(2)),
-          amount: parseFloat((te.hours * g.hourlyRate).toFixed(2)),
-          project_name: te.projectName,
-          description: te.description,
+        reimb_amount: reimbC / 100,
+        time_entry_rows: (L ? L.entryLines : []).map(l => ({
+          id: l.entry.id,
+          work_date: isoDate(l.entry.work_date),
+          hours: parseFloat(l.hours.toFixed(2)),
+          amount: l.amountC / 100,
+          project_name: l.entry.project_name || '',
+          description: l.entry.notes || '',
         })),
         reimbursement_rows: g.reimbursements.map(r => ({
           id: r.id,
           expense_date: isoDate(r.expenseDate),
-          amount: parseFloat(r.amount.toFixed(2)),
+          amount: toCents(r.amount) / 100,
           project_name: r.projectName,
           description: r.description,
         })),
-        total: parseFloat((laborAmount + overtimePremium + nightPremium + reimbAmount).toFixed(2)),
+        total: ((L ? L.totalC : 0) + reimbC) / 100,
       };
     });
-    res.json({ groups: result, overtime: { rule: ot.rule, threshold: ot.threshold, multiplier: ot.multiplier } });
+    const rule = otRuleFromSettings(settings, null);
+    res.json({ groups: result, overtime: { rule, threshold: otThreshold(settings, rule), multiplier: parseFloat(settings.overtime_multiplier) || 1.5 } });
   } catch (err) {
     logger.error({ err }, 'push-bills-preview error');
     res.status(500).json({ error: 'Server error' });
@@ -920,6 +1159,7 @@ router.post('/push-bills-preview', requireAdmin, requirePerm('manage_integration
 router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, worker_ids, force } = req.body;
   const companyId = req.user.company_id;
+  if (badRange(from, to)) return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
   try {
     const settingRows = await pool.query(
       "SELECT key, value FROM settings WHERE company_id = $1 AND key IN ('qbo_expense_account_id', 'qbo_labor_item_id', 'qbo_bill_terms_days')",
@@ -934,9 +1174,8 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
     const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
-    const ot = await getOvertimeSettings(companyId);
-    const groups = await gatherBillData(
-      companyId, { from, to, workerIds: worker_ids, force }, ot.settings);
+    const settings = await loadSettings(companyId);
+    const groups = await gatherBillData(companyId, { from, to, workerIds: worker_ids, force }, settings);
 
     // Only require the expense account when we actually need it (any reimbursement
     // line in this push). Contractors paid for time only don't need it.
@@ -956,54 +1195,9 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
     const skipped = [];
 
     for (const g of groups) {
-      const lines = [];
-      for (const te of g.timeEntries) {
-        lines.push({
-          type: 'item',
-          itemId: laborItemId,
-          qty: te.hours,
-          unitPrice: g.hourlyRate,
-          description: `${isoDate(te.workDate)}${te.projectName ? ' · ' + te.projectName : ''}${te.description ? ' — ' + te.description : ''}`.slice(0, 4000),
-          customerId: te.customerId,
-          classId: te.classId,
-        });
-      }
-      for (const r of g.reimbursements) {
-        lines.push({
-          type: 'account',
-          accountId: expenseAccountId,
-          amount: r.amount,
-          description: `${isoDate(r.expenseDate)}${r.projectName ? ' · ' + r.projectName : ''}${r.description ? ' — ' + r.description : ''}`.slice(0, 4000),
-          customerId: r.customerId,
-          classId: r.classId,
-        });
-      }
-
-      // Overtime premium: an extra item-based line that covers the (multiplier-1)
-      // uplift on OT hours. The per-entry lines above price straight hours at
-      // the base rate; this line makes the contractor whole for their OT shifts.
-      const { overtimeHours, overtimePremium, nightHours, nightPremium } = computeGroupOvertime(g, ot);
-      if (overtimeHours > 0 && overtimePremium > 0) {
-        lines.push({
-          type: 'item',
-          itemId: laborItemId,
-          qty: parseFloat(overtimeHours.toFixed(2)),
-          unitPrice: parseFloat((g.hourlyRate * (ot.multiplier - 1)).toFixed(4)),
-          description: `Overtime premium — ${ot.multiplier}× on ${overtimeHours.toFixed(2)} h (${ot.rule}, threshold ${ot.threshold} h)`,
-        });
-      }
-      // Night differential — its own premium line (was previously never billed).
-      if (nightHours > 0 && nightPremium > 0) {
-        lines.push({
-          type: 'item',
-          itemId: laborItemId,
-          qty: parseFloat(nightHours.toFixed(2)),
-          unitPrice: parseFloat((nightPremium / nightHours).toFixed(4)),
-          description: `Night differential premium on ${nightHours.toFixed(2)} h`,
-        });
-      }
-
+      const lines = billLinesFor(g, { laborItemId, expenseAccountId });
       if (!lines.length) continue;
+      const totalC = lines.reduce((s, l) => s + toCents(l.amount != null ? l.amount : l.qty * l.unitPrice), 0);
 
       try {
         const bill = await qbo.createBill(companyId, {
@@ -1012,13 +1206,19 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
           dueDate,
           memo: `OpsFloa bill ${from || ''}–${to || ''} for ${g.fullName}`.trim(),
           lines,
-          // Idempotency for accidental double-submit: one bill per vendor+range. A deliberate
-          // force re-push is meant to create a fresh bill, so it carries no dedup key.
-          requestId: force ? undefined
-            : `ops-bill-${crypto.createHash('sha256').update(`${companyId}|${g.vendorId}|${from || ''}|${to || ''}`).digest('hex').slice(0, 32)}`,
+          requestId: billRequestId(companyId, g, { from, to, force, totalC }),
         });
+        // Defensive: if Intuit hands back a bill that isn't this content (a dedupe
+        // hit on some other bill), don't stamp these rows with it — they'd never bill.
+        if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
+          skipped.push({
+            user_id: g.userId, full_name: g.fullName,
+            reason: `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)}, expected $${(totalC / 100).toFixed(2)} — rows were not marked billed.`,
+          });
+          continue;
+        }
         const billId = bill?.Id || 'synced';
-        const timeIds = g.timeEntries.map(t => t.id);
+        const timeIds = g.billable.map(t => t.id);
         const reimbIds = g.reimbursements.map(r => r.id);
         if (timeIds.length) {
           await pool.query(
@@ -1032,7 +1232,7 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
             [billId, reimbIds]
           );
         }
-        pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: timeIds.length, reimbursements: reimbIds.length });
+        pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: timeIds.length, reimbursements: reimbIds.length, total: totalC / 100 });
       } catch (pushErr) {
         skipped.push({ user_id: g.userId, full_name: g.fullName, reason: pushErr.response?.data?.Fault?.Error?.[0]?.Detail || pushErr.message });
       }
@@ -1049,6 +1249,16 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
 
 // POST /api/qbo/push-payroll — push a payroll journal entry for a date range
 // Body: { from, to, debit_account_id, credit_account_id }
+//
+// Every posting is recorded in qbo_payroll_journals (0207), so a push can see
+// what's already in QuickBooks for the range:
+//   - nothing yet            → post the gross
+//   - same range, same total → no-op, reported as already_posted
+//   - same range, new total  → post the DIFFERENCE as an adjustment (reversed
+//                              debit/credit when the total went down)
+//   - an OVERLAPPING range   → 409, never double-post the overlap
+// Before, the Intuit key was company|from|to only: a corrected re-push silently
+// returned the original JE, and an overlapping range posted the overlap twice.
 router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), requirePerm('manage_pay_periods'), requirePerm('view_worker_wages'), async (req, res) => {
   const { from, to, debit_account_id, credit_account_id } = req.body;
   if (!debit_account_id || !credit_account_id) {
@@ -1090,25 +1300,86 @@ router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), r
       (sum, row) => sum + Math.round(row.statement.totals.grossWages * 100),
       0
     );
-    if (totalCents <= 0) return res.status(400).json({ error: 'No approved payroll found for this date range' });
+
+    const prior = await pool.query(
+      `SELECT to_char(period_from, 'YYYY-MM-DD') AS period_from, to_char(period_to, 'YYYY-MM-DD') AS period_to,
+              amount_cents, qbo_entry_id
+         FROM qbo_payroll_journals
+        WHERE company_id = $1 AND period_from <= $3::date AND period_to >= $2::date
+        ORDER BY created_at, id`,
+      [companyId, from, to]
+    );
+    const overlapping = prior.rows.filter(j => j.period_from !== from || j.period_to !== to);
+    if (overlapping.length) {
+      const ranges = [...new Set(overlapping.map(j => `${j.period_from} – ${j.period_to}`))];
+      return res.status(409).json({
+        error: `A payroll journal was already posted for an overlapping range (${ranges.join(', ')}). Push exactly that range to post a correction, or pick a range that doesn't overlap.`,
+        code: 'overlapping_payroll_journal',
+        ranges,
+      });
+    }
+    const postedCents = prior.rows.reduce((s, j) => s + Number(j.amount_cents || 0), 0);
+    if (!prior.rows.length && totalCents <= 0) return res.status(400).json({ error: 'No approved payroll found for this date range' });
 
     const totalCost = totalCents / 100;
-    const description = `Payroll ${from} – ${to} (${payable.length} workers)`;
-    // Intuit guarantees write idempotency for a repeated requestid. Keep the key
-    // period-scoped so changing accounts and retrying cannot post the same payroll twice.
-    const requestId = `ops-pay-${crypto.createHash('sha256').update(`${companyId}|${from}|${to}`).digest('hex').slice(0, 32)}`;
+    const deltaCents = totalCents - postedCents;
+    if (deltaCents === 0) {
+      const last = prior.rows[prior.rows.length - 1];
+      return res.json({
+        already_posted: true, entry_id: last?.qbo_entry_id || null, amount: 0, payroll_total: totalCost, workers: payable.length,
+        description: `Payroll ${from} – ${to} already posted`,
+        message: `Already posted — QuickBooks has $${totalCost.toFixed(2)} for ${from} – ${to}. Nothing to add.`,
+      });
+    }
+
+    const isAdjustment = prior.rows.length > 0;
+    const amountCents = Math.abs(deltaCents);
+    const reverse = deltaCents < 0;
+    const description = isAdjustment
+      ? `Payroll adjustment ${from} – ${to}: ${reverse ? '−' : '+'}$${(amountCents / 100).toFixed(2)} (total now $${totalCost.toFixed(2)}, ${payable.length} workers)`
+      : `Payroll ${from} – ${to} (${payable.length} workers)`;
+    // Intuit guarantees write idempotency for a repeated requestid. The FIRST
+    // posting of a range keeps the period key it always had, so a range posted
+    // before this ledger existed still dedupes instead of double-posting; every
+    // later posting is keyed by what's already posted + the new content.
+    const workerSig = payable.map(r => `${r.worker.id}:${Math.round(r.statement.totals.grossWages * 100)}`).sort().join(',');
+    const requestId = isAdjustment
+      ? `ops-pay-${sha(`${companyId}|${from}|${to}|posted:${postedCents}|n:${prior.rows.length}|total:${totalCents}|${workerSig}`)}`
+      : `ops-pay-${sha(`${companyId}|${from}|${to}`)}`;
     const entry = await qbo.createJournalEntry(companyId, {
       txnDate: to,
       description,
-      debitAccountId: debit_account_id,
-      creditAccountId: credit_account_id,
-      amount: totalCost,
+      debitAccountId: reverse ? credit_account_id : debit_account_id,
+      creditAccountId: reverse ? debit_account_id : credit_account_id,
+      amount: amountCents / 100,
       requestId,
     });
 
+    // What QuickBooks actually holds for this posting. A first-posting key can hit
+    // a journal created before this ledger existed, with a different amount —
+    // record THAT amount so the next push posts the true difference.
+    const returnedCents = entry && entry.TotalAmt != null ? Math.round(Number(entry.TotalAmt) * 100) : null;
+    const recordedCents = (!isAdjustment && returnedCents != null && returnedCents !== amountCents)
+      ? returnedCents
+      : (reverse ? -amountCents : amountCents);
+    await pool.query(
+      `INSERT INTO qbo_payroll_journals
+         (company_id, period_from, period_to, amount_cents, request_id, qbo_entry_id, debit_account_id, credit_account_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (company_id, request_id) DO NOTHING`,
+      [companyId, from, to, recordedCents, requestId, entry?.Id || null, String(debit_account_id), String(credit_account_id), req.user.id]
+    );
+    const mismatch = recordedCents !== (reverse ? -amountCents : amountCents);
+
     logAudit(companyId, req.user.id, req.user.full_name, 'qbo.payroll_journal_pushed', 'qbo_journal', entry?.Id || null, description,
-      { amount: totalCost, from, to, workers: payable.length, request_id: requestId });
-    res.json({ entry_id: entry?.Id, amount: totalCost, workers: payable.length, request_id: requestId, description });
+      { amount: amountCents / 100, reverse, adjustment: isAdjustment, payroll_total: totalCost, from, to, workers: payable.length, request_id: requestId });
+    res.json({
+      entry_id: entry?.Id, amount: amountCents / 100, workers: payable.length, request_id: requestId, description,
+      adjustment: isAdjustment, reversed: reverse, payroll_total: totalCost,
+      ...(mismatch ? {
+        message: `QuickBooks already had a journal for ${from} – ${to} ($${(recordedCents / 100).toFixed(2)}). Push again to post the $${((totalCents - recordedCents) / 100).toFixed(2)} difference.`,
+      } : {}),
+    });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     const status = err.code === 'qbo_auth_expired' ? 401 : 500;
@@ -1117,7 +1388,7 @@ router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), r
 });
 
 // POST /api/qbo/retry-error/:id — retry a failed QBO sync entry
-router.post('/retry-error/:id', requireAdmin, async (req, res) => {
+router.post('/retry-error/:id', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const errRow = await pool.query(
@@ -1169,16 +1440,12 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
       );
       if (!entry.rows.length) return res.status(404).json({ error: 'Time entry not found' });
       const retryRow = entry.rows[0];
-      const [e] = roundEntriesFromSettings(entry.rows, await loadSettings(companyId), { workerRoleById: { [retryRow.user_id]: retryRow.role_id } });
+      const [{ entry: e, hours, workDate }] = qbo.timeActivityHours(entry.rows, await loadSettings(companyId), { [retryRow.user_id]: retryRow.role_id });
       if (e.worker_type === 'unpaid') return res.status(400).json({ error: 'Worker is unpaid — labor is not synced to QuickBooks' });
       const usesVendor = e.worker_type === 'contractor' || e.worker_type === 'subcontractor';
       const mappedId = usesVendor ? e.qbo_vendor_id : e.qbo_employee_id;
       if (!mappedId) return res.status(400).json({ error: 'Worker has no QBO mapping — set it in QuickBooks settings first' });
       if (!e.qbo_customer_id) return res.status(400).json({ error: 'Project has no QBO customer mapping — set it in QuickBooks settings first' });
-      let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-      if (ms < 0) ms += 86400000;
-      const hours = Math.max(0, ms / 3600000 - (e.break_minutes || 0) / 60);
-      const workDate = e.work_date.toISOString().substring(0, 10);
       const activity = await qbo.pushTimeActivity(companyId, {
         ...(usesVendor ? { vendorId: e.qbo_vendor_id } : { employeeId: e.qbo_employee_id }),
         customerId: e.qbo_customer_id,
@@ -1205,7 +1472,7 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
 });
 
 // POST /api/qbo/workers/create-vendor — create a QBO Vendor for a worker and save vendor ID
-router.post('/workers/create-vendor', requireAdmin, async (req, res) => {
+router.post('/workers/create-vendor', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { user_id, display_name } = req.body;
   if (!user_id || !display_name) return res.status(400).json({ error: 'user_id and display_name are required' });
   try {
