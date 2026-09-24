@@ -46,9 +46,11 @@ jest.mock('../r2', () => ({ getPresignedUploadUrl: jest.fn() }));
 jest.mock('bcryptjs', () => ({ hash: jest.fn().mockResolvedValue('hashed-pw'), compare: jest.fn() }));
 
 const OWNER_ROLE_ID = 200;
+const CUSTOM_BOSS_ROLE_ID = 300; // custom role (not named Owner) carrying owner-level perms
 function mockTargetPerms(u) {
   const { OWNER_PERMISSIONS, BUILTIN_ROLES } = jest.requireActual('../permissions');
   if (u && u.role_id === OWNER_ROLE_ID) return new Set(OWNER_PERMISSIONS);
+  if (u && u.role_id === CUSTOM_BOSS_ROLE_ID) return new Set([...BUILTIN_ROLES.admin.permissions, 'manage_billing', 'delete_company']);
   return new Set(BUILTIN_ROLES.worker.permissions);
 }
 
@@ -255,6 +257,54 @@ describe('PATCH /admin/workers/:id/role — protected targets', () => {
     const res = await request(makeApp()).patch('/api/admin/workers/3/role').send({ role_id: 50 });
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('protected_account');
+    expect(sqlCalls(/^UPDATE users/)).toHaveLength(0);
+  });
+});
+
+describe('role changes — outranks guard (by permissions, not role name)', () => {
+  test('an Admin with assign_roles cannot demote a CUSTOM role holding owner-level perms', async () => {
+    mockPerms = ADMIN_PERMS;
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, name: 'Worker', parent_role: 'worker', is_builtin: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 4, current_legacy_role: 'admin', current_role_id: CUSTOM_BOSS_ROLE_ID, current_role_name: 'Partner', current_role_builtin: false }] });
+    const res = await request(makeApp()).patch('/api/admin/workers/4/role').send({ role_id: 50 });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('owner_protected');
+    expect(sqlCalls(/^UPDATE users/)).toHaveLength(0);
+  });
+
+  test('an Owner-tier caller may change that custom role', async () => {
+    mockPerms = new Set(OWNER_PERMISSIONS);
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, name: 'Worker', parent_role: 'worker', is_builtin: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 4, current_legacy_role: 'admin', current_role_id: CUSTOM_BOSS_ROLE_ID, current_role_name: 'Partner', current_role_builtin: false }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });
+    const res = await request(makeApp()).patch('/api/admin/workers/4/role').send({ role_id: 50 });
+    expect(res.status).toBe(200);
+    expect(sqlCalls(/^UPDATE users SET role_id/)).toHaveLength(1);
+  });
+});
+
+describe('PATCH /admin/workers/:id — rate + rejected role change', () => {
+  const rateStore = require('../utils/rateHistoryStore');
+  afterEach(() => jest.restoreAllMocks());
+
+  test('the role guard runs BEFORE the rate-history write: rejected role → no rate row', async () => {
+    mockPerms = ADMIN_PERMS;
+    jest.spyOn(rateStore, 'readCache').mockResolvedValue({ rate: 20, rate_type: 'hourly' });
+    jest.spyOn(rateStore, 'companyToday').mockResolvedValue('2026-09-24');
+    const addChange = jest.spyOn(rateStore, 'addChange').mockResolvedValue({ previous: null, lockedPeriods: [] });
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 2, role: 'admin', role_id: OWNER_ROLE_ID, email: 'o@x.co' }] })            // target
+      .mockResolvedValueOnce({ rows: [{ id: 50 }] })                                                                   // builtin Worker role
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, name: 'Worker', parent_role: 'worker', is_builtin: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 2, current_legacy_role: 'admin', current_role_id: OWNER_ROLE_ID, current_role_name: 'Owner', current_role_builtin: true }] });
+    const res = await request(makeApp()).patch('/api/admin/workers/2').send({ role: 'worker', hourly_rate: 35 });
+    expect(res.status).toBe(403);
+    expect(addChange).not.toHaveBeenCalled();
     expect(sqlCalls(/^UPDATE users/)).toHaveLength(0);
   });
 });

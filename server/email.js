@@ -20,10 +20,56 @@ const FROM_BARE = FROM_ADDRESS.includes('<') ? (FROM_ADDRESS.match(/<([^>]+)>/)?
 
 // Build the From header, optionally overriding just the display name (quoted so
 // commas/specials in a company name can't malform the header). Address unchanged.
+// A caller-supplied name is a TENANT's company name on a client-facing email
+// (invoice, estimate, …), so it is always shown as "<Company> via OpsFloa":
+// the recipient sees who sent it and that it came through OpsFloa, and a tenant
+// can't make the mail read as if it came straight from some other brand.
+const VIA_SUFFIX = ' via OpsFloa';
 function fromHeader(fromName) {
   if (!fromName) return FROM;
-  const safe = String(fromName).replace(/["\r\n]/g, '').trim().slice(0, 100);
-  return safe ? `"${safe}" <${FROM_BARE}>` : FROM;
+  const safe = String(fromName)
+    .replace(/["\\<>]/g, '')
+    .replace(/\s+/g, ' ') // incl. CR/LF — never a header break
+    .trim()
+    .replace(/\s+via\s+opsfloa$/i, '') // don't double the suffix
+    .slice(0, 80)
+    .trim();
+  return safe ? `"${safe}${VIA_SUFFIX}" <${FROM_BARE}>` : FROM;
+}
+
+// Phishing-abuse limit: a company still in its free TRIAL may send at most this
+// many client-facing emails (sendEmail opts.clientCompanyId) per UTC day. Paying
+// companies are not limited. Counted on companies.client_email_count /
+// client_email_count_day (migration 0215; the counter resets on a new UTC day).
+function trialClientEmailDailyCap() {
+  const n = parseInt(process.env.TRIAL_CLIENT_EMAIL_DAILY_CAP, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 50;
+}
+
+// Count this send against the company's daily trial allowance. Returns true when
+// the cap is exceeded (→ don't send). One statement: the counter only moves for
+// a company whose status is 'trial', so a paying company costs one no-op UPDATE.
+// Fails OPEN (logs) on a DB error — an outage of this counter must not block
+// every invoice email.
+async function trialClientEmailCapExceeded(companyId) {
+  if (companyId == null) return false;
+  try {
+    const pool = require('./db');
+    const r = await pool.query(
+      `UPDATE companies
+          SET client_email_count_day = CURRENT_DATE,
+              client_email_count = CASE WHEN client_email_count_day = CURRENT_DATE
+                                        THEN COALESCE(client_email_count, 0) + 1 ELSE 1 END
+        WHERE id = $1 AND subscription_status = 'trial'
+        RETURNING client_email_count AS sent`,
+      [companyId]
+    );
+    if (!r.rows || !r.rows.length) return false; // not a trial company
+    return Number(r.rows[0].sent) > trialClientEmailDailyCap();
+  } catch (err) {
+    logger.warn({ err: { message: err.message, code: err.code }, companyId }, 'trial client-email cap check failed — allowing send');
+    return false;
+  }
 }
 const REDIRECT_TO = process.env.EMAIL_REDIRECT_TO || 'info@opsfloa.com';
 
@@ -79,12 +125,18 @@ async function deliver(msg) {
 //   { suppressed: 'demo' }     — acting company is the demo tenant
 //   { skipped: <reason> }      — nothing sent, but not a failure (no key, bounce, …)
 // Only `ok === false` signals a real delivery failure.
-// `opts` (optional): { fromName, replyTo } — override the From display name (the
-// address stays on the verified domain) and set a Reply-To so replies reach the
-// sender (e.g. an invoice email shows the contractor's name and replies go to
-// them, not OpsFloa). Existing callers pass nothing and are unaffected.
+// `opts` (optional): { fromName, replyTo, clientCompanyId } — override the From
+// display name (shown as "<name> via OpsFloa"; the address stays on the verified
+// domain) and set a Reply-To so replies reach the sender (e.g. an invoice email
+// shows the contractor's name and replies go to them, not OpsFloa).
+// clientCompanyId marks a CLIENT-FACING send by that company: while the company
+// is in trial it counts against the daily cap and, past it, returns
+// { skipped: 'trial_daily_cap' }. Existing callers pass nothing and are unaffected.
 async function sendEmail(to, subject, html, attachments, opts = {}) {
   if (!to) return { skipped: 'no_recipient' };
+  // Header hygiene: a CR/LF in a subject built from user data (company / project
+  // / person names) must never reach the provider as a header break.
+  subject = String(subject == null ? '' : subject).replace(/[\r\n]+/g, ' ');
 
   // Demo/test tenant: never send real email. Suppress and flag the request
   // so the client can show a "would have sent" popup. Keyed on the acting
@@ -101,6 +153,11 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
   if (await isSuppressed(to)) {
     logger.debug({ to, subject }, 'email skipped — recipient previously bounced');
     return { skipped: 'bounced' };
+  }
+
+  if (opts.clientCompanyId != null && await trialClientEmailCapExceeded(opts.clientCompanyId)) {
+    logger.warn({ to, companyId: opts.clientCompanyId }, 'client email skipped — trial daily cap reached');
+    return { skipped: 'trial_daily_cap' };
   }
 
   if (emailMode === 'suppress') {
@@ -149,4 +206,4 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
   return deliver(msg);
 }
 
-module.exports = { sendEmail };
+module.exports = { sendEmail, fromHeader, trialClientEmailCapExceeded, trialClientEmailDailyCap };

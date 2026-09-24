@@ -191,7 +191,9 @@ describe('security review hardening', () => {
 
   test('a repeat delivery of the same event id is a 200 no-op', async () => {
     pool.query.mockImplementation((sql) => Promise.resolve(
-      /INSERT INTO stripe_webhook_events/.test(sql) ? { rows: [], rowCount: 0 } : { rows: [], rowCount: 1 }
+      /INSERT INTO stripe_webhook_events/.test(sql) ? { rows: [], rowCount: 0 }
+        : /SELECT processed_at FROM stripe_webhook_events/.test(sql) ? { rows: [{ processed_at: new Date() }], rowCount: 1 }
+          : { rows: [], rowCount: 1 }
     ));
     mockSubRetrieve.mockResolvedValue(bizSub());
     const res = await send({
@@ -220,6 +222,40 @@ describe('security review hardening', () => {
     expect(sqls[0]).toMatch(/INSERT INTO stripe_webhook_events/);
     const del = pool.query.mock.calls.find(c => /DELETE FROM stripe_webhook_events/.test(c[0]));
     expect(del[1]).toEqual(['evt_fail']);
+  });
+
+  test('the claim re-opens only a STALE unprocessed row (crash mid-handler), and success sets processed_at', async () => {
+    mockSubRetrieve.mockResolvedValue(bizSub());
+    const res = await send({
+      id: 'evt_ok', type: 'checkout.session.completed', created: 8100,
+      data: { object: { subscription: 'sub_1', metadata: { company_id: 'co-1' } } },
+    });
+    expect(res.status).toBe(200);
+    const claim = pool.query.mock.calls.find(c => /INSERT INTO stripe_webhook_events/.test(c[0]));
+    expect(claim[0]).toMatch(/ON CONFLICT \(event_id\) DO UPDATE SET received_at = NOW\(\)/);
+    expect(claim[0]).toMatch(/processed_at IS NULL/);
+    expect(claim[0]).toMatch(/received_at < NOW\(\) - \(\$3 \|\| ' minutes'\)::INTERVAL/);
+    expect(claim[1]).toEqual(['evt_ok', 'checkout.session.completed', '5']);
+    const done = pool.query.mock.calls.find(c => /UPDATE stripe_webhook_events SET processed_at = NOW\(\)/.test(c[0]));
+    expect(done[1]).toEqual(['evt_ok']);
+    // processed_at is written after the business UPDATE, never before.
+    const idx = re => pool.query.mock.calls.findIndex(c => re.test(c[0]));
+    expect(idx(/UPDATE stripe_webhook_events SET processed_at/)).toBeGreaterThan(idx(/UPDATE companies/));
+  });
+
+  test('a redelivery while a fresh claim is still in flight → 409 (Stripe retries), nothing applied', async () => {
+    pool.query.mockImplementation((sql) => Promise.resolve(
+      /INSERT INTO stripe_webhook_events/.test(sql) ? { rows: [], rowCount: 0 }
+        : /SELECT processed_at FROM stripe_webhook_events/.test(sql) ? { rows: [{ processed_at: null }], rowCount: 1 }
+          : { rows: [], rowCount: 1 }
+    ));
+    const res = await send({
+      id: 'evt_inflight', type: 'checkout.session.completed', created: 8200,
+      data: { object: { subscription: 'sub_1', metadata: { company_id: 'co-1' } } },
+    });
+    expect(res.status).toBe(409);
+    expect(updateCall()).toBeNull();
+    expect(mockSubRetrieve).not.toHaveBeenCalled();
   });
 
   test('invoice.payment_failed / payment_succeeded respect the last_stripe_event_at watermark', async () => {

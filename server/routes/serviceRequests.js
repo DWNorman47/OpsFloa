@@ -12,6 +12,7 @@
  */
 
 const router = require('express').Router();
+const { getAppUrl } = require('../utils/appUrl');
 const publicRouter = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
@@ -183,7 +184,7 @@ async function notifyAdminsOfNewRequest(companyId, companyName, requestId, reque
         `<p>A client submitted a new request to ${escapeHtml(String(companyName ?? ''))} via OpsFloa.</p>
          <p><strong>From:</strong> ${escapeHtml(requesterName)}</p>
          <p><strong>Type:</strong> ${catLabel}</p>
-         <p>Review it in your <a href="${process.env.APP_URL || 'https://app.opsfloa.com'}/administration#requests">Administration → Requests</a> tab.</p>`
+         <p>Review it in your <a href="${getAppUrl()}/administration#requests">Administration → Requests</a> tab.</p>`
       );
     } catch (e) { /* best-effort */ }
   }

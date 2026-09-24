@@ -15,6 +15,7 @@ const { requireAuth, COMPANY_INACTIVE } = require('../middleware/auth');
 const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
 const { escapeHtml } = require('../utils/htmlEscape');
+const { getAppUrl } = require('../utils/appUrl');
 const { encrypt: encryptSecret, decrypt: decryptSecret, mfaEncryptionAvailable } = require('../utils/secretBox');
 const { LEGAL_VERSION } = require('../constants/legal');
 
@@ -52,15 +53,17 @@ const authLimiter = rateLimit({
 // Second-factor brute force: besides the per-IP loginLimiter, bucket /mfa/confirm
 // by the USER the challenge token was issued to, so rotating IPs doesn't buy an
 // attacker (who already has the password) more guesses at the 6-digit code. The
-// token is only decoded here for the bucket key — the route verifies it.
+// token is VERIFIED (same secret as the route) before its id picks the bucket —
+// with a bare jwt.decode anyone could forge {id: victim} and exhaust the
+// victim's bucket, locking them out of MFA login. Invalid token → IP bucket.
 const mfaLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   keyGenerator: (req) => {
     try {
-      const d = jwt.decode(req.body && req.body.mfa_token);
+      const d = jwt.verify(req.body && req.body.mfa_token, process.env.JWT_SECRET);
       if (d && d.mfa_pending && d.id != null) return `mfa:${d.id}`;
-    } catch { /* fall through to IP */ }
+    } catch { /* forged / expired / missing → fall through to IP */ }
     return userOrIpKey(req);
   },
   message: { error: 'Too many attempts. Please sign in again in 15 minutes.' },
@@ -70,7 +73,9 @@ const mfaLimiter = rateLimit({
 
 // Per-user second-factor lock: this many consecutive wrong TOTP codes locks the
 // second factor for MFA_LOCK_MINUTES (users.mfa_failed_attempts / mfa_locked_until,
-// migration 0212). Reset only by a correct code.
+// migration 0212). Reset by a correct code, and — so one lockout doesn't turn
+// every later single typo into a fresh lock — also once an expired lock is seen:
+// the next wrong code after the lock lapses starts a new count from zero.
 const MFA_MAX_FAILURES = 5;
 const MFA_LOCK_MINUTES = 15;
 const TOTP_STEP_SECONDS = 30;
@@ -558,7 +563,7 @@ router.post('/register', authLimiter, async (req, res) => {
     await client.query('UPDATE users SET role_id = $1 WHERE id = $2', [ownerId, newUserId]);
 
     // Send confirmation email — COMMIT only after success so email failure rolls back the account
-    const confirmUrl = `${process.env.APP_URL}/confirm-email?token=${confirmToken}`;
+    const confirmUrl = `${getAppUrl()}/confirm-email?token=${confirmToken}`;
     await sgMail.send({
       to: email,
       subject: 'Confirm your OpsFloa email',
@@ -668,7 +673,7 @@ router.post('/resend-confirmation', authLimiter, async (req, res) => {
       'UPDATE users SET email_confirm_token = $1, email_confirm_token_expires = $2 WHERE id = $3',
       [sha256(confirmToken), confirmExpires, user.id]
     );
-    const confirmUrl = `${process.env.APP_URL}/confirm-email?token=${confirmToken}`;
+    const confirmUrl = `${getAppUrl()}/confirm-email?token=${confirmToken}`;
     try {
       await sgMail.send({
         to: email,
@@ -732,7 +737,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
         'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
         [sha256(token), expires, user.id]
       );
-      links.push({ user, url: `${process.env.APP_URL}/reset-password?token=${token}` });
+      links.push({ user, url: `${getAppUrl()}/reset-password?token=${token}` });
     }
 
     // Respond BEFORE sending so response time is uniform whether or not the
@@ -889,6 +894,14 @@ router.post('/mfa/confirm', loginLimiter, mfaLimiter, async (req, res) => {
 
     const step = verifyTotpStep(decryptSecret(user.mfa_secret), code, user.mfa_last_used_step);
     if (step == null) {
+      // A lock that has lapsed ends that round: clear the counter first so this
+      // wrong code counts as 1, not MAX+1 (which would relock immediately).
+      if (user.mfa_locked_until) {
+        await pool.query(
+          'UPDATE users SET mfa_failed_attempts = 0, mfa_locked_until = NULL WHERE id = $1 AND mfa_locked_until <= NOW()',
+          [user.id]
+        );
+      }
       await pool.query(
         `UPDATE users
             SET mfa_failed_attempts = COALESCE(mfa_failed_attempts, 0) + 1,

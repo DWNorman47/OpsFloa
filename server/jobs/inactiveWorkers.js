@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const { getAppUrl } = require('../utils/appUrl');
 const pool = require('../db');
 const logger = require('../logger');
 const { sendPushToCompanyAdmins } = require('../push');
@@ -126,7 +127,7 @@ async function checkInactiveWorkers() {
               <tbody>${rows}</tbody>
             </table>
             <p style="margin-top:20px">
-              <a href="${process.env.APP_URL}/workforce#reports" style="color:#1a56db;font-weight:600">View reports in OpsFloa →</a>
+              <a href="${getAppUrl()}/workforce#reports" style="color:#1a56db;font-weight:600">View reports in OpsFloa →</a>
             </p>
           </div>`
         );

@@ -884,6 +884,11 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                           ⏱ {t.aqLateClockIn}: {lateLabel(e.clock_in_late_minutes)}
                         </span>
                       )}
+                      {e.clock_out_late_minutes > 0 && (
+                        <span style={{ ...styles.wageTag, background: '#c2410c' }} title={t.aqLateClockOutTitle}>
+                          ⏱ {t.aqLateClockOut}: {lateLabel(e.clock_out_late_minutes)}
+                        </span>
+                      )}
                       {e.overtime_hours_override != null && (() => {
                         const total = parseFloat(e.overtime_hours_override);
                         const h = Math.trunc(total);

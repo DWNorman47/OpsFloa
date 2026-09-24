@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const { getAppUrl } = require('../utils/appUrl');
 const pool = require('../db');
 const logger = require('../logger');
 const { sendEmail } = require('../email');
@@ -9,7 +10,7 @@ const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paid
 const { formatCurrency, companyCurrency } = require('../currency');
 const { escapeHtml } = require('../utils/htmlEscape');
 
-const APP_URL = process.env.APP_URL || 'https://app.opsfloa.com';
+const APP_URL = getAppUrl();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

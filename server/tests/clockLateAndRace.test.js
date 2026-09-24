@@ -197,3 +197,98 @@ describe('POST /api/clock/out — end_ts is the client-tapped clock_out_time', (
     expect(ins[5]).toMatch(/^17:00/);
   });
 });
+
+describe('clock-out review flags — clock_out_late_minutes (0215) + long_shift_flagged', () => {
+  const H = 3600e3;
+  function setupOut(row) {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+    const tx = txClient([
+      [/FOR UPDATE/, () => ({ rowCount: 1, rows: [row] })],
+      [/INSERT INTO time_entries/, () => ({ rowCount: 1, rows: [{ id: 1 }] })],
+    ]);
+    pool.connect.mockResolvedValueOnce(tx);
+    return tx;
+  }
+  const ins = tx => tx.calls.find(c => /INSERT INTO time_entries/.test(c.sql)).params;
+  const row = clockIn => ({ user_id: 7, company_id: 'co-1', project_id: null, clock_in_time: clockIn, work_date: '2026-09-24', timezone: 'UTC', clock_source: 'worker', clocked_in_by: null, clock_in_late_minutes: null });
+
+  test('/out with a clock_out_time 2h before the request → late clock-out stored, not a long shift', async () => {
+    const now = Date.now();
+    const tx = setupOut(row(new Date(now - 5 * H).toISOString()));
+    const res = await request(makeApp()).post('/api/clock/out').send({ clock_out_time: new Date(now - 2 * H).toISOString() });
+    expect(res.status).toBe(200);
+    const p = ins(tx);
+    expect(tx.calls.find(c => /INSERT INTO time_entries/.test(c.sql)).sql).toMatch(/clock_out_late_minutes/);
+    expect(p[21]).toBeGreaterThanOrEqual(119);
+    expect(p[21]).toBeLessThanOrEqual(121);
+    expect(p[19]).toBe(false);
+  });
+
+  test('/out tapped just now → no late flag', async () => {
+    const now = Date.now();
+    const tx = setupOut(row(new Date(now - 5 * H).toISOString()));
+    await request(makeApp()).post('/api/clock/out').send({ clock_out_time: new Date(now - 60e3).toISOString() });
+    expect(ins(tx)[21]).toBeNull();
+    const tx2 = setupOut(row(new Date(now - 5 * H).toISOString()));
+    await request(makeApp()).post('/api/clock/out').send({});
+    expect(ins(tx2)[21]).toBeNull();
+  });
+
+  test('a FORGOTTEN clock-out backdated to a normal-looking end keeps long_shift_flagged', async () => {
+    // Clocked in 20h ago, never clocked out; now claims to have left 11h ago (a 9h shift).
+    const now = Date.now();
+    const tx = setupOut(row(new Date(now - 20 * H).toISOString()));
+    await request(makeApp()).post('/api/clock/out').send({ clock_out_time: new Date(now - 11 * H).toISOString() });
+    const p = ins(tx);
+    expect(p[19]).toBe(true);
+    expect(p[21]).toBeGreaterThanOrEqual(659);
+  });
+
+  test('a claimed span over 16h is flagged even when not late', async () => {
+    const now = Date.now();
+    const tx = setupOut(row(new Date(now - 17 * H).toISOString()));
+    await request(makeApp()).post('/api/clock/out').send({ clock_out_time: new Date(now - 60e3).toISOString() });
+    expect(ins(tx)[19]).toBe(true);
+    expect(ins(tx)[21]).toBeNull();
+  });
+
+  test('/switch with a backdated switch instant flags the CLOSED segment as a late clock-out', async () => {
+    const now = Date.now();
+    const oldClock = { ...row(new Date(now - 4 * H).toISOString()), project_id: 1 };
+    pool.query.mockImplementation(async (sql) => {
+      if (/FROM projects WHERE id = \$1 AND company_id = \$2 AND active = true/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: 2, name: 'Two', wage_type: 'regular' }] };
+      }
+      return { rowCount: 0, rows: [] };
+    });
+    const tx = txClient([
+      [/FOR UPDATE/, () => ({ rowCount: 1, rows: [oldClock] })],
+      [/SELECT wage_type, name FROM projects/, () => ({ rowCount: 1, rows: [{ wage_type: 'regular', name: 'One' }] })],
+      [/INSERT INTO time_entries/, () => ({ rowCount: 1, rows: [{ id: 5 }] })],
+      [/UPDATE active_clock/, () => ({ rowCount: 1, rows: [{ user_id: 7, project_id: 2 }] })],
+    ]);
+    pool.connect.mockResolvedValueOnce(tx);
+    const res = await request(makeApp()).post('/api/clock/switch').send({ project_id: 2, clock_in_time: new Date(now - 30 * 60e3).toISOString() });
+    expect(res.status).toBe(201);
+    const p = ins(tx);
+    expect(p[21]).toBeGreaterThanOrEqual(29);
+    expect(p[21]).toBeLessThanOrEqual(31);
+    expect(p[19]).toBe(false);
+  });
+
+  test('lost-clock-in recovery carries the late clock-out too', async () => {
+    const now = Date.now();
+    pool.query.mockResolvedValue({ rowCount: 0, rows: [] }); // no active_clock → recovery
+    const tx = txClient([
+      [/INSERT INTO time_entries/, () => ({ rowCount: 1, rows: [{ id: 6 }] })],
+    ]);
+    pool.connect.mockResolvedValueOnce(tx);
+    const res = await request(makeApp()).post('/api/clock/out').send({
+      clock_in_time: new Date(now - 6 * H).toISOString(), clock_out_time: new Date(now - 1 * H).toISOString(), timezone: 'UTC',
+    });
+    expect(res.status).toBe(200);
+    const p = ins(tx);
+    expect(p[17]).toBeGreaterThanOrEqual(59);
+    expect(p[15]).toBe(false);
+  });
+});

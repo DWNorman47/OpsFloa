@@ -470,6 +470,9 @@ function startCron() {
   // if online booking starts being used (the 15-min cadence keeps 1-hour reminders punctual).
   const bookingRemindersOn = process.env.ENABLE_BOOKING_REMINDERS === 'true';
 
+  // Daily prune of the Stripe webhook de-dupe ledger (rows > 90 days).
+  require('./jobs/stripeEventsCleanup').startStripeEventsCleanupJob();
+
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();

@@ -195,6 +195,64 @@ describe('POST /auth/mfa/confirm', () => {
   });
 });
 
+// ── MFA limiter key + lock expiry (security review round 2) ────────────────
+describe('POST /auth/mfa/confirm — limiter key is verified, lock expiry resets the count', () => {
+  const userRow = (extra = {}) => ({ id: 5, username: 'jdoe', role: 'admin', company_id: 'co-1', company_name: 'Acme', company_active: true, mfa_secret: SECRET, ...extra });
+  const bad = () => (codeAt() === '000000' ? '111111' : '000000');
+
+  test("a FORGED mfa_token (wrong secret) can't exhaust the victim's per-user bucket", async () => {
+    const app = makeApp();
+    pool.query.mockResolvedValue({ rows: [userRow({ mfa_failed_attempts: 0 })], rowCount: 1 });
+    const forged = jwt.sign({ id: 5, mfa_pending: true }, 'attacker-secret', { expiresIn: '5m' });
+    for (let i = 0; i < 12; i++) {
+      await request(app).post('/api/auth/mfa/confirm').set('X-Forwarded-For', '203.0.113.9').send({ mfa_token: forged, code: '123456' });
+    }
+    // The victim, from their own IP with the real token, is not rate limited.
+    const real = jwt.sign({ id: 5, mfa_pending: true }, process.env.JWT_SECRET, { expiresIn: '5m' });
+    const res = await request(app).post('/api/auth/mfa/confirm').set('X-Forwarded-For', '198.51.100.7').send({ mfa_token: real, code: bad() });
+    expect(res.status).toBe(401); // a normal wrong-code answer, not 429
+  });
+
+  test('lock → expiry → one wrong code is NOT locked; five are', async () => {
+    // Stateful stand-in for the users row, interpreting the two UPDATEs.
+    const state = { failed: 0, lockedUntil: null };
+    pool.query.mockImplementation(async (sql, params) => {
+      if (/^\s*SELECT u\.\*/.test(sql)) {
+        return { rows: [userRow({ mfa_failed_attempts: state.failed, mfa_locked_until: state.lockedUntil })] };
+      }
+      if (/SET mfa_failed_attempts = 0, mfa_locked_until = NULL WHERE id = \$1 AND mfa_locked_until <= NOW\(\)/.test(sql)) {
+        if (state.lockedUntil && state.lockedUntil <= new Date()) { state.failed = 0; state.lockedUntil = null; }
+        return { rowCount: 1, rows: [] };
+      }
+      if (/mfa_failed_attempts = COALESCE\(mfa_failed_attempts, 0\) \+ 1/.test(sql)) {
+        state.failed += 1;
+        if (state.failed >= params[1]) state.lockedUntil = new Date(Date.now() + Number(params[2]) * 60000);
+        return { rowCount: 1, rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const tok = () => jwt.sign({ id: 5, mfa_pending: true }, process.env.JWT_SECRET, { expiresIn: '5m' });
+    // Each attempt from a fresh app so the in-memory rate limiters never interfere.
+    const attempt = () => request(makeApp()).post('/api/auth/mfa/confirm').send({ mfa_token: tok(), code: bad() });
+
+    for (let i = 0; i < 5; i++) await attempt();
+    expect(state.lockedUntil).not.toBeNull();
+    expect((await attempt()).status).toBe(429);
+
+    // "Wait" past the lock.
+    state.lockedUntil = new Date(Date.now() - 1000);
+    const one = await attempt();
+    expect(one.status).toBe(401);
+    expect(state.failed).toBe(1);
+    expect(state.lockedUntil).toBeNull();
+
+    for (let i = 0; i < 4; i++) await attempt();
+    expect(state.failed).toBe(5);
+    expect(state.lockedUntil).not.toBeNull();
+    expect((await attempt()).status).toBe(429);
+  });
+});
+
 // ── MFA disable / setup ────────────────────────────────────────────────────
 describe('POST /auth/mfa/disable', () => {
   test('password alone is no longer enough when MFA is on', async () => {

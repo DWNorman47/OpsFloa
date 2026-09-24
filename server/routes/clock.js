@@ -10,7 +10,8 @@ const { otThreshold, otRuleFromSettings } = require('../utils/paidHours');
 const { entryDuration } = require('../utils/payCalculations');
 const { sendEmail } = require('../email');
 const { wallClockInTZ, validLocalTime, entryInstants, isTruncatedLongShift } = require('../utils/timeFormat');
-const { resolveClientClockTime } = require('../utils/clientClockTime');
+const { resolveClientClockTime, LATE_THRESHOLD_MIN } = require('../utils/clientClockTime');
+const { escapeHtml } = require('../utils/htmlEscape');
 const { autoStartDayTx } = require('../utils/dailyChecklistCore');
 const {
   loadWeekStart, loadPriorHours, evaluateGate, pickOverflowTarget,
@@ -327,10 +328,10 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
             const timeStr = new Date().toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
             await sendEmail(
               admin.email,
-              `Unusual clock-in: ${req.user.full_name}`,
+              `Unusual clock-in: ${String(req.user.full_name || '').replace(/[\r\n]+/g, ' ')}`,
               `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">
                 <h3 style="color:#d97706">Unusual clock-in detected</h3>
-                <p><strong>${req.user.full_name}</strong> clocked in at <strong>${timeStr}</strong> on project <strong>${projName}</strong>.</p>
+                <p><strong>${escapeHtml(req.user.full_name || '')}</strong> clocked in at <strong>${escapeHtml(timeStr)}</strong> on project <strong>${escapeHtml(projName || '')}</strong>.</p>
                 <p style="color:#888;font-size:13px">This is outside your configured work hours (${s.notification_start_hour}:00–${s.notification_end_hour}:00).</p>
               </div>`
             );
@@ -436,7 +437,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       }
     }
 
-    const { ts: switchInTs, lateMinutes: switchLateMinutes } = resolveClientClockTime(clock_in_time);
+    const switchNow = new Date();
+    const { ts: switchInTs, lateMinutes: switchLateMinutes } = resolveClientClockTime(clock_in_time, switchNow);
     // Wall-clock strings are computed after oldClock is loaded inside the
     // transaction below so we can use its timezone for the fallback.
 
@@ -487,13 +489,15 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       // the legacy time columns just need to display correctly.
       const start_time = validLocalTime(local_clock_in)  || wallClockInTZ(clockInTime,  oldClock.timezone);
       const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(segmentEnd, oldClock.timezone);
+      // The switch instant is the old segment's clock-out: flag it if late/backdated.
+      const outFlags = clockOutReviewFlags({ clockInTime, clockOutTime: segmentEnd, startTime: start_time, endTime: end_time, timezone: oldClock.timezone, now: switchNow });
 
       entryResult = await txClient.query(
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes, clock_out_late_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
          RETURNING *`,
         [
           companyId, req.user.id, oldClock.project_id, oldClock.work_date,
@@ -502,8 +506,9 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           oldClock.timezone || null,
           oldClock.clock_source, oldClock.clocked_in_by,
-          isTruncatedLongShift(clockInTime, segmentEnd, start_time, end_time, oldClock.timezone), // a forgotten clock-out resolved via switch
+          outFlags.longShift, // a forgotten clock-out resolved via switch
           oldClock.clock_in_late_minutes ?? null,
+          outFlags.lateOut,
         ]
       );
 
@@ -611,6 +616,34 @@ function resolveClockOutTime(raw, startTs, now = new Date()) {
   return ts;
 }
 
+// A shift left open this long is almost certainly a forgotten clock-out (same
+// threshold as the stale-clock alert in cron.js).
+const LONG_SHIFT_HOURS = 16;
+
+// Review flags for a closed segment. The clock-out instant is client-claimed
+// (offline taps replay later), so - like the clock-in - it is honoured but
+// flagged when it is more than LATE_THRESHOLD_MIN before the server got it:
+// clock_out_late_minutes (migration 0215), shown as a "Late clock-out" badge in
+// Approvals. That is what makes a shortened / backdated clock-out visible.
+// long_shift_flagged keeps its forgotten-clock-out meaning even when the
+// clock-out is backdated: before client clock-out times were accepted, a
+// forgotten clock-out closed at server now (a >16h / multi-day span -> flagged);
+// a worker who now backdates it to "5 PM yesterday" would otherwise erase that
+// signal. So it is also set when the claimed span itself is > LONG_SHIFT_HOURS,
+// or when the clock-out is late AND the clock had been running that long.
+function clockOutReviewFlags({ clockInTime, clockOutTime, startTime, endTime, timezone, now }) {
+  const inMs = new Date(clockInTime).getTime();
+  const outMs = new Date(clockOutTime).getTime();
+  const lag = Math.floor((now.getTime() - outMs) / 60000);
+  const lateOut = lag > LATE_THRESHOLD_MIN ? lag : null;
+  const spanH = (outMs - inMs) / 3600000;
+  const openH = (now.getTime() - inMs) / 3600000;
+  const longShift = isTruncatedLongShift(clockInTime, clockOutTime, startTime, endTime, timezone)
+    || spanH > LONG_SHIFT_HOURS
+    || (lateOut != null && openH > LONG_SHIFT_HOURS);
+  return { lateOut, longShift };
+}
+
 // POST /api/clock/out
 // Recover a clock-OUT whose clock-IN was queued offline and never reached the server
 // (so there is no active_clock to close). Rather than 400 and lose the shift, rebuild
@@ -641,9 +674,11 @@ async function recoverLostClockOut(req, res) {
       if (proj.rowCount > 0) { wage_type = proj.rows[0].wage_type; project_name = proj.rows[0].name; entryProjectId = project_id; }
     }
   }
-  const clockOutTime = resolveClockOutTime(clock_out_time, recoverTs);
+  const recoverNow = new Date();
+  const clockOutTime = resolveClockOutTime(clock_out_time, recoverTs, recoverNow);
   const start_time = validLocalTime(local_clock_in) || wallClockInTZ(recoverTs, timezone);
   const end_time = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, timezone);
+  const outFlags = clockOutReviewFlags({ clockInTime: recoverTs, clockOutTime, startTime: start_time, endTime: end_time, timezone, now: recoverNow });
   const wd = (work_date && /^\d{4}-\d{2}-\d{2}$/.test(work_date)) ? work_date : recoverTs.toISOString().slice(0, 10);
   const cleanNotes = (typeof notes === 'string' ? notes.trim().slice(0, 500) : '') || null;
 
@@ -668,11 +703,11 @@ async function recoverLostClockOut(req, res) {
     const ins = await txClient.query(
       `INSERT INTO time_entries
          (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
-          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16,$17) RETURNING *`,
+          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes, clock_out_late_minutes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16,$17,$18) RETURNING *`,
       [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
        lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null,
-       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time, timezone), recovered.lateMinutes]
+       outFlags.longShift, recovered.lateMinutes, outFlags.lateOut]
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
@@ -774,12 +809,14 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       // arrived. An offline clock-out can replay hours later, possibly across a DST change,
       // and end_ts from server time then disagreed with end_time (the tap's wall clock) by
       // the replay lag / ±1h. Clamped: future → now; before this segment's start → now.
-      clockOutTime = resolveClockOutTime(clock_out_time, clockInTime);
+      const outNow = new Date();
+      clockOutTime = resolveClockOutTime(clock_out_time, clockInTime, outNow);
       const start_time = (!rowChanged && validLocalTime(local_clock_in)) || wallClockInTZ(clockInTime, clock.timezone);
       // A client wall time only describes the client's own instant — if we fell back to
       // server time, derive the wall time from that instead so the two columns agree.
       const usedClientInstant = clock_out_time != null && clockOutTime.getTime() === new Date(clock_out_time).getTime();
       const end_time   = ((usedClientInstant || clock_out_time == null) && validLocalTime(local_clock_out)) || wallClockInTZ(clockOutTime, clock.timezone);
+      const outFlags = clockOutReviewFlags({ clockInTime, clockOutTime, startTime: start_time, endTime: end_time, timezone: clock.timezone, now: outNow });
 
       // Phase 2 dual-write: clockInTime / clockOutTime are already real UTC
       // instants, so we can write them straight to start_ts / end_ts without
@@ -788,8 +825,8 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            clock_source, clocked_in_by, long_shift_flagged, clock_in_late_minutes, clock_out_late_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
          RETURNING *`,
         [
           companyId, req.user.id, entryProjectId, clock.work_date,
@@ -798,8 +835,9 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
-          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time, clock.timezone),
+          outFlags.longShift,
           clock.clock_in_late_minutes ?? null,
+          outFlags.lateOut,
         ]
       );
       await txClient.query('DELETE FROM active_clock WHERE user_id = $1', [req.user.id]);

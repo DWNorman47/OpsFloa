@@ -52,7 +52,7 @@ router.post('/', requireAuth, async (req, res) => {
         const subject = `Time off request: ${req.user.full_name}`;
         const emailBody = `<p><b>${escapeHtml(req.user.full_name)}</b> submitted a time off request.</p>
           <p><b>Type:</b> ${escapeHtml(typeLabel)}<br/>
-          <b>Dates:</b> ${start_date} – ${end_date}${note ? `<br/><b>Note:</b> ${escapeHtml(note)}` : ''}</p>
+          <b>Dates:</b> ${escapeHtml(start_date)} – ${escapeHtml(end_date)}${note ? `<br/><b>Note:</b> ${escapeHtml(note)}` : ''}</p>
           <p>Log in to OpsFloa to approve or deny.</p>`;
         for (const admin of admins.rows) if (admin.email) sendEmail(admin.email, subject, emailBody);
         createInboxItemBatch(admins.rows.map(a => a.id), companyId, 'timeoff_request',
@@ -128,7 +128,7 @@ router.patch('/:id/approve', requireAdmin, async (req, res) => {
         const worker = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [row.user_id]);
         if (worker.rows[0]?.email) {
           sendEmail(worker.rows[0].email, 'Time off approved ✓',
-            `<p>Hi ${worker.rows[0].full_name},</p><p>Your time off request (<b>${startStr}</b> – <b>${endStr}</b>) has been <b style="color:#059669">approved</b>.</p>${review_note ? `<p>Note: ${review_note}</p>` : ''}<p>— OpsFloa</p>`);
+            `<p>Hi ${escapeHtml(worker.rows[0].full_name || '')},</p><p>Your time off request (<b>${escapeHtml(startStr)}</b> – <b>${escapeHtml(endStr)}</b>) has been <b style="color:#059669">approved</b>.</p>${review_note ? `<p>Note: ${escapeHtml(review_note)}</p>` : ''}<p>— OpsFloa</p>`);
         }
         sendPushToUser(row.user_id, {
           title: 'Time off approved ✓',
@@ -185,7 +185,7 @@ router.patch('/:id/deny', requireAdmin, async (req, res) => {
         const worker = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [row.user_id]);
         if (worker.rows[0]?.email) {
           sendEmail(worker.rows[0].email, 'Time off request denied',
-            `<p>Hi ${worker.rows[0].full_name},</p><p>Your time off request (<b>${denyStartStr}</b> – <b>${denyEndStr}</b>) was <b style="color:#ef4444">denied</b>.${review_note ? ` Reason: ${review_note}` : ''}</p><p>— OpsFloa</p>`);
+            `<p>Hi ${escapeHtml(worker.rows[0].full_name || '')},</p><p>Your time off request (<b>${escapeHtml(denyStartStr)}</b> – <b>${escapeHtml(denyEndStr)}</b>) was <b style="color:#ef4444">denied</b>.${review_note ? ` Reason: ${escapeHtml(review_note)}` : ''}</p><p>— OpsFloa</p>`);
         }
         sendPushToUser(row.user_id, {
           title: 'Time off request denied',

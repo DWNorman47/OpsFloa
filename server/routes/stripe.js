@@ -4,6 +4,7 @@ const pool = require('../db');
 const { requireAdmin, requirePerm } = require('../middleware/auth');
 const { mapStripeStatus } = require('../constants/companyEnums');
 const { escapeHtml } = require('../utils/htmlEscape');
+const { getAppUrl } = require('../utils/appUrl');
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY not configured');
@@ -272,8 +273,8 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
       mode: 'subscription',
       customer: customerId,
       line_items: lineItems,
-      success_url: `${process.env.APP_URL}/administration#billing`,
-      cancel_url: `${process.env.APP_URL}/administration#billing`,
+      success_url: `${getAppUrl()}/administration#billing`,
+      cancel_url: `${getAppUrl()}/administration#billing`,
       // Set company_id on BOTH the session and the subscription. subscription_data
       // only reaches the Subscription; the checkout.session.completed webhook reads
       // the session's own metadata, so without this the activation handler had no
@@ -298,7 +299,7 @@ router.post('/portal', requireAdmin, requirePerm('manage_billing'), async (req, 
 
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${process.env.APP_URL}/administration#billing`,
+      return_url: `${getAppUrl()}/administration#billing`,
     });
     res.json({ url: session.url });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to open billing portal' }); }
@@ -576,8 +577,8 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
       mode: 'subscription',
       customer: customerId,
       line_items: lineItems,
-      success_url: `${process.env.APP_URL}/administration#billing`,
-      cancel_url: `${process.env.APP_URL}/administration#billing`,
+      success_url: `${getAppUrl()}/administration#billing`,
+      cancel_url: `${getAppUrl()}/administration#billing`,
       // company_id on both session and subscription (see /checkout above).
       metadata: { company_id: String(req.user.company_id) },
       subscription_data: {
@@ -608,7 +609,7 @@ router.post('/connect/onboard', requireAdmin, requirePerm('manage_billing'), asy
       acct = account.id;
       await pool.query('UPDATE companies SET stripe_connect_account_id = $1 WHERE id = $2', [acct, companyId]);
     }
-    const base = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+    const base = getAppUrl();
     const link = await stripe.accountLinks.create({
       account: acct,
       refresh_url: `${base}/?stripe_connect=refresh`,
@@ -644,6 +645,10 @@ router.get('/connect/status', requireAdmin, async (req, res) => {
   }
 });
 
+// An unprocessed webhook claim older than this is treated as abandoned (the
+// process died mid-handler) and may be re-claimed by a redelivery.
+const CLAIM_STALE_MINUTES = 5;
+
 // POST /stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -657,17 +662,30 @@ router.post('/webhook', async (req, res) => {
   }
 
   // De-dupe: Stripe delivers at-least-once (and retries on any non-2xx). Claim the
-  // event id first; a repeat delivery of an event we already processed is a 200
-  // no-op. If processing below FAILS, the claim is released so Stripe's retry
-  // is applied (see the catch).
+  // event id first; a repeat delivery of an event we already PROCESSED
+  // (processed_at set on success, migration 0215) is a 200 no-op. If processing
+  // below FAILS, the claim is released so Stripe's retry is applied (see the
+  // catch). A claim that never finished (process crashed mid-handler — the catch
+  // never ran) is re-claimable once older than CLAIM_STALE_MINUTES, and a repeat
+  // delivery while a fresh claim is still in flight gets a 409 so Stripe retries
+  // later instead of the event being dropped as a "duplicate".
   let claimed = false;
   try {
     if (event.id) {
       const claim = await pool.query(
-        'INSERT INTO stripe_webhook_events (event_id, event_type) VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING',
-        [event.id, event.type || null]
+        `INSERT INTO stripe_webhook_events (event_id, event_type) VALUES ($1, $2)
+         ON CONFLICT (event_id) DO UPDATE SET received_at = NOW()
+          WHERE stripe_webhook_events.processed_at IS NULL
+            AND stripe_webhook_events.received_at < NOW() - ($3 || ' minutes')::INTERVAL`,
+        [event.id, event.type || null, String(CLAIM_STALE_MINUTES)]
       );
-      if (claim.rowCount === 0) return res.json({ received: true, duplicate: true });
+      if (claim.rowCount === 0) {
+        const prior = await pool.query('SELECT processed_at FROM stripe_webhook_events WHERE event_id = $1', [event.id]);
+        if (prior.rows[0] && !prior.rows[0].processed_at) {
+          return res.status(409).json({ error: 'event is being processed; retry later' });
+        }
+        return res.json({ received: true, duplicate: true });
+      }
       claimed = true;
     }
   } catch (err) {
@@ -806,7 +824,7 @@ router.post('/webhook', async (req, res) => {
                       <h2 style="color:#b91c1c;margin-bottom:8px">Payment failed</h2>
                       <p style="color:#444">Hi ${escapeHtml(admin.full_name || '')}, we weren't able to charge your payment method${amountStr ? ` for ${amountStr}` : ''} for <strong>${escapeHtml(company.name)}</strong>.</p>
                       <p style="color:#444">Stripe will automatically retry, but to avoid losing access, please update your payment method in billing.</p>
-                      <a href="${process.env.APP_URL}/administration#billing"
+                      <a href="${getAppUrl()}/administration#billing"
                          style="display:inline-block;background:#1a56db;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:12px">
                         Update payment method
                       </a>
@@ -866,7 +884,7 @@ router.post('/webhook', async (req, res) => {
                     <h2 style="color:#1a56db;margin-bottom:8px">Trial ending soon</h2>
                     <p style="color:#444">Hi ${escapeHtml(admin.full_name || '')}, your OpsFloa trial for <strong>${escapeHtml(company.name)}</strong> ends on <strong>${escapeHtml(endsStr)}</strong>.</p>
                     <p style="color:#444">To keep your team's access, add a payment method in Administration → Billing before the trial ends.</p>
-                    <a href="${process.env.APP_URL}/administration#billing"
+                    <a href="${getAppUrl()}/administration#billing"
                        style="display:inline-block;background:#1a56db;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:12px">
                       Go to billing
                     </a>
@@ -879,6 +897,13 @@ router.post('/webhook', async (req, res) => {
           req.log.warn({ err }, 'trial_will_end processing failed (email only)');
         }
       }
+    }
+    if (claimed) {
+      // Mark done: only now is a redelivery a no-op. If this write fails the
+      // claim just goes stale and a later redelivery re-applies (the lifecycle
+      // branches are watermarked, so a replay is harmless).
+      await pool.query('UPDATE stripe_webhook_events SET processed_at = NOW() WHERE event_id = $1', [event.id])
+        .catch(e => req.log.warn({ err: e, eventId: event.id }, 'could not mark webhook event processed'));
     }
     res.json({ received: true });
   } catch (err) {
