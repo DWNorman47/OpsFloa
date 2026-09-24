@@ -10,6 +10,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
+import { loadLanguage } from '../i18n';
 import { silentError } from '../errorReporter';
 
 export default function AccountMenu({ onOpenGuide }) {
@@ -37,6 +38,8 @@ export default function AccountMenu({ onOpenGuide }) {
     if ((user?.language || 'English') === lang) return;
     try {
       await api.post('/auth/update-language', { language: lang }, { suppressToast: true });
+      // Fetch the dictionary first so the UI flips straight to the new language.
+      await loadLanguage(lang).catch(() => {});
       updateUser({ language: lang });
     } catch (err) { silentError('update-language')(err); }
   };

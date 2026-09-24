@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { publicLinkError } from '../utils/publicErrors';
 import { formatCurrency } from '../utils';
@@ -48,7 +48,7 @@ export default function PublicEstimatePage() {
 
   useEffect(() => {
     publicApi.get(`/public/estimates/view/${token}`)
-      .then(r => setEstimate(r.data))
+      .then(r => loadLanguage(detectLanguage(r.data?.client_language)).catch(() => {}).then(() => setEstimate(r.data)))
       .catch(err => setError(publicLinkError(err, t.peErrNotFound)))
       .finally(() => setLoading(false));
   }, [token]);

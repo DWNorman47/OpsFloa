@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { useDocumentMeta } from '../hooks/useDocumentMeta';
 import PublicCompanyProfileView from '../components/PublicCompanyProfileView';
@@ -66,7 +66,7 @@ export default function PublicCompanyProfilePage() {
     setNotFound(false);
     setError('');
     api.get(`/public/company-profiles/${slug}`, { suppressToast: true })
-      .then(r => setProfile(r.data.profile))
+      .then(r => loadLanguage(detectLanguage(r.data.profile?.client_language || r.data.profile?.language)).catch(() => {}).then(() => setProfile(r.data.profile)))
       .catch(err => {
         if (err.response?.status === 404) setNotFound(true);
         else setError(getT(detectLanguage(profile?.client_language || profile?.language)).pcpLoadError);

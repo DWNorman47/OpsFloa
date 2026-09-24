@@ -1,9 +1,10 @@
 // Translation keys for the construction-lifecycle modules (estimates,
 // change orders, subcontractors, lien waivers, submittals, booking).
 // Kept in a separate file from the main i18n.js dictionaries because the
-// set is large and namespaced (est/co/sub/lw/subm/bk prefixes). i18n.js
-// spreads `moduleEn` into English and `moduleEs` into Spanish, so getT()
-// returns one merged object and the EN/ES parity test still applies.
+// set is large and namespaced (est/co/sub/lw/subm/bk prefixes). The lazy
+// language chunks (i18n.en.js / i18n.es.js) merge `moduleEn` / `moduleEs`
+// under the matching i18n.js block, so getT() returns one merged object and
+// the EN/ES parity test still applies.
 //
 // Every key here must exist in BOTH objects with the same name.
 

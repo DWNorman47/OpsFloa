@@ -18,3 +18,16 @@ export function detectLanguage(stored) {
   const nav = (navigator.languages?.[0] || navigator.language || '').toLowerCase();
   return nav.startsWith('es') ? 'Spanish' : 'English';
 }
+
+// The language to load before the first render: the logged-in user's cached
+// language (read the same way AuthContext seeds its user — the impersonation
+// tab's sessionStorage first, else localStorage), otherwise the browser's.
+export function bootLanguage() {
+  try {
+    const store = sessionStorage.getItem('tc_token') ? sessionStorage : localStorage;
+    if (store.getItem('tc_token')) {
+      return detectLanguage(JSON.parse(store.getItem('tc_user') || 'null')?.language);
+    }
+  } catch { /* storage blocked or bad JSON — fall through */ }
+  return detectLanguage();
+}

@@ -1,6 +1,12 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { loadLanguage } from './i18n';
+
+// Translations are lazy-loaded per language in the app (main.jsx awaits the
+// active one before rendering). Tests render components directly, so load both
+// up front to keep getT()/useT() synchronous here too.
+await Promise.all([loadLanguage('English'), loadLanguage('Spanish')]);
 
 // RTL doesn't auto-cleanup with vitest — unmount rendered trees between tests
 afterEach(() => cleanup());

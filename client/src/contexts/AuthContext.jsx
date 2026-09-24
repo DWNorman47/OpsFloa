@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../api';
 import { clearCache, clearPendingSyncs, currentOfflineScope } from '../offlineDb';
 import { safeSession, safeLocal } from '../utils/safeStorage';
+import { loadLanguage } from '../i18n';
+import { detectLanguage } from '../languageDetect';
 import { excludeProspectVisit } from '../prospectVisit';
 
 export const AuthContext = createContext(null);
@@ -22,6 +24,13 @@ function readCachedUser(tokenStore) {
   } catch {
     return null;
   }
+}
+
+// Translations are lazy-loaded per language (see i18n.js). Before swapping in a
+// user whose language may differ from the one the app booted in, fetch their
+// dictionary so the UI never flashes in the wrong language. Never fails.
+function primeLanguage(user) {
+  return loadLanguage(detectLanguage(user?.language)).catch(() => {});
 }
 
 function isAuthFailure(err) {
@@ -77,7 +86,7 @@ export function AuthProvider({ children }) {
     }
 
     api.get('/auth/me', { timeout: 10000 })
-      .then(r => { setUser(r.data.user); tokenStore.setItem('tc_user', JSON.stringify(r.data.user)); })
+      .then(async r => { await primeLanguage(r.data.user); setUser(r.data.user); tokenStore.setItem('tc_user', JSON.stringify(r.data.user)); })
       .catch(err => {
         if (isAuthFailure(err)) {
           clearStoredSession(tokenStore);
@@ -157,6 +166,7 @@ export function AuthProvider({ children }) {
       return { must_change_password: true, setup_token: r.data.setup_token };
     }
     storeSession(safeLocal, r.data.token, r.data.user);
+    await primeLanguage(r.data.user);
     setUser(r.data.user);
     if (r.data.first_login) setFirstLogin(true);
     return r.data.user;
@@ -168,6 +178,7 @@ export function AuthProvider({ children }) {
     safeLocal.setItem('tc_token', token);
     const me = await api.get('/auth/me');
     safeLocal.setItem('tc_user', JSON.stringify(me.data.user));
+    await primeLanguage(me.data.user);
     setUser(me.data.user);
     setFirstLogin(true); // registration always counts as first login
     return me.data.user;
@@ -178,6 +189,7 @@ export function AuthProvider({ children }) {
     clearOfflineQueue();
     const r = await api.post('/auth/mfa/confirm', { mfa_token, code });
     storeSession(safeLocal, r.data.token, r.data.user);
+    await primeLanguage(r.data.user);
     setUser(r.data.user);
     return r.data.user;
   };

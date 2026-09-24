@@ -17,7 +17,7 @@ import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 
 // The seven money categories that match server/constants/projectMoneyEnums.js.
 // Kept here as a literal because the client doesn't import server constants;
@@ -767,7 +767,7 @@ function LinePicker({ onAdd }) {
           onChange={e => setQ(e.target.value)}
           style={{ flex: 1, boxSizing: 'border-box', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
         />
-        <button onClick={close} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
+        <button type="button" onClick={close} aria-label={t.close} title={t.close} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
       </div>
       {loading && results.length === 0 ? (
         <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estSearching}</div>
@@ -867,6 +867,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       // not the admin's UI language. getT falls back to English when the
       // client has no language set.
       const pdfLang = estimate.client_language;
+      await loadLanguage(pdfLang).catch(() => {}); // else getT falls back to the loaded language
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
       const el = React.createElement(EstimatePDF, { estimate, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });

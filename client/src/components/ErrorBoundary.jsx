@@ -1,17 +1,47 @@
 import React from 'react';
 import { reportClientError } from '../errorReporter';
-import { getT } from '../i18n';
+import { peekT } from '../i18n';
+import { bootLanguage } from '../languageDetect';
 
 // ErrorBoundary can't use hooks (class component), and when it renders it's
 // because something inside AuthProvider crashed — so useAuth may be
-// unavailable. Read the user's saved language directly from the auth blob
-// in localStorage, fall back to English.
-function readLang() {
-  try {
-    const raw = localStorage.getItem('tc_user');
-    if (raw) return JSON.parse(raw)?.language || 'English';
-  } catch { /* ignore */ }
-  return 'English';
+// unavailable. Use the same language the app booted in (the user's cached
+// language, else the browser's).
+//
+// It must also work when NO dictionary is loaded (the boot-time language chunk
+// failed to load — see main.jsx), so it carries this tiny built-in copy of its
+// own strings and only prefers the i18n.js ones when they're available. Keep in
+// sync with the error* keys in i18n.js.
+const FALLBACK_STRINGS = {
+  English: {
+    errorSectionCrashed: 'This section crashed',
+    errorSectionLabelCrashed: '{label} crashed',
+    errorStillWorking: 'The rest of the app is still working. Try again, or reload if the problem persists.',
+    errorTryAgain: 'Try again',
+    errorSomethingWentWrong: 'Something went wrong',
+    errorUnexpectedTryReload: 'An unexpected error occurred. Try refreshing the page.',
+    errorReloadPage: 'Reload page',
+    errorGoHome: 'Go to home',
+    errorSignOut: 'Sign out',
+    errorDetails: 'Error details',
+  },
+  Spanish: {
+    errorSectionCrashed: 'Esta sección falló',
+    errorSectionLabelCrashed: '{label} falló',
+    errorStillWorking: 'El resto de la app sigue funcionando. Intenta de nuevo o recarga si el problema continúa.',
+    errorTryAgain: 'Intentar de nuevo',
+    errorSomethingWentWrong: 'Algo salió mal',
+    errorUnexpectedTryReload: 'Ocurrió un error inesperado. Intenta actualizar la página.',
+    errorReloadPage: 'Recargar página',
+    errorGoHome: 'Ir al inicio',
+    errorSignOut: 'Cerrar sesión',
+    errorDetails: 'Detalles del error',
+  },
+};
+
+function errorStrings() {
+  const lang = bootLanguage();
+  return peekT(lang) || FALLBACK_STRINGS[lang] || FALLBACK_STRINGS.English;
 }
 
 /**
@@ -175,7 +205,7 @@ export default class ErrorBoundary extends React.Component {
 
   render() {
     if (!this.state.error) return this.props.children;
-    const t = getT(readLang());
+    const t = errorStrings();
 
     if (this.props.mode === 'inline') {
       return (

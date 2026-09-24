@@ -15,7 +15,7 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useT } from '../hooks/useT';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useCents } from '../hooks/useMoney';
 import { useCurrency } from '../contexts/SettingsContext';
@@ -423,6 +423,7 @@ function ChangeOrderDetail({ id, onBack }) {
       // Render the PDF in the CLIENT's language (resolved from the
       // project's client), not the admin's UI language.
       const pdfLang = co.client_language;
+      await loadLanguage(pdfLang).catch(() => {}); // else getT falls back to the loaded language
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[co.status]?.labelKey] || co.status;
       const el = React.createElement(ChangeOrderPDF, { changeOrder: co, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });

@@ -1,7 +1,29 @@
-import { describe, test, expect } from 'vitest';
-import { getT } from './i18n';
+import { describe, test, expect, beforeAll } from 'vitest';
+import { getT, loadLanguage, peekT } from './i18n';
+import { moduleEn, moduleEs } from './i18nModules';
 
 describe('getT', () => {
+  // Dictionaries are lazy-loaded per language (i18n.en.js / i18n.es.js); the
+  // tests below check the merged objects the app actually renders from.
+  beforeAll(async () => {
+    await Promise.all([loadLanguage('English'), loadLanguage('Spanish')]);
+  });
+
+  test('loadLanguage resolves to the same dictionary getT/peekT return', async () => {
+    const es = await loadLanguage('Spanish');
+    expect(es).toBe(getT('Spanish'));
+    expect(peekT('Spanish')).toBe(es);
+    expect(await loadLanguage('English')).toBe(getT('English'));
+    expect(es).not.toBe(getT('English'));
+  });
+
+  test('each language chunk merges its i18nModules block (i18n.js keys win)', () => {
+    expect(getT('English').estList).toBe(moduleEn.estList);
+    expect(getT('Spanish').estList).toBe(moduleEs.estList);
+    expect(Object.keys(moduleEn).every(k => k in getT('English'))).toBe(true);
+    expect(Object.keys(moduleEs).every(k => k in getT('Spanish'))).toBe(true);
+  });
+
   test('returns English translations for "English"', () => {
     const t = getT('English');
     expect(t.clockIn).toBe('Clock In');

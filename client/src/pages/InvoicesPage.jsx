@@ -14,7 +14,7 @@ import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 
 // Same seven money categories as the server CHECK constraint. Category labels
 // reuse the estimate keys (estCat*) — the vocabulary is identical.
@@ -560,6 +560,7 @@ function InvoiceDetail({ id, onBack, onEdit }) {
         api.get('/company-info').catch(() => ({ data: {} })),
       ]);
       const pdfLang = invoice.client_language;
+      await loadLanguage(pdfLang).catch(() => {}); // else getT falls back to the loaded language
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[invoice.status]?.labelKey] || invoice.status;
       const el = React.createElement(InvoicePDF, { invoice, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });

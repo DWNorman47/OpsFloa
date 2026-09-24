@@ -1,11 +1,14 @@
-import { moduleEn, moduleEs } from './i18nModules';
+// App translations — the ONE place to add strings: add every key to BOTH the
+// English and the Spanish block below (src/i18n.test.js enforces parity).
+//
+// Code-splitting: nothing here ships in the startup bundle. Each language is
+// built into its own lazy chunk by i18n.en.js / i18n.es.js, which import this
+// file with a ?locale query (so the bundler treats each as a separate module and
+// tree-shakes away the other language) and merge in the matching i18nModules.js
+// block. main.jsx awaits the active language before the first render, so
+// getT() stays synchronous everywhere. See the runtime at the bottom.
 
-const translations = {
-  English: {
-    // Construction-lifecycle module keys (estimates, COs, subs, lien
-    // waivers, submittals, booking). Spread first so any same-named key
-    // defined explicitly below wins — keeps existing app strings authoritative.
-    ...moduleEn,
+export const English = {
     // ── Header / Dashboard (worker) ──────────────────────────────────────────
     changePassword: 'Change Password',
     logout: 'Logout',
@@ -4869,10 +4872,99 @@ const translations = {
     newProject: 'New Project',
     client: 'Customer',
     noClient: '— No customer —',
-  },
 
-  Spanish: {
-    ...moduleEs,
+    // ── Global API toasts (api.js interceptors) ─────────────────────────────
+    apiTooManyRequests: 'Too many requests.',
+    apiRetryAfter: 'Please wait {s}s and try again.',
+    apiRetryMoment: 'Please wait a moment and try again.',
+    apiServiceUnavailable: 'Service temporarily unavailable. Please try again shortly.',
+    apiTimeout: 'The server took too long to respond. Please try again.',
+    apiNetworkError: 'Network error. Please check your connection and try again.',
+    apiForbidden: "You don't have permission to do that.",
+    apiNotFound: 'Not found.',
+    apiConflict: 'Conflict — please refresh and try again.',
+    apiRequestFailed: 'Request failed ({status}).',
+    apiDemoEmailSuppressed: 'This is a demo account — the email was not sent. (It would have been delivered on a live account.)',
+
+    // ── Project financials tab ──────────────────────────────────────────────
+    pfinAmountPositive: 'Amount must be a positive number',
+    pfinDescriptionRequired: 'Description is required',
+    pfinExpenseAdded: 'Expense added',
+    pfinFailedAddExpense: 'Failed to add expense',
+    pfinBudgetSaved: 'Budget saved',
+    pfinFailedSaveBudget: 'Failed to save budget',
+    pfinInvalidContract: 'Enter a valid contract value',
+    pfinContractSaved: 'Contract value saved',
+    pfinFailedSaveContract: 'Failed to save contract value',
+    pfinReleaseRetainageTitle: 'Release retainage?',
+    pfinReleaseRetainageBody: "Mark {amount} of withheld retainage as released? It's already billed on prior invoices — releasing lifts the hold so the remaining balances are collectible.",
+    pfinRelease: 'Release',
+    pfinRetainageReleased: 'Retainage released',
+    pfinFailedReleaseRetainage: 'Failed to release retainage',
+    pfinDeleteExpenseTitle: 'Delete this expense?',
+    pfinExpenseDeleted: 'Expense deleted',
+    pfinFailedDeleteExpense: 'Failed to delete expense',
+    pfinPnlSummary: 'P&L Summary',
+    pfinContractDollar: 'Contract $',
+    pfinSetContractValue: 'Set contract value',
+    pfinFinalLocked: '🔒 Final (locked)',
+    pfinProfit: 'Profit',
+    pfinCost: 'Cost',
+    pfinCommittedNotSpent: 'committed (not yet spent)',
+    pfinAsOfLive: 'as of {date} · live figures below',
+    pfinContractValue: 'Contract value',
+    pfinRevenueBilled: 'Revenue billed',
+    pfinCostSpent: 'Cost spent',
+    pfinCommitted: 'Committed',
+    pfinGrossProfit: 'Gross profit',
+    pfinGrossMargin: 'Gross margin',
+    pfinProjectedProfit: 'Projected profit',
+    pfinProjectedMargin: 'Projected margin',
+    pfinRetainageHeld: 'Retainage held by client:',
+    pfinReleaseRetainageBtn: 'Release retainage →',
+    pfinBidMargin: 'Bid margin',
+    pfinVs: 'vs',
+    pfinProjected: 'Projected',
+    pfinPts: 'pts',
+    pfinBudgetVsSpend: 'Budget (cost) vs. Spend by category',
+    pfinSaving: 'Saving…',
+    pfinSaveBudget: 'Save budget',
+    pfinEditBudget: 'Edit budget',
+    pfinCategory: 'Category',
+    pfinBudget: 'Budget',
+    pfinSpent: 'Spent',
+    pfinVariance: 'Variance',
+    pfinPctUsed: '% Used',
+    pfinTotal: 'Total',
+    pfinBudgetNote: 'Budget is your estimated cost. Variance = budget − (spent + committed):',
+    pfinGreenUnder: 'green is under',
+    pfinRedOver: 'red is over.',
+    pfinProjectExpenses: 'Project expenses ({n})',
+    pfinClosedReopen: '🔒 Closed — reopen to edit costs',
+    pfinAddExpense: '+ Add expense',
+    pfinAmount: 'Amount',
+    pfinTaxPct: 'Tax %',
+    pfinDescription: 'Description',
+    pfinVendor: 'Vendor',
+    pfinPaidDate: 'Paid date',
+    pfinNoExpenses: 'No manual expenses recorded.',
+    pfinDate: 'Date',
+    pfinTax: 'Tax',
+    pfinCat_labor: 'Labor',
+    pfinCat_materials: 'Materials',
+    pfinCat_equipment: 'Equipment',
+    pfinCat_subs: 'Subs',
+    pfinCat_overhead: 'Overhead',
+    pfinCat_contingency: 'Contingency',
+    pfinCat_other: 'Other',
+
+    // ── Projects page ───────────────────────────────────────────────────────
+    projCouldNotLoadWorkers: 'Could not load {workers}',
+    projFailedAddClient: 'Failed to add {client}.',
+    projGeofenceAllOrNone: 'Geofence needs latitude, longitude, AND radius — or leave all three blank.',
+};
+
+export const Spanish = {
     // ── Header / Dashboard (worker) ──────────────────────────────────────────
     changePassword: 'Cambiar Contraseña',
     logout: 'Cerrar Sesión',
@@ -9726,9 +9818,160 @@ const translations = {
     newProject: 'Nuevo Trabajo',
     client: 'Cliente',
     noClient: '— Sin cliente —',
-  },
+
+    // ── Global API toasts (api.js interceptors) ─────────────────────────────
+    apiTooManyRequests: 'Demasiadas solicitudes.',
+    apiRetryAfter: 'Espera {s} s e inténtalo de nuevo.',
+    apiRetryMoment: 'Espera un momento e inténtalo de nuevo.',
+    apiServiceUnavailable: 'Servicio no disponible temporalmente. Inténtalo de nuevo en breve.',
+    apiTimeout: 'El servidor tardó demasiado en responder. Inténtalo de nuevo.',
+    apiNetworkError: 'Error de red. Revisa tu conexión e inténtalo de nuevo.',
+    apiForbidden: 'No tienes permiso para hacer eso.',
+    apiNotFound: 'No encontrado.',
+    apiConflict: 'Conflicto: actualiza la página e inténtalo de nuevo.',
+    apiRequestFailed: 'La solicitud falló ({status}).',
+    apiDemoEmailSuppressed: 'Esta es una cuenta de demostración: el correo no se envió. (Se habría entregado en una cuenta real).',
+
+    // ── Project financials tab ──────────────────────────────────────────────
+    pfinAmountPositive: 'El monto debe ser un número positivo',
+    pfinDescriptionRequired: 'La descripción es obligatoria',
+    pfinExpenseAdded: 'Gasto agregado',
+    pfinFailedAddExpense: 'No se pudo agregar el gasto',
+    pfinBudgetSaved: 'Presupuesto guardado',
+    pfinFailedSaveBudget: 'No se pudo guardar el presupuesto',
+    pfinInvalidContract: 'Ingresa un valor de contrato válido',
+    pfinContractSaved: 'Valor del contrato guardado',
+    pfinFailedSaveContract: 'No se pudo guardar el valor del contrato',
+    pfinReleaseRetainageTitle: '¿Liberar la retención?',
+    pfinReleaseRetainageBody: '¿Marcar {amount} de retención como liberada? Ya está facturada en facturas anteriores; al liberarla se levanta la retención y los saldos restantes se pueden cobrar.',
+    pfinRelease: 'Liberar',
+    pfinRetainageReleased: 'Retención liberada',
+    pfinFailedReleaseRetainage: 'No se pudo liberar la retención',
+    pfinDeleteExpenseTitle: '¿Eliminar este gasto?',
+    pfinExpenseDeleted: 'Gasto eliminado',
+    pfinFailedDeleteExpense: 'No se pudo eliminar el gasto',
+    pfinPnlSummary: 'Resumen de pérdidas y ganancias',
+    pfinContractDollar: 'Contrato $',
+    pfinSetContractValue: 'Fijar valor del contrato',
+    pfinFinalLocked: '🔒 Final (bloqueado)',
+    pfinProfit: 'Ganancia',
+    pfinCost: 'Costo',
+    pfinCommittedNotSpent: 'comprometido (aún no gastado)',
+    pfinAsOfLive: 'al {date} · cifras en vivo abajo',
+    pfinContractValue: 'Valor del contrato',
+    pfinRevenueBilled: 'Ingresos facturados',
+    pfinCostSpent: 'Costo gastado',
+    pfinCommitted: 'Comprometido',
+    pfinGrossProfit: 'Ganancia bruta',
+    pfinGrossMargin: 'Margen bruto',
+    pfinProjectedProfit: 'Ganancia proyectada',
+    pfinProjectedMargin: 'Margen proyectado',
+    pfinRetainageHeld: 'Retención en poder del cliente:',
+    pfinReleaseRetainageBtn: 'Liberar retención →',
+    pfinBidMargin: 'Margen ofertado',
+    pfinVs: 'vs',
+    pfinProjected: 'Proyectado',
+    pfinPts: 'pts',
+    pfinBudgetVsSpend: 'Presupuesto (costo) vs. gasto por categoría',
+    pfinSaving: 'Guardando…',
+    pfinSaveBudget: 'Guardar presupuesto',
+    pfinEditBudget: 'Editar presupuesto',
+    pfinCategory: 'Categoría',
+    pfinBudget: 'Presupuesto',
+    pfinSpent: 'Gastado',
+    pfinVariance: 'Variación',
+    pfinPctUsed: '% usado',
+    pfinTotal: 'Total',
+    pfinBudgetNote: 'El presupuesto es tu costo estimado. Variación = presupuesto − (gastado + comprometido):',
+    pfinGreenUnder: 'verde está por debajo',
+    pfinRedOver: 'rojo está por encima.',
+    pfinProjectExpenses: 'Gastos del trabajo ({n})',
+    pfinClosedReopen: '🔒 Cerrado — reábrelo para editar costos',
+    pfinAddExpense: '+ Agregar gasto',
+    pfinAmount: 'Monto',
+    pfinTaxPct: 'Impuesto %',
+    pfinDescription: 'Descripción',
+    pfinVendor: 'Proveedor',
+    pfinPaidDate: 'Fecha de pago',
+    pfinNoExpenses: 'No hay gastos manuales registrados.',
+    pfinDate: 'Fecha',
+    pfinTax: 'Impuesto',
+    pfinCat_labor: 'Mano de obra',
+    pfinCat_materials: 'Materiales',
+    pfinCat_equipment: 'Equipo',
+    pfinCat_subs: 'Subcontratistas',
+    pfinCat_overhead: 'Gastos generales',
+    pfinCat_contingency: 'Contingencia',
+    pfinCat_other: 'Otro',
+
+    // ── Projects page ───────────────────────────────────────────────────────
+    projCouldNotLoadWorkers: 'No se pudieron cargar los {workers}',
+    projFailedAddClient: 'No se pudo agregar el {client}.',
+    projGeofenceAllOrNone: 'La geocerca necesita latitud, longitud Y radio, o deja los tres en blanco.',
 };
 
+// ── Runtime: lazy per-language dictionaries ─────────────────────────────────
+// Only this section ends up in the startup bundle (the blocks above are
+// tree-shaken out of it). Each loader's chunk is precached by the service
+// worker, so switching language works offline too.
+const LOADERS = {
+  English: () => import('./i18n.en.js'),
+  Spanish: () => import('./i18n.es.js'),
+};
+const EMPTY = Object.freeze({});
+const dictionaries = {};
+const inflight = {};
+const listeners = new Set();
+let version = 0;
+
+function normalizeLanguage(language) {
+  return Object.prototype.hasOwnProperty.call(LOADERS, language) ? language : 'English';
+}
+
+/** Load a language's dictionary (idempotent). Resolves to the dictionary. */
+export function loadLanguage(language) {
+  const lang = normalizeLanguage(language);
+  if (dictionaries[lang]) return Promise.resolve(dictionaries[lang]);
+  if (!inflight[lang]) {
+    inflight[lang] = LOADERS[lang]().then(
+      (mod) => {
+        dictionaries[lang] = mod.default;
+        delete inflight[lang];
+        version += 1;
+        listeners.forEach((fn) => fn());
+        return mod.default;
+      },
+      (err) => { delete inflight[lang]; throw err; },
+    );
+  }
+  return inflight[lang];
+}
+
+/** The dictionary if it's already loaded, else null (never triggers a load). */
+export function peekT(language) {
+  return dictionaries[normalizeLanguage(language)] || null;
+}
+
+/**
+ * Synchronous dictionary lookup ('English' | 'Spanish'; anything else →
+ * English). If that language isn't loaded yet it starts loading it and returns
+ * whichever language IS loaded meanwhile; subscribers (useT, the app root)
+ * re-render once it arrives. Code that knows it's about to need a language
+ * (a language switch, a document in the client's language, a PDF) should
+ * `await loadLanguage(lang)` first so nothing renders in the wrong language.
+ */
 export function getT(language) {
-  return translations[language] || translations.English;
+  const lang = normalizeLanguage(language);
+  if (dictionaries[lang]) return dictionaries[lang];
+  loadLanguage(lang).catch(() => {});
+  return dictionaries.English || dictionaries.Spanish || EMPTY;
+}
+
+/** useSyncExternalStore plumbing: bumps whenever a dictionary finishes loading. */
+export function subscribeLanguages(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+export function getLanguagesVersion() {
+  return version;
 }

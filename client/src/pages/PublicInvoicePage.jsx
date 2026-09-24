@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { publicLinkError } from '../utils/publicErrors';
 import { formatCurrency } from '../utils';
@@ -32,7 +32,7 @@ export default function PublicInvoicePage() {
 
   useEffect(() => {
     publicApi.get(`/public/invoices/view/${token}`)
-      .then(r => setInvoice(r.data))
+      .then(r => loadLanguage(detectLanguage(r.data?.client_language)).catch(() => {}).then(() => setInvoice(r.data)))
       .catch(err => setError(publicLinkError(err, t.peErrNotFound)))
       .finally(() => setLoading(false));
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps

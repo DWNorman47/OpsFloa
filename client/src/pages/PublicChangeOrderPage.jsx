@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
-import { getT } from '../i18n';
+import { getT, loadLanguage } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { publicLinkError } from '../utils/publicErrors';
 import { formatCurrency } from '../utils';
@@ -42,7 +42,7 @@ export default function PublicChangeOrderPage() {
 
   useEffect(() => {
     publicApi.get(`/public/change-orders/view/${token}`)
-      .then(r => setCo(r.data))
+      .then(r => loadLanguage(detectLanguage(r.data?.client_language)).catch(() => {}).then(() => setCo(r.data)))
       .catch(err => setError(publicLinkError(err, t.pcoErrNotFound)))
       .finally(() => setLoading(false));
   }, [token]);
