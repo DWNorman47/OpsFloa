@@ -272,7 +272,8 @@ function IncidentCard({ incident, isAdmin, onClosed, onDeleted }) {
                 {closing ? t.saving : t.closeIncident}
               </button>
             )}
-            {(!isAdmin || incident.status !== 'closed') && (
+            {/* Deleting a filed incident is admin-only (the server enforces it too). */}
+            {isAdmin && incident.status !== 'closed' && (
               confirmingDelete ? (
                 <>
                   <button style={{ ...styles.confirmDeleteBtn, ...(deleting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={handleDelete} disabled={deleting}>{deleting ? '…' : t.confirm}</button>

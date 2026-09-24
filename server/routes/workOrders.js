@@ -140,28 +140,73 @@ router.post('/', requirePerm('manage_projects'), async (req, res) => {
 });
 
 // PATCH /:id  — update (managers/dispatchers)
+// Partial: only the fields present in the body are written, so a manager editing the
+// priority doesn't rewrite the status a tech just set. Optimistic concurrency: when the
+// client sends the row's updated_at, the UPDATE only applies if it still matches (checked
+// in the WHERE, atomically) — otherwise 409 with the fresh row so the UI can reload it.
+const PATCH_FIELDS = ['project_id', 'client_id', 'title', 'address', 'status', 'priority',
+  'assigned_to', 'scheduled_at', 'description', 'amount'];
 router.patch('/:id', requirePerm('manage_projects'), async (req, res) => {
-  const wo = readBody(req.body || {});
-  const invalid = bodyError(wo);
+  const body = req.body || {};
+  const sent = PATCH_FIELDS.filter(k => Object.prototype.hasOwnProperty.call(body, k));
+  if (sent.length === 0) return res.status(400).json({ error: 'Nothing to update.' });
+  if (sent.includes('status') && !WORK_ORDER_STATUSES.includes(body.status)) {
+    return res.status(400).json({ error: 'Invalid status.' });
+  }
+  if (sent.includes('priority') && !WORK_ORDER_PRIORITIES.includes(body.priority)) {
+    return res.status(400).json({ error: 'Invalid priority.' });
+  }
+  const parsed = readBody(body);
+  // bodyError validates a whole body; neutralize unsent fields so only the sent ones can
+  // fail (title is only required when it is being changed).
+  const check = { ...parsed, title: sent.includes('title') ? parsed.title : 'x' };
+  for (const k of ['project_id', 'client_id', 'assigned_to', 'amount']) if (!sent.includes(k)) check[k] = null;
+  const invalid = bodyError(check);
   if (invalid) return res.status(400).json({ error: invalid });
+  if (sent.includes('scheduled_at') && parsed.scheduled_at !== null && isNaN(new Date(parsed.scheduled_at).getTime())) {
+    return res.status(400).json({ error: 'Invalid scheduled time.' });
+  }
+  const expected = body.updated_at || null;
+  if (expected && isNaN(new Date(expected).getTime())) return res.status(400).json({ error: 'Invalid updated_at.' });
   try {
-    const invalidReference = await referenceError(req.user.company_id, wo);
+    const refCheck = { project_id: null, client_id: null, assigned_to: null };
+    for (const k of Object.keys(refCheck)) if (sent.includes(k)) refCheck[k] = parsed[k];
+    const invalidReference = await referenceError(req.user.company_id, refCheck);
     if (invalidReference) return res.status(400).json({ error: invalidReference });
-    const { rows } = await pool.query(
-      `UPDATE work_orders SET
-         project_id=$1, client_id=$2, title=$3, address=$4, status=$5, priority=$6,
-         assigned_to=$7, scheduled_at=$8, description=$9, amount=$10,
-         completed_at = CASE WHEN $5 = 'completed' AND completed_at IS NULL THEN NOW()
-                             WHEN $5 <> 'completed' THEN NULL ELSE completed_at END,
-         updated_at = NOW()
-       WHERE id=$11 AND company_id=$12 AND active = true
+
+    const params = [];
+    const sets = [];
+    let statusParam = 0;
+    for (const k of sent) {
+      params.push(parsed[k]);
+      sets.push(`${k}=$${params.length}`);
+      if (k === 'status') statusParam = params.length;
+    }
+    if (statusParam) {
+      sets.push(`completed_at = CASE WHEN $${statusParam} = 'completed' AND completed_at IS NULL THEN NOW()
+                             WHEN $${statusParam} <> 'completed' THEN NULL ELSE completed_at END`);
+    }
+    params.push(req.params.id, req.user.company_id, expected);
+    const n = params.length;
+    const result = await pool.query(
+      `UPDATE work_orders SET ${sets.join(', ')}, updated_at = NOW()
+       WHERE id=$${n - 2} AND company_id=$${n - 1} AND active = true
+         AND ($${n}::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $${n}::timestamptz))
        RETURNING *`,
-      [wo.project_id, wo.client_id, wo.title, wo.address, wo.status, wo.priority,
-        wo.assigned_to, wo.scheduled_at, wo.description, wo.amount,
-        req.params.id, req.user.company_id],
+      params,
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Work order not found.' });
-    res.json(rows[0]);
+    if (!result.rows[0]) {
+      const fresh = await pool.query(
+        'SELECT * FROM work_orders WHERE id = $1 AND company_id = $2 AND active = true',
+        [req.params.id, req.user.company_id],
+      );
+      if (!fresh.rows[0]) return res.status(404).json({ error: 'Work order not found.' });
+      return res.status(409).json({
+        error: 'This work order was changed by someone else. The latest version has been loaded.',
+        current: fresh.rows[0],
+      });
+    }
+    res.json(result.rows[0]);
   } catch (err) {
     if (req.log && req.log.error) req.log.error({ err }, 'update work order failed');
     res.status(500).json({ error: 'Could not update the work order.' });

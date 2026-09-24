@@ -28,8 +28,32 @@ const BLANK = {
   priority: 'normal', assigned_to: '', scheduled_at: '', amount: '', description: '',
 };
 
-// TIMESTAMPTZ <-> <input type="datetime-local"> (which wants 'YYYY-MM-DDTHH:MM')
-const toLocalInput = ts => (ts ? String(ts).slice(0, 16) : '');
+// TIMESTAMPTZ <-> <input type="datetime-local"> (which wants local 'YYYY-MM-DDTHH:MM').
+// The server returns an absolute instant (ISO, UTC); slicing it showed UTC wall time as if
+// it were local. Convert through Date both ways so the input shows / sends local time.
+const pad2 = n => String(n).padStart(2, '0');
+export const toLocalInput = ts => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d)) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+export const fromLocalInput = v => {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toISOString();
+};
+
+// The PATCH payload for an edit: only the fields the manager actually changed since opening
+// the form, so a save can't write back stale values over a tech's concurrent status update.
+export const changedWorkOrderFields = (initial, form) => {
+  const out = {};
+  for (const k of Object.keys(form)) {
+    if (String(form[k] ?? '') === String(initial?.[k] ?? '')) continue;
+    out[k] = k === 'scheduled_at' ? fromLocalInput(form[k]) : form[k];
+  }
+  return out;
+};
 const fmtWhen = ts => {
   if (!ts) return '';
   const d = new Date(ts);
@@ -71,25 +95,33 @@ export default function WorkOrdersPanel() {
   const nameOf = (list, id) => workOrderDisplayName(list.find(x => String(x.id) === String(id)));
 
   const openNew = () => { setForm(BLANK); setEditing({}); setError(''); };
-  const openEdit = wo => {
-    setForm({
-      title: wo.title || '', client_id: wo.client_id || '', project_id: wo.project_id || '',
-      address: wo.address || '', status: wo.status || 'open', priority: wo.priority || 'normal',
-      assigned_to: wo.assigned_to || '', scheduled_at: toLocalInput(wo.scheduled_at),
-      amount: wo.amount ?? '', description: wo.description || '',
-    });
-    setEditing(wo); setError('');
-  };
+  const formFrom = wo => ({
+    title: wo.title || '', client_id: wo.client_id || '', project_id: wo.project_id || '',
+    address: wo.address || '', status: wo.status || 'open', priority: wo.priority || 'normal',
+    assigned_to: wo.assigned_to || '', scheduled_at: toLocalInput(wo.scheduled_at),
+    amount: wo.amount ?? '', description: wo.description || '',
+  });
+  const openEdit = wo => { setForm(formFrom(wo)); setEditing(wo); setError(''); };
   const close = () => { setEditing(null); setError(''); };
 
   const save = async () => {
     if (!form.title.trim()) { setError('A title is required.'); return; }
     setSaving(true); setError('');
     try {
-      if (editing && editing.id) await api.patch(`/work-orders/${editing.id}`, form, { suppressToast: true });
-      else await api.post('/work-orders', form, { suppressToast: true });
+      if (editing && editing.id) {
+        const changes = changedWorkOrderFields(formFrom(editing), form);
+        if (Object.keys(changes).length > 0) {
+          await api.patch(`/work-orders/${editing.id}`,
+            { ...changes, updated_at: editing.updated_at }, { suppressToast: true });
+        }
+      } else {
+        await api.post('/work-orders', { ...form, scheduled_at: fromLocalInput(form.scheduled_at) }, { suppressToast: true });
+      }
       close(); load();
     } catch (e) {
+      // Someone else (e.g. the tech completing the job) saved first: show their version.
+      const current = e?.response?.status === 409 ? e.response.data?.current : null;
+      if (current) { setForm(formFrom(current)); setEditing(current); load(); }
       setError(e?.response?.data?.error || 'Could not save the work order.');
     } finally { setSaving(false); }
   };

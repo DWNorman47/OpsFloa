@@ -93,7 +93,7 @@ test('POST 403s ATOMICALLY when a concurrent report by someone else wins the ups
 
   expect(res.status).toBe(403);
   const upsert = client.query.mock.calls.map(c => c[0]).find(s => /INSERT INTO daily_reports/.test(s));
-  expect(upsert).toMatch(/WHERE daily_reports\.created_by = \$10 OR \$11 = true/);
+  expect(upsert).toMatch(/WHERE \(daily_reports\.created_by = \$10 OR \$11 = true\)/);
   expect(client.query.mock.calls.map(c => c[0])).toContain('ROLLBACK');
 });
 
@@ -105,7 +105,7 @@ test('PATCH without sub-table arrays leaves manpower/equipment/materials untouch
     query: jest.fn()
       .mockResolvedValueOnce({})                                                             // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5, created_by: 7, updated_at: '2026-07-30T00:00:00Z' }] }) // SELECT existing
-      .mockResolvedValueOnce({})                                                             // UPDATE daily_reports
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5 }] })                             // UPDATE daily_reports
       .mockResolvedValueOnce({}),                                                            // COMMIT
     release: jest.fn(),
   };

@@ -14,8 +14,16 @@ export default function LiveKPIs({ refreshToken = 0 }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 300000);
-    return () => clearInterval(timer);
+    // Poll every 5 min only while the page is visible (a background tab shouldn't keep
+    // running the KPI scans); catch up as soon as it becomes visible again.
+    const tick = () => { if (!document.hidden) load(); };
+    const onVisible = () => { if (!document.hidden) load(); };
+    const timer = setInterval(tick, 300000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refreshToken]);
 
   // Single card with internal cells, not four separate cards — the four-card

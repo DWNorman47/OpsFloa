@@ -256,6 +256,31 @@ router.patch('/:id', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Content lock: once any worker has signed off, the title/content/date/quiz they attested
+    // to must not change under them (the sign-off sheet would certify content they never saw).
+    // FOR UPDATE on the talk also blocks a concurrent sign-off INSERT (its FK check takes a
+    // KEY SHARE lock on this row) until this edit commits/rolls back.
+    const cur = await client.query(
+      `SELECT st.id, st.title, st.content, st.talk_date::text AS talk_date_text, st.pass_threshold,
+              (SELECT COUNT(*) FROM safety_talk_signoffs WHERE talk_id = st.id) AS signoff_count
+         FROM safety_talks st WHERE st.id=$1 AND st.company_id=$2 FOR UPDATE OF st`,
+      [req.params.id, companyId]
+    );
+    if (cur.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    const row = cur.rows[0];
+    if (parseInt(row.signoff_count, 10) > 0) {
+      const changed =
+        (title != null && title !== row.title) ||
+        (content != null && content !== row.content) ||
+        (talk_date != null && talk_date !== '' && String(talk_date).slice(0, 10) !== row.talk_date_text) ||
+        (pass_threshold != null && parseInt(pass_threshold) !== row.pass_threshold) ||
+        questions !== undefined;
+      if (changed) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'This talk already has sign-offs; its title, content, date and quiz can no longer be changed' });
+      }
+    }
+
     const result = await client.query(
       `UPDATE safety_talks SET
          title=COALESCE($1, title), content=COALESCE($2, content),

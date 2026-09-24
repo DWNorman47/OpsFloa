@@ -70,18 +70,30 @@ router.post('/', requireAdmin, async (req, res) => {
       const dup = await replay();
       if (dup) return res.status(200).json(dup);
     }
-    // Auto-number atomically: subquery inside INSERT so concurrent requests can't
-    // both read the same MAX and produce duplicate rfi_number values.
-    const result = await pool.query(
-      `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to,
-         submitted_by, date_submitted, date_due, created_by, client_request_id)
-       VALUES ($1,$2,(SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1),$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
-       RETURNING *`,
-      [companyId, project_id || null, subject, description,
-       directed_to, submitted_by, date_submitted,
-       date_due || null, req.user.id, clientRequestId]
-    );
+    // Auto-number: a MAX()+1 subquery alone is NOT atomic — two concurrent inserts both read
+    // the same MAX and the loser hits the (company_id, rfi_number) unique index as a 500.
+    // Serialize numbering per company with a transaction-scoped advisory lock (same pattern
+    // as invoice numbering); it's released at COMMIT/ROLLBACK.
+    let result;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rfi_number:${companyId}`]);
+      result = await client.query(
+        `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to,
+           submitted_by, date_submitted, date_due, created_by, client_request_id)
+         VALUES ($1,$2,(SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1),$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+         RETURNING *`,
+        [companyId, project_id || null, subject, description,
+         directed_to, submitted_by, date_submitted,
+         date_due || null, req.user.id, clientRequestId]
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { client.release(); }
     if (result.rowCount === 0) {
       const dup = await replay();
       return dup ? res.status(200).json(dup) : res.status(409).json({ error: 'conflict' });
@@ -125,15 +137,22 @@ router.patch('/:id', requireAdmin, async (req, res) => {
     let newStatus = status ?? r.status;
     if (response && r.status === 'open') newStatus = 'answered';
 
+    // Optimistic concurrency, atomically: the unsent fields above are filled from the row we
+    // read, so the UPDATE only applies if the row is still that version (the client's
+    // updated_at when sent, else the one we read). A concurrent edit → 409, never a silent revert.
     const result = await pool.query(
       `UPDATE rfis SET project_id=$1, subject=$2, description=$3, directed_to=$4, submitted_by=$5,
          date_submitted=$6, date_due=$7, response=$8, status=$9, updated_at=NOW()
-       WHERE id=$10 AND company_id=$11 RETURNING *`,
+       WHERE id=$10 AND company_id=$11
+         AND ($12::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $12::timestamptz))
+       RETURNING *`,
       [project_id ?? r.project_id, subject ?? r.subject, description ?? r.description,
        directed_to ?? r.directed_to, submitted_by ?? r.submitted_by,
        date_submitted ?? r.date_submitted, date_due ?? r.date_due,
-       response ?? r.response, newStatus, req.params.id, companyId]
+       response ?? r.response, newStatus, req.params.id, companyId,
+       clientUpdatedAt || r.updated_at || null]
     );
+    if (result.rowCount === 0) return res.status(409).json({ error: 'conflict' });
     const full = await pool.query(`${FULL_SELECT} WHERE r.id = $1`, [req.params.id]);
     res.json(full.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }

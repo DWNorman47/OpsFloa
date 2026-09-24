@@ -117,6 +117,8 @@ router.get('/submittals/overdue', requireAdmin, async (req, res) => {
           AND s.required_by IS NOT NULL
           AND s.required_by < (CURRENT_DATE + $2::int)
           AND s.status NOT IN ('approved','approved_as_noted','closed','void')
+          -- a revised submittal lives on as its newer revision; the old row isn't overdue
+          AND s.superseded_by_id IS NULL
         ORDER BY s.required_by ASC`,
       [companyId, withinDays]
     );
@@ -360,6 +362,12 @@ router.post('/submittals/:id/revise', requireAdmin, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `Cannot revise from '${old.status}'` });
     }
+    // Already revised: a second revise would insert a duplicate (number, revision+1) and
+    // hit the unique index as a 500. Revise the newest revision instead.
+    if (old.superseded_by_id != null) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This submittal was already revised', superseded_by_id: old.superseded_by_id });
+    }
     const newRes = await client.query(
       `INSERT INTO submittals
         (company_id, project_id, submittal_number, spec_section, title, description,
@@ -382,6 +390,7 @@ router.post('/submittals/:id/revise', requireAdmin, async (req, res) => {
     res.status(201).json(newRes.rows[0]);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return res.status(409).json({ error: 'This submittal was already revised' });
     req.log.error({ err }, 'submittal revise error');
     res.status(500).json({ error: 'Server error' });
   } finally {

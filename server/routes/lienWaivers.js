@@ -414,6 +414,11 @@ router.post('/lien-waivers/:id/convert-unconditional', requireAdmin, async (req,
     if (!lw) return res.status(404).json({ error: 'Lien waiver not found' });
     const toType = unconditionalFor(lw.waiver_type);
     if (!toType) return res.status(409).json({ error: `Cannot convert ${lw.waiver_type} to unconditional` });
+    // The unconditional follow-up only makes sense once the conditional one is in hand —
+    // never from a draft/sent (unsigned), void or superseded waiver.
+    if (!['signed', 'received'].includes(lw.status)) {
+      return res.status(409).json({ error: 'Only a signed or received waiver can be converted' });
+    }
     const r = await pool.query(
       `INSERT INTO lien_waivers
          (company_id, project_id, direction, subcontract_po_id, sub_payment_id, subcontractor_id,
@@ -439,20 +444,46 @@ router.post('/lien-waivers/:id/convert-unconditional', requireAdmin, async (req,
 
 router.post('/lien-waivers/:id/void', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
+  // One TX: void the waiver AND un-flip the linked sub payment's waiver_received (set when this
+  // waiver was signed/received), otherwise closeout keeps showing "lien waivers collected" for
+  // a voided waiver. The flag stays true when ANOTHER signed/received waiver still covers the
+  // same payment.
+  const client = await pool.connect();
   try {
-    const lw = await assertWaiverInCompany(companyId, req.params.id);
-    if (!lw) return res.status(404).json({ error: 'Lien waiver not found' });
-    if (lw.status === 'void') return res.status(409).json({ error: 'Already void' });
-    await pool.query(
-      `UPDATE lien_waivers SET status='void' WHERE id=$1`,
-      [req.params.id]
+    await client.query('BEGIN');
+    const cur = await client.query(
+      `SELECT id, status, sub_payment_id FROM lien_waivers WHERE id=$1 AND company_id=$2 FOR UPDATE`,
+      [req.params.id, companyId]
     );
+    if (cur.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Lien waiver not found' }); }
+    const lw = cur.rows[0];
+    if (lw.status === 'void') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Already void' }); }
+    await client.query(
+      `UPDATE lien_waivers SET status='void' WHERE id=$1 AND company_id=$2`,
+      [lw.id, companyId]
+    );
+    if (lw.sub_payment_id) {
+      await client.query(
+        `UPDATE subcontract_po_payments pp SET waiver_received = false
+           FROM subcontract_pos po
+          WHERE pp.id = $1 AND po.id = pp.po_id AND po.company_id = $3
+            AND NOT EXISTS (
+              SELECT 1 FROM lien_waivers o
+               WHERE o.sub_payment_id = $1 AND o.id <> $2 AND o.company_id = $3
+                 AND o.status IN ('signed', 'received'))`,
+        [lw.sub_payment_id, lw.id, companyId]
+      );
+    }
+    await client.query('COMMIT');
     await logAudit(companyId, req.user.id, req.user.full_name,
       'lien_waiver.voided', 'lien_waiver', req.params.id, null, null);
     res.json({ success: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'lien waiver void error');
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

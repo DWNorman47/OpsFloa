@@ -55,6 +55,12 @@ function UpgradePrompt({ requiredPlan, feature }) {
 
 const isPwa = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
+// Live-tab chat dot: admin chat read state is server-side (per-admin read markers — each
+// thread from GET /chat carries `unread`, the worker's messages this admin hasn't seen), so
+// it's right on every device, unlike the old per-worker localStorage timestamps.
+export const chatThreadsHaveUnread = threads =>
+  Array.isArray(threads) && threads.some(thread => Number(thread?.unread) > 0);
+
 // Workforce is the admin "oversight" group of the Time Clock module (see
 // Dashboard). This renders just its content (PageIntro + tabs); the host page
 // supplies the shell, header, and the Personal/Workforce group switcher.
@@ -138,7 +144,8 @@ export function WorkforcePanel() {
   useEffect(() => {
     const fetchPending = () => {
       if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-      api.get('/admin/kpis').then(r => setPendingCount(r.data.pending_approvals ?? 0)).catch(silentError('admindashboard'));
+      // Cheap COUNT endpoint — the full /admin/kpis (hours + OT scans) is only for LiveKPIs.
+      api.get('/admin/pending-count').then(r => setPendingCount(r.data.pending_approvals ?? 0)).catch(silentError('admindashboard'));
       // Only poll reimbursements when the feature is enabled.
       if (settings?.feature_reimbursements !== false) {
         api.get('/reimbursements/admin?status=pending').then(r => setPendingReimbursements((r.data.items ?? r.data).length)).catch(silentError('admindashboard'));
@@ -160,14 +167,7 @@ export function WorkforcePanel() {
     if (tab === 'live') return; // CompanyChat handles read state when visible
     const check = () => {
       if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-      api.get('/chat').then(r => {
-        const hasUnread = r.data.some(thread => {
-          const key = `chatLastRead_admin_${thread.worker_id}`;
-          const lastRead = safeLocal.getItem(key);
-          return !lastRead || new Date(thread.last_at) > new Date(lastRead);
-        });
-        setChatUnread(hasUnread);
-      }).catch(silentError('admindashboard'));
+      api.get('/chat').then(r => setChatUnread(chatThreadsHaveUnread(r.data))).catch(silentError('admindashboard'));
     };
     check();
     const iv = setInterval(check, 60000);
@@ -215,7 +215,7 @@ export function WorkforcePanel() {
   const handleProjectRestored= p  => setProjects(prev => [...prev, p]);
   const refreshLiveMetrics = () => {
     setLiveKpiRefreshToken(token => token + 1);
-    api.get('/admin/kpis')
+    api.get('/admin/pending-count')
       .then(r => setPendingCount(r.data.pending_approvals ?? 0))
       .catch(silentError('admindashboard'));
   };

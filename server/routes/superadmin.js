@@ -324,16 +324,22 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
       `SELECT c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
               c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_advanced_payroll, c.addon_takeoff, c.addon_planroom, c.addon_storm, c.addon_roof, c.bonus_seats,
               a.name AS affiliate_name,
-              COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'worker' AND u.active = true) AS worker_count,
-              COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'admin' AND u.active = true) AS admin_count,
-              COUNT(DISTINCT te.id) AS entry_count,
-              MAX(te.created_at) AS last_entry_at
+              uc.worker_count, uc.admin_count,
+              tc.entry_count, tc.last_entry_at
        FROM companies c
-       LEFT JOIN users u ON u.company_id = c.id
-       LEFT JOIN time_entries te ON te.company_id = c.id
        LEFT JOIN affiliates a ON c.affiliate_id = a.id
-       GROUP BY c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_advanced_payroll, c.addon_takeoff, c.addon_planroom, c.addon_storm, c.addon_roof, c.bonus_seats, a.name
+       -- Per-company aggregates in LATERAL subqueries. Joining users AND time_entries onto
+       -- companies directly multiplied users × entries per company (then COUNT DISTINCT
+       -- over the product) — a row explosion that grows with every punch.
+       CROSS JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE u.role = 'worker' AND u.active = true) AS worker_count,
+                COUNT(*) FILTER (WHERE u.role = 'admin' AND u.active = true) AS admin_count
+           FROM users u WHERE u.company_id = c.id
+       ) uc
+       CROSS JOIN LATERAL (
+         SELECT COUNT(*) AS entry_count, MAX(te.created_at) AS last_entry_at
+           FROM time_entries te WHERE te.company_id = c.id
+       ) tc
        ORDER BY c.created_at DESC`
     );
     res.json(result.rows);

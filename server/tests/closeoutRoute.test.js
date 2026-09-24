@@ -15,6 +15,8 @@ jest.mock('../db', () => {
   return { query: q, connect: jest.fn().mockResolvedValue({ query: (...a) => q(...a), release: jest.fn() }) };
 });
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
+// Completion dates resolve the company-local day (its tz lookup would consume the query mocks).
+jest.mock('../utils/rateHistoryStore', () => ({ companyToday: jest.fn(async () => '2026-05-01') }));
 
 const express = require('express');
 const request = require('supertest');

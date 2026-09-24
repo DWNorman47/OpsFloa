@@ -140,6 +140,25 @@ describe('POST /api/submittals/:id/revise', () => {
     const res = await request(makeApp()).post('/api/submittals/7/revise');
     expect(res.status).toBe(409);
   });
+
+  test('409 (not 500) when the revision was already superseded', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, status: 'revise_resubmit', superseded_by_id: 9, revision: 0 }] })
+      .mockResolvedValueOnce(undefined);
+    const res = await request(makeApp()).post('/api/submittals/7/revise');
+    expect(res.status).toBe(409);
+    expect(pool.query.mock.calls.some(c => /INSERT INTO submittals/.test(c[0]))).toBe(false);
+  });
+});
+
+describe('GET /api/submittals/overdue', () => {
+  test('excludes superseded revisions', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    const res = await request(makeApp()).get('/api/submittals/overdue');
+    expect(res.status).toBe(200);
+    expect(pool.query.mock.calls[0][0]).toMatch(/superseded_by_id IS NULL/);
+  });
 });
 
 describe('GET /api/submittals/:id/documents/upload-url', () => {

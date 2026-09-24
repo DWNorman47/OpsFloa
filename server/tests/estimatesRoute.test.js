@@ -440,7 +440,9 @@ describe('estimate expiry (valid_until as a pg DATE)', () => {
     expect(res.status).toBe(200);
   });
 
-  test('convert of an accepted-but-expired estimate → 409', async () => {
+  // Expiry is enforced at ACCEPT time only: an estimate the client accepted in time can
+  // still be converted after valid_until passes (the price was committed on acceptance).
+  test('convert of an estimate accepted before valid_until passed is not blocked by expiry', async () => {
     const past = '2020-01-15';
     pool.query
       .mockResolvedValueOnce({})
@@ -449,11 +451,10 @@ describe('estimate expiry (valid_until as a pg DATE)', () => {
         client_id: null, project_address: null, converted_project_id: null,
         valid_until: pgDate(past), valid_until_ymd: past, company_timezone: 'UTC',
       }] })
-      .mockResolvedValue({ rowCount: 0, rows: [] });
+      .mockResolvedValue({ rowCount: 1, rows: [{ id: 900 }] });
     const res = await request(makeApp()).post('/api/estimates/42/convert');
-    expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/expired/i);
-    expect(pool.query.mock.calls.some(c => /INSERT INTO projects/.test(c[0]))).toBe(false);
+    expect(res.body.error || '').not.toMatch(/expired/i);
+    expect(pool.query.mock.calls.some(c => /INSERT INTO projects/.test(c[0]))).toBe(true);
   });
 });
 

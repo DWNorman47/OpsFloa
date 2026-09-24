@@ -157,20 +157,26 @@ router.patch('/:id', requireAuth, requirePerm('manage_punchlist'), async (req, r
     const resolvedAt = status === 'verified' && existing.rows[0].status !== 'verified'
       ? new Date() : existing.rows[0].resolved_at;
 
-    await pool.query(
+    // Optimistic concurrency, atomically: assigned_to/phase/project_id/resolved_at fall back
+    // to the row we read, so only apply if the row is still that version (the client's
+    // updated_at when sent, else the one we read). A concurrent edit → 409, not a revert.
+    const upd = await pool.query(
       `UPDATE punchlist_items SET
           title=COALESCE($1, title), description=COALESCE($2, description),
           location=COALESCE($3, location), priority=COALESCE($4, priority),
           status=COALESCE($5, status), assigned_to=$6,
           resolved_at=$7, updated_at=NOW(), phase=$8, project_id=$9
-        WHERE id=$10`,
+        WHERE id=$10
+          AND ($11::timestamptz IS NULL
+               OR date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $11::timestamptz))`,
       [title, description, location, priority, status,
        assigned_to !== undefined ? (assigned_to || null) : existing.rows[0].assigned_to,
        resolvedAt,
        phase !== undefined ? (phase || null) : existing.rows[0].phase,
        project_id !== undefined ? (project_id || null) : existing.rows[0].project_id,
-       req.params.id]
+       req.params.id, clientUpdatedAt || existing.rows[0].updated_at || null]
     );
+    if (upd.rowCount === 0) return res.status(409).json({ error: 'conflict' });
 
     const full = await pool.query(
       `SELECT pi.*, p.name as project_name, creator.full_name as created_by_name,

@@ -44,3 +44,35 @@ describe('LiveKPIs refreshToken', () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
   });
 });
+
+describe('LiveKPIs polling while hidden', () => {
+  const setVisibility = (state) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => state === 'hidden' });
+  };
+
+  beforeEach(() => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: kpis(1) });
+  });
+
+  test('skips the 5-minute poll while the tab is hidden and refreshes when it becomes visible', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      render(<LiveKPIs refreshToken={0} />);
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      setVisibility('hidden');
+      await vi.advanceTimersByTimeAsync(300000 * 2);
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      setVisibility('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(api.get).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      setVisibility('visible');
+    }
+  });
+});

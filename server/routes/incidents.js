@@ -160,10 +160,13 @@ router.patch('/:id/close', requireAdmin, async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// DELETE /incidents/:id
+// DELETE /incidents/:id — admins only. An incident is a safety/OSHA record and admins are
+// notified the moment it's filed; letting the reporter delete it afterwards would erase the
+// record out from under that notification. Workers ask an admin to remove a mistaken report.
 router.delete('/:id', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+  if (!isAdmin) return res.status(403).json({ error: 'Only an admin can delete an incident report' });
   try {
     const existing = await pool.query(
       'SELECT * FROM incident_reports WHERE id = $1 AND company_id = $2',

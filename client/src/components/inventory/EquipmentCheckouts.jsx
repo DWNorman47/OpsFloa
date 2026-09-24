@@ -98,10 +98,12 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
     setShowForm(true);
   };
 
-  const doReturn = async (assetId, photo) => {
+  // Names the exact checkout being returned — the server closes only that one (an offline
+  // replay can then never close a later checkout of the same asset).
+  const doReturn = async (assetId, checkoutId, photo) => {
     setBusy(`return-${assetId}`); setError('');
     try {
-      await api.post(`/equipment/${assetId}/return`, { return_photo: photo || null });
+      await api.post(`/equipment/${assetId}/return`, { checkout_id: checkoutId, return_photo: photo || null });
       setReturningId(null); setReturnPhoto(null);
       load();
       onChange?.();
@@ -172,7 +174,7 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
                       {returnPhoto ? `✓ ${t.eqPhotoAdded}` : `📷 ${t.eqAddPhoto}`}
                       <input type="file" accept="image/*" hidden onChange={async e => { const f = e.target.files?.[0]; if (f) setReturnPhoto(await fileToDataUrl(f)); }} />
                     </label>
-                    <button style={s.returnConfirm} disabled={busy === `return-${c.asset_id}`} onClick={() => doReturn(c.asset_id, returnPhoto)}>
+                    <button style={s.returnConfirm} disabled={busy === `return-${c.asset_id}`} onClick={() => doReturn(c.asset_id, c.id, returnPhoto)}>
                       {busy === `return-${c.asset_id}` ? '…' : t.eqConfirmReturn}
                     </button>
                     <button style={s.cancelSmall} onClick={() => { setReturningId(null); setReturnPhoto(null); }}>{t.cancel}</button>

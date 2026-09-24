@@ -2109,18 +2109,21 @@ export default function ProjectsPage() {
     setLoading(true);
     Promise.all([
       api.get('/admin/projects', { params: archived ? { include_archived: 'true' } : {} }),
-      api.get('/admin/projects/metrics'),
       api.get('/settings'),
       api.get('/company-info'),
-    ]).then(([pRes, mRes, sRes, ciRes]) => {
+    ]).then(([pRes, sRes, ciRes]) => {
       setProjects(pRes.data);
-      const metricsMap = {};
-      mRes.data.forEach(m => { metricsMap[m.id] = m; });
-      setMetrics(metricsMap);
       setSettings(sRes.data);
       setFeatures(sRes.data);
       setCompanyInfo(ciRes.data || {});
     }).catch(() => setLoadError(true)).finally(() => setLoading(false));
+    // Metrics (hours/cost roll-ups) are the heaviest call and only decorate the cards —
+    // load them separately so a slow or failed metrics request never blanks the page.
+    api.get('/admin/projects/metrics').then(mRes => {
+      const metricsMap = {};
+      (mRes.data || []).forEach(m => { metricsMap[m.id] = m; });
+      setMetrics(metricsMap);
+    }).catch(silentError('project metrics'));
   };
 
   useEffect(() => { loadProjects(showArchived); }, [showArchived]);

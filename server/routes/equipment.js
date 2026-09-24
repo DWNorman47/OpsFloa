@@ -474,9 +474,50 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
   } finally { client.release(); }
 });
 
-// POST /equipment/:id/return — close the open checkout and free the asset.
+// POST /equipment/:id/return — close the referenced checkout and free the asset.
+// The client names the checkout it is returning (body.checkout_id). Closing "whatever is open
+// on this asset" let an offline-replayed return close a LATER checkout (someone else's). Only
+// that one checkout is closed; if it is already closed → 409, unless this is the replay of
+// the same return (same Idempotency-Key, stored in return_request_id — migration 0217) → 200.
+// The photo is uploaded only after those checks pass, so a rejected return leaves no R2 orphan.
 router.post('/:id/return', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
+  let checkoutId = parseInt(req.body.checkout_id, 10);
+  if (!Number.isInteger(checkoutId) || checkoutId <= 0) {
+    // Back-compat: a return queued offline by an older client carries no checkout_id,
+    // and a 400 would make the offline queue drop it for good. Accept it only when it's
+    // unambiguous and can't touch someone else's checkout: exactly one open checkout on
+    // this asset that the caller holds or checked out.
+    try {
+      const open = await pool.query(
+        `SELECT id FROM equipment_checkouts
+          WHERE asset_id=$1 AND company_id=$2 AND returned_at IS NULL
+            AND (user_id=$3 OR checked_out_by=$3)`,
+        [req.params.id, companyId, req.user.id]
+      );
+      if (open.rowCount !== 1) return res.status(400).json({ error: 'checkout_id is required' });
+      checkoutId = open.rows[0].id;
+    } catch (err) {
+      req.log.error({ err }, 'route error');
+      return res.status(500).json({ error: 'Server error' });
+    }
+  }
+  const clientRequestId = readIdempotencyKey(req);
+  try {
+    const cur = await pool.query(
+      `SELECT * FROM equipment_checkouts WHERE id=$1 AND asset_id=$2 AND company_id=$3`,
+      [checkoutId, req.params.id, companyId]
+    );
+    if (cur.rowCount === 0) return res.status(404).json({ error: 'Checkout not found' });
+    const row = cur.rows[0];
+    if (row.returned_at) {
+      if (clientRequestId && row.return_request_id === clientRequestId) return res.status(200).json(row);
+      return res.status(409).json({ error: 'Already returned' });
+    }
+  } catch (err) {
+    req.log.error({ err }, 'route error');
+    return res.status(500).json({ error: 'Server error' });
+  }
   let return_photo_url = req.body.return_photo_url?.trim() || null;
   try { return_photo_url = (await uploadPhoto(req.body.return_photo)) || return_photo_url; }
   catch (err) { req.log.error({ err }, 'photo upload'); return res.status(400).json({ error: 'Photo upload failed' }); }
@@ -484,11 +525,12 @@ router.post('/:id/return', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
     const co = await client.query(
-      `UPDATE equipment_checkouts SET returned_at=NOW(), return_photo_url=COALESCE($3, return_photo_url)
-       WHERE asset_id=$1 AND company_id=$2 AND returned_at IS NULL RETURNING *`,
-      [req.params.id, companyId, return_photo_url]
+      `UPDATE equipment_checkouts SET returned_at=NOW(), return_photo_url=COALESCE($4, return_photo_url),
+         return_request_id=$5
+       WHERE id=$1 AND asset_id=$2 AND company_id=$3 AND returned_at IS NULL RETURNING *`,
+      [checkoutId, req.params.id, companyId, return_photo_url, clientRequestId]
     );
-    if (co.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'No open checkout' }); }
+    if (co.rowCount === 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Already returned' }); }
     await client.query("UPDATE equipment_items SET status='available', updated_at=NOW() WHERE id=$1 AND company_id=$2",
       [req.params.id, companyId]);
     await client.query('COMMIT');

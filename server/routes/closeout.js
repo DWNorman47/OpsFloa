@@ -9,6 +9,7 @@ const pool   = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const { loadSettings } = require('../utils/paidHours');
+const { companyToday } = require('../utils/rateHistoryStore');
 const { computeProjectPnl } = require('./projectReports');
 const {
   CLOSEOUT_STATUSES,
@@ -422,10 +423,15 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
         }
       }
     }
+    // Completion dates are the COMPANY's calendar day — a UTC date stamps "tomorrow" for any
+    // US company transitioning in the evening. Only resolved when a date is actually stamped.
+    const needsToday = (to === 'substantially_complete' && !co.substantial_completion_date)
+      || (to === 'final_complete' && !co.final_completion_date);
+    const today = needsToday ? await companyToday(companyId) : null;
     const subDate = (to === 'substantially_complete' && !co.substantial_completion_date)
-      ? new Date().toISOString().slice(0, 10) : co.substantial_completion_date;
+      ? today : co.substantial_completion_date;
     const finalDate = (to === 'final_complete' && !co.final_completion_date)
-      ? new Date().toISOString().slice(0, 10) : co.final_completion_date;
+      ? today : co.final_completion_date;
     const closedAt = to === 'closed' ? 'NOW()' : 'closed_at';
 
     // Freeze the final cost/profit on the FIRST time the job reaches

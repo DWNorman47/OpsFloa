@@ -6722,3 +6722,27 @@ Tests: rateHistory, payStatementRateHistory, rateHistoryRoute (server); RateHist
   prevailing fallback (`companyPrevRate`) — should use `companyPrevailingRateOn(cpRateBook, day)`.
 Tests: payMoneyFixes0210 (new), rateHistoryRoute, rateHistory, payStatementRateHistory,
 adminWorkerHoursExport, projectSpendRoute.
+
+## Review pass 3 fixes (2026-09-24)
+Five parallel fix batches after the third review. Verify green (server 2516, client 41 files +
+build); migrations 0214-0217 applied on a throwaway local Postgres.
+- QBO: bill ledger v2 (0214) — pre-0211 billed ranges baseline instead of re-billing; bills
+  staged before createBill and reconciled via request id; negative totals hold credits
+  (GET/POST /api/qbo/bill-credits); worked pay trued up after backdated raises; per-week
+  guarantee in the engine; one shared payroll worker set; approved-only day splits.
+- Security: MFA limiter verifies the token; lockout counter resets after expiry; role changes
+  use the "outranks" test; Stripe events have processed_at + 90-day cleanup; late clock-out
+  flag (0215); remaining email escaping; "<Company> via OpsFloa" + trial daily cap;
+  getAppUrl() (APP_URL required in production).
+- Offline/chat: company_inactive keeps queued items; SW time budget < Chrome's 5 min; chat
+  scope by worker_access_ids, newest-N paging, mute enforced; server-side read markers (0216);
+  push removed on logout / inactive users / shared endpoints; notification grouping.
+- Plan Room: esc() across all innerHTML, load-time normalisation, server shape checks
+  (utils/planDocValidate.js); pdf.js 3.11.174 → 4.10.38 (CVE-2024-4367) + isEvalSupported:false;
+  login guard moved to shared/auth-guard.js (CSP).
+- Field/reports: daily report status on create + reviewed lock; equipment return by checkout id
+  (0217; old clients without checkout_id fall back to the caller's single open checkout);
+  lien waiver void/convert; safety talk edit lock; work order conflicts + tz; submittal revise;
+  RFI numbering lock; company-local closeout dates; admin-only incident delete; analytics hours
+  subtract breaks; /projects/metrics limited to active projects; superadmin list LATERAL
+  counts; /admin/pending-count.

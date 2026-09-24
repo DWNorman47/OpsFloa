@@ -1,4 +1,5 @@
 const router  = require('express').Router();
+const { getAppUrl } = require('../utils/appUrl');
 const crypto  = require('crypto');
 const pool    = require('../db');
 const logger  = require('../logger');
@@ -11,9 +12,10 @@ const { loadSettings } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { wallDateInTZ } = require('../utils/timeFormat');
+const { companyTimezone } = require('../utils/rateHistoryStore');
 
 // App base for the client-facing acceptance link (/e/<token>). Trailing slash trimmed.
-const APP_URL = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+const APP_URL = getAppUrl();
 
 // Best-effort client email of the acceptance link. Called AFTER the estimate is
 // committed 'sent', so a delivery failure never blocks the send (the admin still
@@ -32,7 +34,9 @@ async function emailEstimateToClient({ estimate, token, companyName, replyTo }) 
       <a href="${url}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">View &amp; accept estimate</a>
       <p style="color:#9ca3af;font-size:12px;margin-top:24px;word-break:break-all">${url}</p>
     </div>`;
-  return sendEmail(estimate.client_email, subject, html, undefined, { fromName: companyName, replyTo });
+  // From = "<Company> via OpsFloa" (email.js fromHeader); clientCompanyId applies the
+  // trial-company daily cap on client-facing mail.
+  return sendEmail(estimate.client_email, subject, html, undefined, { fromName: companyName, replyTo, clientCompanyId: estimate.company_id });
 }
 const {
   ESTIMATE_STATUSES,
@@ -70,11 +74,15 @@ function dateOnlyYmd(v) {
 }
 
 // An estimate is valid THROUGH valid_until (inclusive) in the company's local
-// calendar; it's expired once the company's today is past that date.
-function isPastValidUntil(row, now = new Date()) {
+// calendar; it's expired once the company's today is past that date. An empty
+// company_timezone setting is NOT UTC — resolve it through the same chain the pay
+// code uses (companyTimezone: setting → users' zones → owner → UTC fallback).
+async function isPastValidUntil(row, db = pool, now = new Date()) {
   const ymd = row.valid_until_ymd || dateOnlyYmd(row.valid_until);
   if (!ymd) return false;
-  return ymd < wallDateInTZ(now, row.company_timezone || 'UTC');
+  const own = row.company_timezone && String(row.company_timezone).trim();
+  const tz = own || (row.company_id ? await companyTimezone(row.company_id, db) : 'UTC');
+  return ymd < wallDateInTZ(now, tz);
 }
 
 // Validation helpers — keep route handlers narrow.
@@ -813,13 +821,9 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Estimate already converted' });
     }
-    // Honour valid_until on convert too. Public accept enforces this,
-    // but if the convert is fired late (admin clicked convert after
-    // the validity window closed) the price commitment is stale.
-    if (isPastValidUntil(est)) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Estimate has expired since acceptance — duplicate to revise' });
-    }
+    // No valid_until check here: expiry is enforced at ACCEPT time. Once the client
+    // accepted within the validity window the price is committed — converting it to a
+    // project later (after valid_until) must not be blocked.
     // Seed budget categories from COST (what the job costs you), not price.
     // cost_cents where set, else the line price — so the budget is a real cost
     // baseline and estimate-vs-actual variance is cost-vs-cost. The contract
@@ -958,7 +962,7 @@ publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `Cannot accept from status '${est.status}'` });
     }
-    if (isPastValidUntil(est)) {
+    if (await isPastValidUntil(est, client)) {
       await client.query(`UPDATE estimates SET status='expired' WHERE id=$1 AND status='sent'`, [est.id]);
       await client.query('COMMIT');
       return res.status(409).json({ error: 'Estimate has expired' });
