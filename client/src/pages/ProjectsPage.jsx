@@ -1537,7 +1537,7 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
     const prev = priority;
     setPriority(v);
     try { const r = await api.patch(`/admin/projects/${project.id}`, { priority: v }); onProjectUpdated?.(r.data); }
-    catch (err) { setPriority(prev); setError(err.response?.data?.error || 'Save failed'); }
+    catch (err) { setPriority(prev); setError(err.response?.data?.error || t.failedToSave); }
   };
 
   useEffect(() => {
@@ -1545,7 +1545,7 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
     setLoading(true);
     api.get('/admin/workers')
       .then(r => setWorkers(r.data.filter(w => w.role === 'worker')))
-      .catch(() => setError('Could not load workers'))
+      .catch(() => setError(t.projCouldNotLoadWorkers.replace('{workers}', workerLabelPluralLower)))
       .finally(() => setLoading(false));
   }, [open, workers]);
 
@@ -1826,7 +1826,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
       setQuickClientName('');
       setQuickClientOpen(false);
     } catch (err) {
-      setError(err.response?.data?.error || `Failed to add ${clientLabelLower}.`);
+      setError(err.response?.data?.error || t.projFailedAddClient.replace('{client}', clientLabelLower));
     } finally {
       setQuickClientSaving(false);
     }
@@ -1834,7 +1834,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 
   const handleSubmit = async e => {
     e.preventDefault();
-    if (!form.name.trim()) { setError('Project name is required.'); return; }
+    if (!form.name.trim()) { setError(t.projectNameRequired); return; }
     // Geofence: enforce all-or-none on the client too so the server's
     // friendlier 400 doesn't surprise an admin mid-create.
     const lat = form.geo_lat.trim();
@@ -1842,7 +1842,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
     const radius = form.geo_radius_ft.trim();
     const geoCount = [lat, lng, radius].filter(Boolean).length;
     if (geoCount > 0 && geoCount < 3) {
-      setError('Geofence needs latitude, longitude, AND radius — or leave all three blank.');
+      setError(t.projGeofenceAllOrNone);
       return;
     }
     setSaving(true); setError('');

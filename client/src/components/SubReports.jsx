@@ -45,8 +45,11 @@ function SubReportForm({ projects, initial = BLANK, onSaved, onCancel, workerLab
       const r = isEdit
         ? await api.patch(`/sub-reports/${initial.id}`, form)
         : await api.post('/sub-reports', form);
-      if (!isEdit && r.data?.offline) {
-        onSaved({ id: 'pending-' + Date.now(), pending: true, ...form, project_name: '' }, false);
+      if (r.data?.offline) {
+        // Queued offline — the { queued, offline } stub is not a row; show the form's values as pending.
+        onSaved(isEdit
+          ? { ...initial, ...form, pending: true }
+          : { id: 'pending-' + Date.now(), pending: true, ...form, project_name: '' }, isEdit);
         return;
       }
       onSaved(r.data, isEdit);

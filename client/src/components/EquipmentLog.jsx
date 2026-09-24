@@ -60,6 +60,14 @@ function ItemForm({ initial, onSaved, onCancel }) {
       const r = isEdit
         ? await api.patch(`/equipment/${initial.id}`, { ...form, updated_at: initial.updated_at })
         : await api.post('/equipment', form);
+      // Offline: the service worker queued the write and answered { queued, offline } —
+      // that stub is not a row. Show the user's own values as a pending row instead.
+      if (r.data?.offline) {
+        onSaved(isEdit
+          ? { ...initial, ...form, pending: true }
+          : { id: 'pending-' + Date.now(), pending: true, ...form }, isEdit);
+        return;
+      }
       onSaved(r.data, isEdit);
     } catch (err) {
       const msg = err.response?.status === 409

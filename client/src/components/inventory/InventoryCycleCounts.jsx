@@ -4,6 +4,7 @@ import { parseBinQR } from './BinLabelModal';
 import { parseItemQR } from './ItemLabelModal';
 import UomConversionModal from './UomConversionModal';
 import { useT } from '../../hooks/useT';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDate } from '../../utils';
 import { SkeletonList } from '../Skeleton';
@@ -1172,34 +1173,43 @@ export default function InventoryCycleCounts({ locations, settings, onComplete }
   const [countSearch, setCountSearch] = useState('');
   const [createError, setCreateError] = useState('');
   const [loadDetailError, setLoadDetailError] = useState('');
+  // Search fires once the user pauses typing, not per keystroke.
+  const debouncedSearch = useDebouncedValue(countSearch, 300);
+  // Each list load bumps the sequence; a response from an older load (filters
+  // changed while it was in flight) is dropped instead of overwriting newer results.
+  const loadSeq = useRef(0);
 
   const CC_PAGE = 100;
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true); setCountsOffset(0);
     try {
       const params = new URLSearchParams({ limit: CC_PAGE, offset: 0 });
       if (filterStatus) params.set('status', filterStatus);
       if (filterType) params.set('count_type', filterType);
       if (filterLocation) params.set('location_id', filterLocation);
-      if (countSearch.trim()) params.set('q', countSearch.trim());
+      if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
       const r = await api.get(`/inventory/cycle-counts?${params}`);
+      if (seq !== loadSeq.current) return;
       setCounts(r.data.counts);
       setCountsTotal(r.data.total);
-    } catch { setError(t.invCycFailedLoad); }
-    finally { setLoading(false); }
-  }, [filterStatus, filterType, filterLocation, countSearch]);
+    } catch { if (seq === loadSeq.current) setError(t.invCycFailedLoad); }
+    finally { if (seq === loadSeq.current) setLoading(false); }
+  }, [filterStatus, filterType, filterLocation, debouncedSearch]);
 
   const loadMoreCounts = async () => {
     const nextOffset = countsOffset + CC_PAGE;
+    const seq = loadSeq.current;
     setLoadingMore(true);
     try {
       const params = new URLSearchParams({ limit: CC_PAGE, offset: nextOffset });
       if (filterStatus) params.set('status', filterStatus);
       if (filterType) params.set('count_type', filterType);
       if (filterLocation) params.set('location_id', filterLocation);
-      if (countSearch.trim()) params.set('q', countSearch.trim());
+      if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
       const r = await api.get(`/inventory/cycle-counts?${params}`);
+      if (seq !== loadSeq.current) return; // filters changed — this page belongs to an old list
       setCounts(prev => [...prev, ...r.data.counts]);
       setCountsOffset(nextOffset);
     } catch { /* non-fatal */ }

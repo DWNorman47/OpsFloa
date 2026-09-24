@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
@@ -232,8 +232,11 @@ function InspectionForm({ templates, projects, initial, onSaved, onCancel, defau
       const r = isEdit
         ? await api.patch(`/inspections/${initial.id}`, form)
         : await api.post('/inspections', form);
-      if (!isEdit && r.data?.offline) {
-        onSaved({ id: 'pending-' + Date.now(), pending: true, ...form, status: form.status || 'pending', results: form.results || {} }, false);
+      if (r.data?.offline) {
+        // Queued offline — the { queued, offline } stub is not a row; show the form's values as pending.
+        onSaved(isEdit
+          ? { ...initial, ...form, pending: true }
+          : { id: 'pending-' + Date.now(), pending: true, ...form, status: form.status || 'pending', results: form.results || {} }, isEdit);
         return;
       }
       onSaved(r.data, isEdit);
@@ -499,22 +502,40 @@ export default function InspectionChecklists({ projects, activeProject = '', onP
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
 
-  const setFilter = (k, v) => { setPage(1); setFilters(f => ({ ...f, [k]: v })); };
-  // Follow the shared Field project (changed from any tab).
-  useEffect(() => { setFilters(f => ({ ...f, project_id: activeProject != null ? String(activeProject) : '' })); }, [activeProject]);
+  const [loadError, setLoadError] = useState('');
+  const loadSeq = useRef(0);
 
+  const setFilter = (k, v) => { setPage(1); setFilters(f => ({ ...f, [k]: v })); };
+  // Follow the shared Field project (changed from any tab). Keep the same object
+  // when nothing changed so the load effect doesn't fire twice on mount.
+  useEffect(() => {
+    const pid = activeProject != null ? String(activeProject) : '';
+    setFilters(f => (f.project_id === pid ? f : { ...f, project_id: pid }));
+  }, [activeProject]);
+
+  // Each load bumps the sequence; a response from a superseded load (filters/page
+  // changed while it was in flight) is dropped so it can't overwrite newer results.
   const loadAll = async (p = page) => {
-    const [insRes, tplRes] = await Promise.all([
-      api.get('/inspections', { params: { ...Object.fromEntries(Object.entries(filters).filter(([,v]) => v)), page: p, limit: 50 } }),
-      api.get('/inspections/templates'),
-    ]);
-    setInspections(insRes.data.items);
-    setPages(insRes.data.pages || 1);
-    setTemplates(tplRes.data);
+    const seq = ++loadSeq.current;
+    try {
+      const [insRes, tplRes] = await Promise.all([
+        api.get('/inspections', { params: { ...Object.fromEntries(Object.entries(filters).filter(([,v]) => v)), page: p, limit: 50 } }),
+        api.get('/inspections/templates'),
+      ]);
+      if (seq !== loadSeq.current) return;
+      setInspections(insRes.data.items);
+      setPages(insRes.data.pages || 1);
+      setTemplates(tplRes.data);
+      setLoadError('');
+    } catch {
+      if (seq === loadSeq.current) setLoadError(t.loadError);
+    } finally {
+      if (seq === loadSeq.current) setLoading(false);
+    }
   };
 
-  useEffect(() => { loadAll(1).finally(() => setLoading(false)); }, []);
-  useEffect(() => { if (!loading) loadAll(page); }, [filters, page]);
+  // One effect covers the first load and every filter/page change.
+  useEffect(() => { loadAll(page); }, [filters, page]);
 
   const handleSaved = (item, isEdit) => {
     if (view === 'templates') {
@@ -609,6 +630,12 @@ export default function InspectionChecklists({ projects, activeProject = '', onP
         </FieldFilters>
       )}
 
+      {loadError && !loading && (
+        <p style={styles.hint} role="alert">
+          {loadError}{' '}
+          <button type="button" style={styles.toggleBtn} onClick={() => loadAll(page)}>{t.retry}</button>
+        </p>
+      )}
       {loading ? (
         <p style={styles.hint}>{t.loading}</p>
       ) : view === 'templates' ? (

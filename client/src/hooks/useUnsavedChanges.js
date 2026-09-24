@@ -17,8 +17,11 @@
 // prompt doesn't fire on subsequent navigations.
 
 import { useEffect } from 'react';
+import { useDirtyForm } from './useDirtyForm';
 
 export function useUnsavedChanges(isDirty) {
+  // Also hold off background reloads (UpdatePrompt) while the form is dirty.
+  useDirtyForm(isDirty);
   useEffect(() => {
     if (!isDirty) return;
     function onBeforeUnload(e) {

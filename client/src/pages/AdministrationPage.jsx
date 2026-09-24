@@ -497,7 +497,17 @@ function AccountTab() {
     if (form.new_password !== form.confirm) { setMsg(t.passwordsNoMatch); return; }
     setSaving(true); setMsg('');
     try {
-      await api.post('/auth/change-password', { current_password: form.current_password, new_password: form.new_password });
+      // A wrong current password is a 401 — skipAuthRedirect keeps the session and
+      // the error shows inline (suppressToast avoids a duplicate toast).
+      const r = await api.post('/auth/change-password',
+        { current_password: form.current_password, new_password: form.new_password },
+        { skipAuthRedirect: true, suppressToast: true });
+      // The server bumps token_version (invalidating every token) and returns a
+      // fresh one for this device — store it, or the next request logs us out.
+      if (r.data?.token) {
+        const store = safeSession.getItem('tc_token') ? safeSession : safeLocal;
+        store.setItem('tc_token', r.data.token);
+      }
       setMsg(t.passwordChangedSuccess);
       setForm({ current_password: '', new_password: '', confirm: '' });
       setTimeout(() => { setShowPasswordForm(false); setMsg(''); }, 2000);

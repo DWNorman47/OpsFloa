@@ -54,8 +54,11 @@ function RFIForm({ initial, projects, onSaved, onCancel, defaultProjectId = null
       const r = isEdit
         ? await api.patch(`/rfis/${initial.id}`, { ...form, updated_at: initial.updated_at })
         : await api.post('/rfis', form);
-      if (!isEdit && r.data?.offline) {
-        onSaved({ id: 'pending-' + Date.now(), pending: true, ...form, rfi_number: '?', status: 'open' }, false);
+      if (r.data?.offline) {
+        // Queued offline — the { queued, offline } stub is not a row; show the form's values as pending.
+        onSaved(isEdit
+          ? { ...initial, ...form, pending: true }
+          : { id: 'pending-' + Date.now(), pending: true, ...form, rfi_number: '?', status: 'open' }, isEdit);
         return;
       }
       onSaved(r.data, isEdit);

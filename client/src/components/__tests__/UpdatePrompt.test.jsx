@@ -73,6 +73,34 @@ describe('<UpdatePrompt />', () => {
     expect(screen.queryByText(/new version of OpsFloa is ready/i)).not.toBeInTheDocument();
   });
 
+  test('does not auto-reload on tab hide while a form is dirty', async () => {
+    const { registerDirtyForm, unregisterDirtyForm } = await import('../../utils/dirtyForms');
+    const originalSw = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    // Never resolves — we only care whether the update/reload path was entered.
+    const getRegistration = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { getRegistration } });
+    const hide = () => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+
+    mockVersionEndpoint('1.0.0+newer');
+    render(<UpdatePrompt />);
+    await triggerCheck();
+
+    const token = registerDirtyForm('daily-report');
+    await act(async () => { hide(); });
+    expect(getRegistration).not.toHaveBeenCalled();
+
+    unregisterDirtyForm(token);
+    await act(async () => { hide(); });
+    expect(getRegistration).toHaveBeenCalledOnce();
+
+    delete document.visibilityState;
+    if (originalSw) Object.defineProperty(navigator, 'serviceWorker', originalSw);
+    else delete navigator.serviceWorker;
+  });
+
   test('activates a waiting service worker before reloading', async () => {
     const original = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
     const waiting = new EventTarget();

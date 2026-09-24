@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api';
 import { useT } from '../../hooks/useT';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { useAuth } from '../../contexts/AuthContext';
 import { langToLocale } from '../../utils';
 import { useMoney } from '../../hooks/useMoney';
@@ -823,6 +824,10 @@ export default function InventoryPurchaseOrders({ locations, suppliers: supplier
   const [error, setError]       = useState('');
   const [loadDetailError, setLoadDetailError] = useState('');
   const [poSearch, setPoSearch] = useState('');
+  // Search fires once the user pauses typing, not per keystroke.
+  const debouncedPoSearch = useDebouncedValue(poSearch, 300);
+  // Drops responses from list loads superseded by a newer one (out-of-order replies).
+  const loadSeq = useRef(0);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterSupplier, setFilterSupplier] = useState('');
   const PO_PAGE = 100;
@@ -851,28 +856,32 @@ export default function InventoryPurchaseOrders({ locations, suppliers: supplier
   }, [prefillLowStock]);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true); setError(''); setPosOffset(0);
     try {
       const params = new URLSearchParams({ limit: PO_PAGE, offset: 0 });
-      if (poSearch.trim()) params.set('q', poSearch.trim());
+      if (debouncedPoSearch.trim()) params.set('q', debouncedPoSearch.trim());
       if (filterStatus) params.set('status', filterStatus);
       if (filterSupplier) params.set('supplier_id', filterSupplier);
       const r = await api.get(`/inventory/purchase-orders?${params}`);
+      if (seq !== loadSeq.current) return;
       setPos(r.data.orders);
       setPosTotal(r.data.total);
-    } catch { setError(t.invPOFailedLoad); }
-    finally { setLoading(false); }
-  }, [poSearch, filterStatus, filterSupplier]);
+    } catch { if (seq === loadSeq.current) setError(t.invPOFailedLoad); }
+    finally { if (seq === loadSeq.current) setLoading(false); }
+  }, [debouncedPoSearch, filterStatus, filterSupplier]);
 
   const loadMorePos = async () => {
     const nextOffset = posOffset + PO_PAGE;
+    const seq = loadSeq.current;
     setLoadingMore(true);
     try {
       const params = new URLSearchParams({ limit: PO_PAGE, offset: nextOffset });
-      if (poSearch.trim()) params.set('q', poSearch.trim());
+      if (debouncedPoSearch.trim()) params.set('q', debouncedPoSearch.trim());
       if (filterStatus) params.set('status', filterStatus);
       if (filterSupplier) params.set('supplier_id', filterSupplier);
       const r = await api.get(`/inventory/purchase-orders?${params}`);
+      if (seq !== loadSeq.current) return; // filters changed — stale page
       setPos(prev => [...prev, ...r.data.orders]);
       setPosOffset(nextOffset);
     } catch { /* non-fatal */ }

@@ -37,6 +37,7 @@ export default function ProjectFinancialsTab({ projectId }) {
   const toast = useToast();
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
+  const catLabel = cat => t[`pfinCat_${cat}`] || cat;
   const [budget, setBudget] = useState(null);
   const [spend, setSpend] = useState(null);
   const [pnl, setPnl] = useState(null);
@@ -78,10 +79,10 @@ export default function ProjectFinancialsTab({ projectId }) {
     try {
       const amt = parseInt(expenseForm.amount_cents, 10);
       if (!Number.isFinite(amt) || amt < 0) {
-        setError('Amount must be a positive number'); return;
+        setError(t.pfinAmountPositive); return;
       }
       if (!expenseForm.description.trim()) {
-        setError('Description is required'); return;
+        setError(t.pfinDescriptionRequired); return;
       }
       await api.post(`/projects/${projectId}/expenses`, {
         category: expenseForm.category,
@@ -91,11 +92,11 @@ export default function ProjectFinancialsTab({ projectId }) {
         vendor: expenseForm.vendor || null,
         paid_date: expenseForm.paid_date || null,
       });
-      toast('Expense added', 'success');
+      toast(t.pfinExpenseAdded, 'success');
       setShowExpenseForm(false);
       setExpenseForm({ category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10) });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Failed to add expense'); }
+    } catch (err) { setError(err.response?.data?.error || t.pfinFailedAddExpense); }
   }
 
   function startEditBudget() {
@@ -118,49 +119,49 @@ export default function ProjectFinancialsTab({ projectId }) {
         budget_cents: budgetDraft[cat] === '' || budgetDraft[cat] == null ? 0 : Math.round(Number(budgetDraft[cat]) * 100),
       }));
       await api.put(`/projects/${projectId}/budget`, { categories });
-      toast('Budget saved', 'success');
+      toast(t.pfinBudgetSaved, 'success');
       setEditBudget(false);
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Failed to save budget'); }
+    } catch (err) { setError(err.response?.data?.error || t.pfinFailedSaveBudget); }
     finally { setSavingBudget(false); }
   }
 
   async function saveContract() {
     const cents = contractDraft === '' ? null : Math.round(Number(contractDraft) * 100);
-    if (cents !== null && (!Number.isFinite(cents) || cents < 0)) { setError('Enter a valid contract value'); return; }
+    if (cents !== null && (!Number.isFinite(cents) || cents < 0)) { setError(t.pfinInvalidContract); return; }
     try {
       await api.patch(`/admin/projects/${projectId}`, { contract_value_cents: cents });
-      toast('Contract value saved', 'success');
+      toast(t.pfinContractSaved, 'success');
       setEditContract(false);
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Failed to save contract value'); }
+    } catch (err) { setError(err.response?.data?.error || t.pfinFailedSaveContract); }
   }
 
   async function releaseRetainage() {
     const held = parseInt(pnl?.revenue?.retainage_outstanding_cents, 10) || 0;
     if (!await confirm({
-      title: 'Release retainage?',
-      body: `Mark ${formatCents(held)} of withheld retainage as released? It's already billed on prior invoices — releasing lifts the hold so the remaining balances are collectible.`,
-      confirmLabel: 'Release',
+      title: t.pfinReleaseRetainageTitle,
+      body: t.pfinReleaseRetainageBody.replace('{amount}', formatCents(held)),
+      confirmLabel: t.pfinRelease,
     })) return;
     try {
       await api.post(`/invoices/retainage-release/${projectId}`);
-      toast('Retainage released', 'success');
+      toast(t.pfinRetainageReleased, 'success');
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Failed to release retainage'); }
+    } catch (err) { setError(err.response?.data?.error || t.pfinFailedReleaseRetainage); }
   }
 
   async function deleteExpense(id) {
     if (!await confirm({
-      title: 'Delete this expense?',
-      confirmLabel: 'Delete',
+      title: t.pfinDeleteExpenseTitle,
+      confirmLabel: t.delete,
       tone: 'danger',
     })) return;
     try {
       await api.delete(`/projects/${projectId}/expenses/${id}`);
-      toast('Expense deleted', 'success');
+      toast(t.pfinExpenseDeleted, 'success');
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Failed to delete expense'); }
+    } catch (err) { setError(err.response?.data?.error || t.pfinFailedDeleteExpense); }
   }
 
   if (loading) return <SkeletonList rows={5} />;
@@ -174,66 +175,66 @@ export default function ProjectFinancialsTab({ projectId }) {
       {pnl && (
         <div style={styles.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ ...styles.h3, margin: 0 }}>P&L Summary</h3>
+            <h3 style={{ ...styles.h3, margin: 0 }}>{t.pfinPnlSummary}</h3>
             {canWrite && !pnl.locked && (
               editContract ? (
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: 13, color: '#6b7280' }}>Contract $</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>{t.pfinContractDollar}</span>
                   <input type="number" min="0" step="0.01" value={contractDraft} onChange={e => setContractDraft(e.target.value)} style={{ ...styles.input, width: 120 }} autoFocus />
-                  <button onClick={saveContract} style={styles.btnPrimary}>Save</button>
-                  <button onClick={() => setEditContract(false)} style={styles.btn}>Cancel</button>
+                  <button onClick={saveContract} style={styles.btnPrimary}>{t.save}</button>
+                  <button onClick={() => setEditContract(false)} style={styles.btn}>{t.cancel}</button>
                 </div>
               ) : (
-                <button onClick={() => { setContractDraft(pnl.contract_value_cents ? (parseInt(pnl.contract_value_cents, 10) / 100).toString() : ''); setEditContract(true); }} style={styles.btn}>Set contract value</button>
+                <button onClick={() => { setContractDraft(pnl.contract_value_cents ? (parseInt(pnl.contract_value_cents, 10) / 100).toString() : ''); setEditContract(true); }} style={styles.btn}>{t.pfinSetContractValue}</button>
               )
             )}
           </div>
           {pnl.locked && (
             <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 14 }}>
-              <span style={{ fontWeight: 700, color: '#065f46' }}>🔒 Final (locked)</span>
-              <span>Profit <strong>{formatCents(pnl.locked.gross_profit_cents)}</strong></span>
-              <span style={{ color: '#6b7280' }}>Cost {formatCents(pnl.locked.cost?.spent_cents)}</span>
+              <span style={{ fontWeight: 700, color: '#065f46' }}>{t.pfinFinalLocked}</span>
+              <span>{t.pfinProfit} <strong>{formatCents(pnl.locked.gross_profit_cents)}</strong></span>
+              <span style={{ color: '#6b7280' }}>{t.pfinCost} {formatCents(pnl.locked.cost?.spent_cents)}</span>
               {parseInt(pnl.locked.cost?.committed_cents, 10) > 0 && (
-                <span style={{ color: '#b45309' }}>+ {formatCents(pnl.locked.cost.committed_cents)} committed (not yet spent)</span>
+                <span style={{ color: '#b45309' }}>+ {formatCents(pnl.locked.cost.committed_cents)} {t.pfinCommittedNotSpent}</span>
               )}
               {pnl.locked.snapshot_at && (
                 <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
-                  as of {new Date(pnl.locked.snapshot_at).toLocaleDateString()} · live figures below
+                  {t.pfinAsOfLive.replace('{date}', new Date(pnl.locked.snapshot_at).toLocaleDateString())}
                 </span>
               )}
             </div>
           )}
           <div style={styles.statGrid}>
-            <Stat label="Contract value" value={formatCents(pnl.contract_value_cents)} />
-            <Stat label="Revenue billed" value={formatCents(pnl.revenue?.billed_cents)} />
-            <Stat label="Cost spent" value={formatCents(pnl.cost?.spent_cents)} />
-            <Stat label="Committed" value={formatCents(pnl.cost?.committed_cents)} muted />
+            <Stat label={t.pfinContractValue} value={formatCents(pnl.contract_value_cents)} />
+            <Stat label={t.pfinRevenueBilled} value={formatCents(pnl.revenue?.billed_cents)} />
+            <Stat label={t.pfinCostSpent} value={formatCents(pnl.cost?.spent_cents)} />
+            <Stat label={t.pfinCommitted} value={formatCents(pnl.cost?.committed_cents)} muted />
           </div>
           <div style={{ ...styles.statGrid, marginTop: 12 }}>
             <Stat
-              label="Gross profit"
+              label={t.pfinGrossProfit}
               value={formatCents(pnl.gross_profit_cents)}
               valueColor={pnl.gross_profit_cents < 0 ? '#dc2626' : '#059669'}
             />
             <Stat
-              label="Gross margin"
+              label={t.pfinGrossMargin}
               value={pnl.gross_margin_pct == null ? '—' : `${pnl.gross_margin_pct.toFixed(1)}%`}
             />
             <Stat
-              label="Projected profit"
+              label={t.pfinProjectedProfit}
               value={formatCents(pnl.projected_profit_cents)}
               valueColor={pnl.projected_profit_cents < 0 ? '#dc2626' : '#059669'}
             />
             <Stat
-              label="Projected margin"
+              label={t.pfinProjectedMargin}
               value={pnl.projected_margin_pct == null ? '—' : `${pnl.projected_margin_pct.toFixed(1)}%`}
             />
           </div>
           {parseInt(pnl.revenue?.retainage_outstanding_cents, 10) > 0 && (
             <div style={{ marginTop: 12, padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 14 }}>
-              <span>Retainage held by client: <strong>{formatCents(pnl.revenue.retainage_outstanding_cents)}</strong></span>
+              <span>{t.pfinRetainageHeld} <strong>{formatCents(pnl.revenue.retainage_outstanding_cents)}</strong></span>
               {canWrite && !pnl.locked && (
-                <button onClick={releaseRetainage} style={{ ...styles.btn, marginLeft: 'auto' }}>Release retainage →</button>
+                <button onClick={releaseRetainage} style={{ ...styles.btn, marginLeft: 'auto' }}>{t.pfinReleaseRetainageBtn}</button>
               )}
             </div>
           )}
@@ -248,12 +249,12 @@ export default function ProjectFinancialsTab({ projectId }) {
             const delta = proj == null ? null : proj - bidMarginPct;
             return (
               <div style={{ marginTop: 12, padding: '10px 12px', background: '#f9fafb', borderRadius: 8, fontSize: 14, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline' }}>
-                <span><strong>Bid margin</strong> {bidMarginPct.toFixed(1)}%</span>
-                <span style={{ color: '#6b7280' }}>vs</span>
-                <span><strong>Projected</strong> {proj == null ? '—' : `${proj.toFixed(1)}%`}</span>
+                <span><strong>{t.pfinBidMargin}</strong> {bidMarginPct.toFixed(1)}%</span>
+                <span style={{ color: '#6b7280' }}>{t.pfinVs}</span>
+                <span><strong>{t.pfinProjected}</strong> {proj == null ? '—' : `${proj.toFixed(1)}%`}</span>
                 {delta != null && (
                   <span style={{ marginLeft: 'auto', fontWeight: 700, color: delta < -0.05 ? '#dc2626' : delta > 0.05 ? '#059669' : '#6b7280' }}>
-                    {delta >= 0 ? '+' : ''}{delta.toFixed(1)} pts
+                    {delta >= 0 ? '+' : ''}{delta.toFixed(1)} {t.pfinPts}
                   </span>
                 )}
               </div>
@@ -265,26 +266,26 @@ export default function ProjectFinancialsTab({ projectId }) {
       {/* Categorized budget + spend */}
       <div style={styles.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ ...styles.h3, margin: 0 }}>Budget (cost) vs. Spend by category</h3>
+          <h3 style={{ ...styles.h3, margin: 0 }}>{t.pfinBudgetVsSpend}</h3>
           {!canWrite ? null : editBudget ? (
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setEditBudget(false)} style={styles.btn}>Cancel</button>
-              <button onClick={saveBudget} disabled={savingBudget} style={styles.btnPrimary}>{savingBudget ? 'Saving…' : 'Save budget'}</button>
+              <button onClick={() => setEditBudget(false)} style={styles.btn}>{t.cancel}</button>
+              <button onClick={saveBudget} disabled={savingBudget} style={styles.btnPrimary}>{savingBudget ? t.pfinSaving : t.pfinSaveBudget}</button>
             </div>
           ) : (
-            <button onClick={startEditBudget} style={styles.btn}>Edit budget</button>
+            <button onClick={startEditBudget} style={styles.btn}>{t.pfinEditBudget}</button>
           )}
         </div>
         <div style={styles.tableScroll}>
         <table style={styles.table}>
           <thead>
             <tr style={styles.tableHeader}>
-              <th style={styles.th}>Category</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Budget</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Spent</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Committed</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Variance</th>
-              <th style={styles.th}>% Used</th>
+              <th style={styles.th}>{t.pfinCategory}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.pfinBudget}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.pfinSpent}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.pfinCommitted}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.pfinVariance}</th>
+              <th style={styles.th}>{t.pfinPctUsed}</th>
             </tr>
           </thead>
           <tbody>
@@ -303,7 +304,7 @@ export default function ProjectFinancialsTab({ projectId }) {
                 <tr key={cat} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={styles.td}>
                     <span style={{ ...styles.catPill, background: CATEGORY_COLORS[cat] + '22', color: CATEGORY_COLORS[cat] }}>
-                      {cat}
+                      {catLabel(cat)}
                     </span>
                   </td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>
@@ -339,7 +340,7 @@ export default function ProjectFinancialsTab({ projectId }) {
           {budget?.total_cents > 0 && spend?.totals && (
             <tfoot>
               <tr style={{ background: '#f9fafb', borderTop: '2px solid #111827' }}>
-                <td style={{ ...styles.td, fontWeight: 700 }}>Total</td>
+                <td style={{ ...styles.td, fontWeight: 700 }}>{t.pfinTotal}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(budget.total_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(spend.totals.spent_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#6b7280' }}>{formatCents(spend.totals.committed_cents)}</td>
@@ -356,19 +357,19 @@ export default function ProjectFinancialsTab({ projectId }) {
         </table>
         </div>
         <p style={{ fontSize: 12, color: '#6b7280', margin: '10px 0 0' }}>
-          Budget is your estimated <strong>cost</strong>. Variance = budget − (spent + committed): <span style={{ color: '#059669' }}>green</span> is under, <span style={{ color: '#dc2626' }}>red</span> is over.
+          {t.pfinBudgetNote} <span style={{ color: '#059669' }}>{t.pfinGreenUnder}</span>, <span style={{ color: '#dc2626' }}>{t.pfinRedOver}</span>
         </p>
       </div>
 
       {/* Manual expenses */}
       <div style={styles.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <h3 style={styles.h3}>Project expenses ({expenses.length})</h3>
+          <h3 style={styles.h3}>{t.pfinProjectExpenses.replace('{n}', expenses.length)}</h3>
           {pnl?.locked ? (
-            <span style={{ fontSize: 12, color: '#6b7280' }}>🔒 Closed — reopen to edit costs</span>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>{t.pfinClosedReopen}</span>
           ) : canWrite ? (
             <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
-              {showExpenseForm ? 'Cancel' : '+ Add expense'}
+              {showExpenseForm ? t.cancel : t.pfinAddExpense}
             </button>
           ) : null}
         </div>
@@ -376,18 +377,18 @@ export default function ProjectFinancialsTab({ projectId }) {
         {showExpenseForm && (
           <div style={{ background: '#fef3c7', padding: 12, borderRadius: 6, marginBottom: 12 }}>
             <div style={styles.grid3}>
-              <Field label="Category">
+              <Field label={t.pfinCategory}>
                 <select value={expenseForm.category} onChange={e => setExpenseForm(f => ({ ...f, category: e.target.value }))} style={styles.input}>
-                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  {CATEGORIES.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
                 </select>
               </Field>
-              <Field label="Amount" required>
+              <Field label={t.pfinAmount} required>
                 <MoneyInput
                   valueCents={expenseForm.amount_cents}
                   onChange={cents => setExpenseForm(f => ({ ...f, amount_cents: cents }))}
                 />
               </Field>
-              <Field label="Tax %">
+              <Field label={t.pfinTaxPct}>
                 <input
                   type="number" min="0" step="0.01"
                   value={expenseForm.tax_pct}
@@ -395,17 +396,17 @@ export default function ProjectFinancialsTab({ projectId }) {
                   style={styles.input}
                 />
               </Field>
-              <Field label="Description" required>
+              <Field label={t.pfinDescription} required>
                 <input
                   value={expenseForm.description}
                   onChange={e => setExpenseForm(f => ({ ...f, description: e.target.value }))}
                   style={styles.input}
                 />
               </Field>
-              <Field label="Vendor">
+              <Field label={t.pfinVendor}>
                 <input value={expenseForm.vendor} onChange={e => setExpenseForm(f => ({ ...f, vendor: e.target.value }))} style={styles.input} />
               </Field>
-              <Field label="Paid date">
+              <Field label={t.pfinPaidDate}>
                 <input type="date" value={expenseForm.paid_date} onChange={e => setExpenseForm(f => ({ ...f, paid_date: e.target.value }))} style={styles.input} />
               </Field>
             </div>
@@ -416,18 +417,18 @@ export default function ProjectFinancialsTab({ projectId }) {
         )}
 
         {expenses.length === 0 ? (
-          <div style={{ fontSize: 14, color: '#6b7280', padding: '12px 0' }}>No manual expenses recorded.</div>
+          <div style={{ fontSize: 14, color: '#6b7280', padding: '12px 0' }}>{t.pfinNoExpenses}</div>
         ) : (
           <div style={styles.tableScroll}>
           <table style={styles.table}>
             <thead>
               <tr style={styles.tableHeader}>
-                <th style={styles.th}>Date</th>
-                <th style={styles.th}>Category</th>
-                <th style={styles.th}>Description</th>
-                <th style={styles.th}>Vendor</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Amount</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Tax</th>
+                <th style={styles.th}>{t.pfinDate}</th>
+                <th style={styles.th}>{t.pfinCategory}</th>
+                <th style={styles.th}>{t.pfinDescription}</th>
+                <th style={styles.th}>{t.pfinVendor}</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>{t.pfinAmount}</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>{t.pfinTax}</th>
                 <th style={styles.th}></th>
               </tr>
             </thead>
@@ -436,14 +437,14 @@ export default function ProjectFinancialsTab({ projectId }) {
                 <tr key={e.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={styles.td}>{e.paid_date ? new Date(e.paid_date).toLocaleDateString() : '—'}</td>
                   <td style={styles.td}>
-                    <span style={{ ...styles.catPill, background: CATEGORY_COLORS[e.category] + '22', color: CATEGORY_COLORS[e.category] }}>{e.category}</span>
+                    <span style={{ ...styles.catPill, background: CATEGORY_COLORS[e.category] + '22', color: CATEGORY_COLORS[e.category] }}>{catLabel(e.category)}</span>
                   </td>
                   <td style={styles.td}>{e.description}</td>
                   <td style={styles.td}>{e.vendor || '—'}</td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.amount_cents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(e.tax_cents)}</td>
                   <td style={styles.td}>
-                    {!pnl?.locked && canWrite && <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>}
+                    {!pnl?.locked && canWrite && <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title={t.delete} aria-label={t.delete}>×</button>}
                   </td>
                 </tr>
               ))}

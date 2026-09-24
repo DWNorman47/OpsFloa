@@ -4,7 +4,7 @@
  * requests with status filters and conversion-to-work action.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
@@ -45,12 +45,17 @@ export default function ServiceRequestsAdmin({ settings = null }) {
     return `${origin}/r/${user.company_slug}`;
   }, [user?.company_slug]);
 
+  // Switching status filters quickly can land responses out of order; each load
+  // bumps the sequence and a superseded response is dropped (and never flips
+  // `loading` off under the newer request).
+  const loadSeq = useRef(0);
   const load = () => {
+    const seq = ++loadSeq.current;
     setLoading(true); setError('');
-    api.get(`/admin/service-requests?status=${filter}`)
-      .then(r => setRequests(r.data.requests || []))
-      .catch(() => setError(t.srFailedToLoad))
-      .finally(() => setLoading(false));
+    return api.get(`/admin/service-requests?status=${filter}`)
+      .then(r => { if (seq === loadSeq.current) setRequests(r.data.requests || []); })
+      .catch(() => { if (seq === loadSeq.current) setError(t.srFailedToLoad); })
+      .finally(() => { if (seq === loadSeq.current) setLoading(false); });
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
 

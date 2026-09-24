@@ -35,10 +35,15 @@ function WorkerChat({ settings, onRead }) {
   const load = () => {
     if (document.visibilityState !== 'visible' || !navigator.onLine) { setLoading(false); return Promise.resolve(); }
     const cur = activeRef.current;
+    // The user may switch threads while this request is in flight — drop a
+    // response for a thread that's no longer selected so it can't overwrite
+    // the new thread's messages.
+    const stale = () => activeRef.current !== cur;
+    const done = () => { if (!stale()) setLoading(false); };
     if (cur === 'admins') {
-      return api.get('/chat').then(r => { setMessages(r.data); onRead?.(); }).catch(silentError('companychat')).finally(() => setLoading(false));
+      return api.get('/chat').then(r => { if (stale()) return; setMessages(r.data); onRead?.(); }).catch(silentError('companychat')).finally(done);
     }
-    return api.get(`/dm/${cur}`).then(r => { setMessages(r.data?.messages || []); }).catch(silentError('companychat')).finally(() => setLoading(false));
+    return api.get(`/dm/${cur}`).then(r => { if (!stale()) setMessages(r.data?.messages || []); }).catch(silentError('companychat')).finally(done);
   };
 
   useEffect(() => { loadContacts(); const iv = setInterval(loadContacts, 60000); return () => clearInterval(iv); }, []);
@@ -46,6 +51,7 @@ function WorkerChat({ settings, onRead }) {
   // (Re)load the active thread when the selection changes + poll it.
   useEffect(() => {
     setLoading(true);
+    setMessages([]); // don't show the previous thread's messages while this one loads
     clearInterval(pollRef.current);
     load();
     pollRef.current = setInterval(load, 30000);
@@ -65,11 +71,13 @@ function WorkerChat({ settings, onRead }) {
     e.preventDefault();
     if (!body.trim()) return;
     setSending(true);
+    const target = active;
     try {
-      const r = active === 'admins'
+      const r = target === 'admins'
         ? await api.post('/chat', { body })
-        : await api.post(`/dm/${active}`, { body });
-      setMessages(prev => [...prev, r.data]);
+        : await api.post(`/dm/${target}`, { body });
+      // Only append if the user is still on the thread the message went to.
+      if (activeRef.current === target) setMessages(prev => [...prev, r.data]);
       setBody('');
       if (active !== 'admins') loadContacts();
     } catch (err) {
@@ -118,6 +126,8 @@ function AdminChat({ workers, settings }) {
   const [unreadByWorker, setUnreadByWorker] = useState({});
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   const loadThreads = () => {
     if (document.visibilityState !== 'visible' || !navigator.onLine) return Promise.resolve();
@@ -145,27 +155,33 @@ function AdminChat({ workers, settings }) {
 
   // Load the selected thread (worker company_chat or a DM) + poll it.
   useEffect(() => {
-    if (!selected) { setMessages([]); return; }
+    setMessages([]); // never show the previous thread's messages under the new one
+    if (!selected) return undefined;
     setLoading(true);
     clearInterval(pollRef.current);
+    // Responses that land after the selection changed (or the view unmounted)
+    // are dropped — otherwise a slow reply for the old thread overwrites the new one.
+    let cancelled = false;
     const kind = selected.startsWith('d:') ? 'dm' : 'worker';
     const otherId = selected.slice(2);
+    const done = () => { if (!cancelled) setLoading(false); };
     const fetch = () => {
       if (document.visibilityState !== 'visible' || !navigator.onLine) { setLoading(false); return Promise.resolve(); }
       if (kind === 'worker') {
         return api.get(`/chat?worker_id=${otherId}`).then(r => {
+          if (cancelled) return;
           setMessages(r.data);
           safeLocal.setItem(`chatLastRead_admin_${otherId}`, new Date().toISOString());
           setUnreadByWorker(prev => { const n = { ...prev }; delete n[otherId]; return n; });
-        }).catch(silentError('companychat')).finally(() => setLoading(false));
+        }).catch(silentError('companychat')).finally(done);
       }
-      return api.get(`/dm/${otherId}`).then(r => { setMessages(r.data?.messages || []); loadContacts(); }).catch(silentError('companychat')).finally(() => setLoading(false));
+      return api.get(`/dm/${otherId}`).then(r => { if (cancelled) return; setMessages(r.data?.messages || []); loadContacts(); }).catch(silentError('companychat')).finally(done);
     };
     fetch();
     pollRef.current = setInterval(fetch, 30000);
     document.addEventListener('visibilitychange', fetch);
     window.addEventListener('online', fetch);
-    return () => { clearInterval(pollRef.current); document.removeEventListener('visibilitychange', fetch); window.removeEventListener('online', fetch); };
+    return () => { cancelled = true; clearInterval(pollRef.current); document.removeEventListener('visibilitychange', fetch); window.removeEventListener('online', fetch); };
   }, [selected]);
 
   useEffect(() => {
@@ -179,13 +195,15 @@ function AdminChat({ workers, settings }) {
     e.preventDefault();
     if (!body.trim() || !selected) return;
     setSending(true);
+    const target = selected;
     try {
-      const kind = selected.startsWith('d:') ? 'dm' : 'worker';
-      const otherId = selected.slice(2);
+      const kind = target.startsWith('d:') ? 'dm' : 'worker';
+      const otherId = target.slice(2);
       const r = kind === 'worker'
         ? await api.post('/chat', { body, worker_id: otherId })
         : await api.post(`/dm/${otherId}`, { body });
-      setMessages(prev => [...prev, r.data]);
+      // Only append if the user is still on the thread the message went to.
+      if (selectedRef.current === target) setMessages(prev => [...prev, r.data]);
       setBody('');
     } catch (err) {
       // eslint-disable-next-line no-alert

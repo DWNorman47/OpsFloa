@@ -3,6 +3,7 @@ import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
+import { useDirtyForm } from '../hooks/useDirtyForm';
 import { formatDateOnly, langToLocale } from '../utils';
 import { labelSg, labelPl } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
@@ -72,6 +73,7 @@ function ReportEditor({ report: initial, projects, onSaved, onCancel, companyNam
   const [suggesting, setSuggesting] = useState(false);
   const [gettingWeather, setGettingWeather] = useState(false);
   const [dirty, setDirty] = useState(false);
+  useDirtyForm(dirty, 'daily-report'); // hold off the background auto-update reload
   const [pdfGenerating, setPdfGenerating] = useState(false);
 
   const downloadPDF = async (reportData) => {

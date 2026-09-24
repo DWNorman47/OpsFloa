@@ -18,6 +18,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
+import { hasDirtyForms } from '../utils/dirtyForms';
 
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
 
@@ -124,11 +125,15 @@ export default function UpdatePrompt() {
   // active user is never yanked mid-action and returns to the fresh build; logged-out
   // users (who never see the banner) also get updated. The banner stays as the immediate
   // manual option. Fires once per detected version.
+  //
+  // Never while a form holds unsaved work (utils/dirtyForms): a worker filling a daily
+  // report who switches to the camera hides the tab, and a reload would wipe the draft.
+  // A skipped hide isn't consumed — the next hide after the form is saved applies it.
   useEffect(() => {
     if (!newVersion) return undefined;
     let applied = false;
     const onHide = () => {
-      if (!applied && document.visibilityState === 'hidden') {
+      if (!applied && document.visibilityState === 'hidden' && !hasDirtyForms()) {
         applied = true;
         activateUpdateAndReload();
       }
