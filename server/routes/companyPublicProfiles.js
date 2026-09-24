@@ -6,7 +6,7 @@ const logger = require('../logger');
 const { logAudit } = require('../auditLog');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
-const { uploadBase64, deleteByUrl } = require('../r2');
+const { uploadBase64, deleteByUrl, keyBelongsTo } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 
 const MAX = {
@@ -101,7 +101,23 @@ function estimateDataUrlBytes(dataUrl) {
   return Math.ceil((base64.length * 3) / 4);
 }
 
-async function cleanPhotos(value, companyId, existingPhotos = []) {
+const PHOTO_FOLDER = 'public-profiles';
+
+// An existing photo is one THIS company may delete only when it is recorded in the
+// company's own saved photos AND its key is under our public-profiles/ folder. (Saved
+// photos can't carry foreign urls going forward — cleanPhotos only keeps urls that
+// were already saved or that it just uploaded — so this guards legacy rows too.)
+function isOwnedPhoto(url, existingByUrl) {
+  return !!url && existingByUrl.has(url) && keyBelongsTo(url, PHOTO_FOLDER);
+}
+
+function photoSize(photo) {
+  return Math.max(0, Number(photo?.size_bytes || photo?.sizeBytes || 0) || 0);
+}
+
+// `uploaded` is an out-param ({ urls, bytes }) so the caller can roll back objects
+// this request uploaded even if cleanPhotos throws part-way through.
+async function cleanPhotos(value, companyId, existingPhotos = [], uploaded = { urls: [], bytes: 0 }) {
   const raw = Array.isArray(value) ? value.slice(0, MAX.photos) : [];
   const estimatedBytes = raw.reduce((sum, item) => {
     const url = String(item?.url || '');
@@ -121,24 +137,33 @@ async function cleanPhotos(value, companyId, existingPhotos = []) {
 
   const existingByUrl = normalizeExistingPhotos(existingPhotos);
   const photos = [];
-  let uploadedBytes = 0;
+  const seen = new Set();
 
   for (const item of raw) {
     const incomingUrl = String(item?.url || '').trim();
     if (!incomingUrl) continue;
 
-    let url = incomingUrl;
-    let sizeBytes = Number(item?.size_bytes || item?.sizeBytes || 0) || 0;
+    let url;
+    let sizeBytes;
     if (incomingUrl.startsWith('data:')) {
-      const uploaded = await uploadBase64(incomingUrl, 'public-profiles');
-      url = uploaded.url;
-      sizeBytes = uploaded.sizeBytes || 0;
-      uploadedBytes += sizeBytes;
-    } else if (!/^https:\/\//i.test(incomingUrl)) {
-      continue;
+      const up = await uploadBase64(incomingUrl, PHOTO_FOLDER);
+      url = up.url;
+      sizeBytes = up.sizeBytes || 0;
+      uploaded.urls.push(url);
+      uploaded.bytes += sizeBytes;
     } else if (existingByUrl.has(incomingUrl)) {
-      sizeBytes = Number(existingByUrl.get(incomingUrl).size_bytes || existingByUrl.get(incomingUrl).sizeBytes || sizeBytes || 0);
+      // Keep a photo that is already saved on this profile. Size comes from the
+      // saved record, never the client.
+      url = incomingUrl;
+      sizeBytes = photoSize(existingByUrl.get(incomingUrl));
+    } else {
+      // Any other url (another company's public photo, an arbitrary link) is
+      // dropped: it was never uploaded by this company, so it can't be kept,
+      // counted or later deleted as if it were ours.
+      continue;
     }
+    if (seen.has(url)) continue;
+    seen.add(url);
 
     photos.push({
       url,
@@ -148,11 +173,12 @@ async function cleanPhotos(value, companyId, existingPhotos = []) {
     });
   }
 
-  if (uploadedBytes > 0) {
-    await incrementStorage(companyId, uploadedBytes);
+  if (uploaded.bytes > 0) {
+    await incrementStorage(companyId, uploaded.bytes);
+    uploaded.counted = true;
   }
 
-  return { photos, uploadedBytes };
+  return { photos, uploadedBytes: uploaded.bytes };
 }
 
 function cleanProfileInput(body = {}) {
@@ -216,8 +242,8 @@ async function loadAdminProfile(companyId) {
 
 async function saveProfile(req, res, publish = null) {
   const companyId = req.user.company_id;
-  let uploadedPhotoUrls = [];
-  let uploadedBytes = 0;
+  // Objects uploaded by THIS request — the only ones the error path may delete.
+  const uploaded = { urls: [], bytes: 0, counted: false };
 
   try {
     const current = await loadAdminProfile(companyId);
@@ -232,11 +258,7 @@ async function saveProfile(req, res, publish = null) {
       return res.status(400).json({ error: 'Add a short description before publishing.' });
     }
 
-    const photoResult = await cleanPhotos(req.body.photos, companyId, current.photos);
-    uploadedPhotoUrls = photoResult.photos
-      .filter(p => !current.photos.some(old => old.url === p.url))
-      .map(p => p.url);
-    uploadedBytes = photoResult.uploadedBytes;
+    const photoResult = await cleanPhotos(req.body.photos, companyId, current.photos, uploaded);
 
     const { rows } = await pool.query(
       `INSERT INTO company_public_profiles
@@ -285,11 +307,23 @@ async function saveProfile(req, res, publish = null) {
       ]
     );
 
+    // The row is saved — the upload is now referenced, so no rollback past here.
+    uploaded.urls = [];
+    uploaded.counted = false;
+
     const nextPhotoUrls = new Set(photoResult.photos.map(p => p.url));
-    const removedPhotos = current.photos.filter(p => p.url && !nextPhotoUrls.has(p.url));
-    for (const photo of removedPhotos) {
-      deleteByUrl(photo.url).catch(err => logger.warn({ err, url: photo.url }, 'public_profile_photo_delete_failed'));
-      const size = Number(photo.size_bytes || photo.sizeBytes || 0);
+    const existingByUrl = normalizeExistingPhotos(current.photos);
+    const handled = new Set();
+    for (const photo of current.photos) {
+      const url = photo?.url;
+      if (!url || nextPhotoUrls.has(url) || handled.has(url)) continue;
+      handled.add(url);
+      // Only delete / refund objects this company actually owns (saved on its own
+      // profile and under public-profiles/). A foreign url that slipped into a
+      // legacy row is just dropped from the profile, never deleted or refunded.
+      if (!isOwnedPhoto(url, existingByUrl)) continue;
+      deleteByUrl(url).catch(err => logger.warn({ err, url }, 'public_profile_photo_delete_failed'));
+      const size = photoSize(photo);
       if (size > 0) decrementStorage(companyId, size).catch(() => {});
     }
 
@@ -312,10 +346,11 @@ async function saveProfile(req, res, publish = null) {
 
     res.json({ profile });
   } catch (err) {
-    for (const url of uploadedPhotoUrls) {
-      deleteByUrl(url).catch(() => {});
+    // Roll back only what this request uploaded (never a pre-existing/foreign url).
+    for (const url of uploaded.urls) {
+      if (keyBelongsTo(url, PHOTO_FOLDER)) deleteByUrl(url).catch(() => {});
     }
-    if (uploadedBytes > 0) decrementStorage(companyId, uploadedBytes).catch(() => {});
+    if (uploaded.counted && uploaded.bytes > 0) decrementStorage(companyId, uploaded.bytes).catch(() => {});
     logger.error({ err }, 'company public profile save error');
     res.status(err.status || 500).json({ error: err.status ? err.message : 'Server error' });
   }

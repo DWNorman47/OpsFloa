@@ -9,9 +9,34 @@
 
 const router = require('express').Router();
 const pool = require('../db');
-const { uploadBase64, deleteByUrl, getBytesByUrl, getPresignedUploadUrl, keyFromPublicUrl } = require('../r2');
+const { uploadBase64, deleteByUrl, getBytesByUrl, getPresignedUploadUrl, keyBelongsTo, safeKeyFromPublicUrl } = require('../r2');
 
 const isAdmin = req => req.user.role === 'admin' || req.user.role === 'super_admin';
+
+// Plan documents are stored under a per-company folder, `takeoffs/<company_id>/`,
+// so a client-supplied pdfUrl can be checked against the caller's company: without
+// it, any object in the bucket (another tenant's file) could be attached to a
+// takeoff, proxied back via GET /:id/pdf and deleted via DELETE /:id.
+// Live sessions (liveSessions.js) upload their plan doc through this same
+// /upload-url, so they validate against the same folder.
+function takeoffFolder(companyId) {
+  const id = String(companyId ?? '');
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('invalid company id for takeoff folder');
+  return `takeoffs/${id}`;
+}
+
+// A client-supplied pdfUrl is accepted only if it was issued to this company.
+function pdfUrlBelongsToCompany(url, companyId) {
+  return keyBelongsTo(String(url || ''), takeoffFolder(companyId));
+}
+
+// Legacy rows (before the per-company folder) hold `takeoffs/<uuid>.<ext>`. They
+// stay readable for their own record, but only in that exact flat shape — a
+// stored url pointing anywhere else in the bucket is never proxied.
+function isLegacyTakeoffUrl(url) {
+  const key = safeKeyFromPublicUrl(String(url || ''));
+  return !!key && /^takeoffs\/[^/]+$/.test(key);
+}
 
 // GET /  — this company's shared projects (metadata only, newest edit first).
 // The table serves every plan tool; rows carry a data.app marker. ?app=<marker>
@@ -48,7 +73,7 @@ router.post('/upload-url', async (req, res) => {
   try {
     const ext = String((req.body || {}).ext || '').toLowerCase();
     if (!UPLOAD_TYPES[ext]) return res.status(400).json({ error: 'unsupported file type' });
-    const out = await getPresignedUploadUrl('takeoffs', ext, UPLOAD_TYPES[ext]);
+    const out = await getPresignedUploadUrl(takeoffFolder(req.user.company_id), ext, UPLOAD_TYPES[ext]);
     res.json(out); // { uploadUrl, publicUrl, key }
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs upload-url'); res.status(500).json({ error: 'server error' }); }
 });
@@ -72,7 +97,11 @@ router.get('/:id/pdf', async (req, res) => {
       `SELECT pdf_url, pdf_name FROM takeoff_projects WHERE id = $1 AND company_id = $2`,
       [req.params.id, req.user.company_id]);
     if (!rows.length || !rows[0].pdf_url) return res.status(404).json({ error: 'no pdf' });
-    const bytes = await getBytesByUrl(rows[0].pdf_url);
+    const url = rows[0].pdf_url;
+    if (!pdfUrlBelongsToCompany(url, req.user.company_id) && !isLegacyTakeoffUrl(url)) {
+      return res.status(404).json({ error: 'no pdf' });
+    }
+    const bytes = await getBytesByUrl(url);
     if (!bytes) return res.status(404).json({ error: 'no pdf' });
     res.json({ name: rows[0].pdf_name || 'plan.pdf', b64: bytes.toString('base64') });
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs pdf'); res.status(500).json({ error: 'server error' }); }
@@ -86,11 +115,12 @@ router.post('/', async (req, res) => {
     const { name, data, pdfBase64, pdfName } = req.body || {};
     let pdfUrl = null;
     if (req.body && req.body.pdfUrl) {
-      // must be an object in OUR bucket (from /upload-url), not an arbitrary URL
-      if (!keyFromPublicUrl(String(req.body.pdfUrl))) return res.status(400).json({ error: 'bad pdfUrl' });
+      // must be an object issued to THIS company by /upload-url — not an arbitrary
+      // URL, and not another tenant's object in the same bucket
+      if (!pdfUrlBelongsToCompany(req.body.pdfUrl, req.user.company_id)) return res.status(400).json({ error: 'bad pdfUrl' });
       pdfUrl = String(req.body.pdfUrl);
     } else if (pdfBase64) {
-      const up = await uploadBase64(`data:application/pdf;base64,${pdfBase64}`, 'takeoffs');
+      const up = await uploadBase64(`data:application/pdf;base64,${pdfBase64}`, takeoffFolder(req.user.company_id));
       pdfUrl = up.url;
     }
     const { rows } = await pool.query(
@@ -185,9 +215,16 @@ router.delete('/:id', async (req, res) => {
     if (cur.rows[0].created_by !== req.user.id && !isAdmin(req)) return res.status(403).json({ error: 'forbidden' });
     await pool.query(`DELETE FROM takeoff_projects WHERE id = $1 AND company_id = $2`,
       [req.params.id, req.user.company_id]);
-    if (cur.rows[0].pdf_url) deleteByUrl(cur.rows[0].pdf_url).catch(() => {});
+    // Only delete an object under this company's folder. A legacy (pre-folder) doc
+    // is left for the orphan sweep (takeoffOrphanSweep.js) — it's unreferenced now.
+    if (cur.rows[0].pdf_url && pdfUrlBelongsToCompany(cur.rows[0].pdf_url, req.user.company_id)) {
+      deleteByUrl(cur.rows[0].pdf_url).catch(() => {});
+    }
     res.json({ ok: true });
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs delete'); res.status(500).json({ error: 'server error' }); }
 });
 
 module.exports = router;
+module.exports.takeoffFolder = takeoffFolder;
+module.exports.pdfUrlBelongsToCompany = pdfUrlBelongsToCompany;
+module.exports.isLegacyTakeoffUrl = isLegacyTakeoffUrl;

@@ -20,13 +20,32 @@
 const jwt = require('jsonwebtoken');
 const router = require('express').Router();
 const pool = require('../db');
-const { keyFromPublicUrl, getBytesByUrl, uploadBase64 } = require('../r2');
+const { getBytesByUrl, uploadBase64, keyBelongsTo, safeKeyFromPublicUrl } = require('../r2');
+const { takeoffFolder, pdfUrlBelongsToCompany: takeoffPdfBelongsToCompany } = require('./takeoffs');
 const { LIVE_SESSION_TOOLS, LIVE_SESSION_TOOL_DEFAULT } = require('../constants/liveSessionEnums');
 
 const rooms = new Map();        // sessionId(string) -> Room
 const SNAPSHOT_MS = 4000;       // coalesce DB snapshots
 const HEARTBEAT_MS = 20000;     // SSE keep-alive ping
 const isAdmin = req => req.user.role === 'admin' || req.user.role === 'super_admin';
+
+// Plan-doc storage for sessions. A presigned upload comes from the takeoffs
+// /upload-url (so it lives under takeoffs/<company_id>/); the base64 fallback is
+// stored under live-sessions/<company_id>/. A client-supplied pdfUrl must be one
+// issued to the caller's company — otherwise GET /:id/pdf would proxy another
+// tenant's object.
+function liveSessionFolder(companyId) {
+  return `live-sessions/${takeoffFolder(companyId).slice('takeoffs/'.length)}`;
+}
+function sessionPdfUrlAllowed(url, companyId) {
+  return takeoffPdfBelongsToCompany(url, companyId) || keyBelongsTo(String(url || ''), liveSessionFolder(companyId));
+}
+// Rows from before the per-company folders hold a flat `takeoffs/<uuid>.<ext>` or
+// `live-sessions/<uuid>.<ext>` key; keep those readable, but nothing else.
+function isLegacySessionPdfUrl(url) {
+  const key = safeKeyFromPublicUrl(String(url || ''));
+  return !!key && /^(takeoffs|live-sessions)\/[^/]+$/.test(key);
+}
 
 /* ------------------------------ room helpers ------------------------------ */
 
@@ -106,10 +125,10 @@ router.post('/', async (req, res) => {
     const b = req.body || {};
     const tool = LIVE_SESSION_TOOLS.includes(b.tool) ? b.tool : LIVE_SESSION_TOOL_DEFAULT;
     let pdfUrl = null;
-    if (b.pdfUrl) { if (!keyFromPublicUrl(String(b.pdfUrl))) return res.status(400).json({ error: 'bad pdfUrl' }); pdfUrl = String(b.pdfUrl); }
+    if (b.pdfUrl) { if (!sessionPdfUrlAllowed(b.pdfUrl, req.user.company_id)) return res.status(400).json({ error: 'bad pdfUrl' }); pdfUrl = String(b.pdfUrl); }
     // CORS-free fallback: the host couldn't PUT straight to R2, so it sent the
     // plan PDF as base64 — store it server-side (same path as shared takeoffs).
-    else if (b.pdfBase64) { const up = await uploadBase64(`data:application/pdf;base64,${b.pdfBase64}`, 'live-sessions'); pdfUrl = up.url; }
+    else if (b.pdfBase64) { const up = await uploadBase64(`data:application/pdf;base64,${b.pdfBase64}`, liveSessionFolder(req.user.company_id)); pdfUrl = up.url; }
     const objects = Array.isArray(b.objects) ? b.objects.filter(o => o && o.id) : [];
     const doc = (b.doc && typeof b.doc === 'object') ? b.doc : {};
     const state = { objects: objects.map(o => ({ o, ts: Date.now() })), doc };
@@ -172,6 +191,9 @@ router.get('/:id/pdf', async (req, res) => {
     const room = await loadRoom(String(req.params.id));
     if (!room || room.companyId !== String(req.user.company_id)) return res.status(404).json({ error: 'not found' });
     if (!room.meta.pdfUrl) return res.status(404).json({ error: 'no pdf' });
+    if (!sessionPdfUrlAllowed(room.meta.pdfUrl, room.companyId) && !isLegacySessionPdfUrl(room.meta.pdfUrl)) {
+      return res.status(404).json({ error: 'no pdf' });
+    }
     const bytes = await getBytesByUrl(room.meta.pdfUrl);
     if (!bytes) return res.status(404).json({ error: 'no pdf' });
     res.json({ name: room.meta.pdfName || 'plans.pdf', b64: bytes.toString('base64') });

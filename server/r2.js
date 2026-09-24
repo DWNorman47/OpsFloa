@@ -57,6 +57,36 @@ function keyFromPublicUrl(publicUrl) {
   return publicUrl.slice(process.env.R2_PUBLIC_URL.length + 1); // strip leading slash
 }
 
+// Strict variant of keyFromPublicUrl for validating CLIENT-SUPPLIED urls: the url
+// must sit directly under our public base (base + '/'), and the key must be a plain
+// path — no empty/'.'/'..' segments, no backslashes, no query/fragment, and no
+// percent-encoding (keys we issue are `<folder>/<uuid>.<ext>`, never encoded, so any
+// '%' is either junk or an attempt at an encoded dot segment like %2e%2e).
+// Returns the key, or null.
+function safeKeyFromPublicUrl(publicUrl) {
+  const base = process.env.R2_PUBLIC_URL;
+  if (!base || typeof publicUrl !== 'string') return null;
+  if (!publicUrl.startsWith(`${base}/`)) return null;
+  const key = publicUrl.slice(base.length + 1);
+  if (!key || key.length > 1024) return null;
+  if (/[%\\?#\s]/.test(key)) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(key)) return null;
+  if (key.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) return null;
+  return key;
+}
+
+// True when `publicUrl` is one of our R2 objects whose key lives under `prefix`
+// (a folder like 'takeoffs/123' — a trailing slash is implied, so 'takeoffs/12'
+// never matches 'takeoffs/123/...'). Use this to check a client-supplied url was
+// issued to the caller before storing, proxying or deleting it.
+function keyBelongsTo(publicUrl, prefix) {
+  const key = safeKeyFromPublicUrl(publicUrl);
+  if (!key || !prefix) return false;
+  const p = String(prefix).endsWith('/') ? String(prefix) : `${prefix}/`;
+  return key.startsWith(p) && key.length > p.length;
+}
+
 async function getObjectMetadataByUrl(publicUrl) {
   const key = keyFromPublicUrl(publicUrl);
   if (!key) return null;
@@ -127,4 +157,5 @@ async function deleteByKey(key) {
 module.exports = {
   uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl, getBytesByUrl,
   getObjectStreamByUrl, keyFromPublicUrl, listByPrefix, deleteByKey,
+  safeKeyFromPublicUrl, keyBelongsTo,
 };
