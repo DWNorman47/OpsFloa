@@ -7,12 +7,12 @@
 
 import { createViewport } from '../shared/engine-view.js?v=2';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
-import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
-import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=2';
+import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=2';
+import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=3';
 import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, polygonPerimeterFt, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
 import polygonClipping from '../shared/polygon-clipping.js?v=1';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
+// pdfjsLib (global) + its worker path are set up by ../shared/pdfjs-init.mjs (loaded first).
 
 // Token handoff: the main app opens this tool in a noopener tab that can't reach
 // the opener's sessionStorage, so during superadmin login-as it can't see the
@@ -1756,7 +1756,7 @@ function buildThumbs() {
     b.className = 'thumb';
     b.dataset.page = p;
     b.title = `Sheet ${p}`;
-    b.innerHTML = `<div class="thumb-ph"></div><span class="thumb-num">${p}</span>`;
+    b.innerHTML = `<div class="thumb-ph"></div><span class="thumb-num">${esc(p)}</span>`;
     b.addEventListener('click', () => setPage(p));
     els.thumbRail.appendChild(b);
     thumbObserver.observe(b);
@@ -2036,7 +2036,7 @@ function renderSheetMgr() {
     const n = counts[s.page] || 0;
     row.innerHTML =
       '<div class="sheet-thumb"></div>' +
-      `<div class="grow"><div class="name">Sheet ${s.page}</div><div class="meta">${n} markup${n === 1 ? '' : 's'}${s.removed ? ' · will be removed' : ''}</div></div>` +
+      `<div class="grow"><div class="name">Sheet ${esc(s.page)}</div><div class="meta">${esc(n)} markup${n === 1 ? '' : 's'}${s.removed ? ' · will be removed' : ''}</div></div>` +
       `<button class="btn tiny" data-act="up"${i === 0 ? ' disabled' : ''}>▲</button>` +
       `<button class="btn tiny" data-act="down"${i === sheetPlan.length - 1 ? ' disabled' : ''}>▼</button>` +
       `<button class="btn tiny${s.removed ? '' : ' danger'}" data-act="del">${s.removed ? 'Keep' : '✕'}</button>`;
@@ -3791,7 +3791,7 @@ function renderMarkupList() {
       `<span class="swatch" style="background:${esc(m.color)}"></span>` +
       `<span>${MK_ICON[m.kind] || '?'}</span>` +
       `<span class="grow"></span>` +
-      `<span class="pg">p${m.page}</span>` +
+      `<span class="pg">p${esc(m.page)}</span>` +
       `<button class="btn tiny danger" title="Delete">✕</button>`;
     row.querySelector('.grow').textContent =
       (m.kind === 'mcount' || m.kind === 'ritem') ? measureValue(m)
@@ -3829,7 +3829,7 @@ function renderRoofPanel() {
   const rows = [];
   rows.push(`<div class="roof-tot big"><span>Squares (with waste)</span><span class="v">${fmt(T.squaresWaste, 1)} sq</span></div>`);
   rows.push(`<div class="roof-tot"><span>Base squares</span><span class="v">${fmt(T.squares, 1)} sq</span></div>`);
-  rows.push(`<div class="roof-tot"><span>Roof planes</span><span class="v">${T.planes}</span></div>`);
+  rows.push(`<div class="roof-tot"><span>Roof planes</span><span class="v">${esc(T.planes)}</span></div>`);
   if (T.scaleMissing) rows.push(`<div class="hint" style="margin:6px 0">Some sheets aren't calibrated (📏) — those planes/edges are excluded.</div>`);
 
   const edgeKeys = EDGE_TYPES.filter(k => T.edges[k]);
@@ -3840,7 +3840,7 @@ function renderRoofPanel() {
   const itemKeys = ITEM_TYPES.filter(k => T.items[k]);
   if (itemKeys.length) {
     rows.push('<div class="roof-sub">Items (EA)</div>');
-    for (const k of itemKeys) rows.push(`<div class="roof-tot"><span>${ITEM_LABEL[k]}</span><span class="v">${T.items[k]}</span></div>`);
+    for (const k of itemKeys) rows.push(`<div class="roof-tot"><span>${ITEM_LABEL[k]}</span><span class="v">${esc(T.items[k])}</span></div>`);
   }
   if (!T.planes && !edgeKeys.length && !itemKeys.length) {
     rows.push('<div class="mk-empty">No roof takeoff yet — trace a plane (▰) and set its pitch, then add edges (╱) and items (⊕).</div>');
@@ -3863,7 +3863,7 @@ function renderRoofReport() {
   let html = '';
   html += `<div class="roof-tot big"><span>Total roof area (with ${fmt(state.roofWaste, 0)}% waste)</span><span class="v">${fmt(T.squaresWaste, 1)} sq</span></div>`;
   html += `<div class="roof-tot"><span>Base area</span><span class="v">${fmt(T.squares, 1)} sq · ${fmt(T.squares * 100, 0)} SF</span></div>`;
-  html += `<div class="roof-tot"><span>Roof planes</span><span class="v">${T.planes}</span></div>`;
+  html += `<div class="roof-tot"><span>Roof planes</span><span class="v">${esc(T.planes)}</span></div>`;
   if (T.scaleMissing) html += `<div class="hint" style="margin:6px 0">Some sheets aren't calibrated (📏) — those planes/edges are excluded. Set the scale on the aerial first.</div>`;
 
   if (facets.length) {
@@ -3888,7 +3888,7 @@ function renderRoofReport() {
   const itemKeys = ITEM_TYPES.filter(k => T.items[k]);
   if (itemKeys.length) {
     html += '<div class="roof-sub">Penetrations (EA)</div><table class="rr-table"><tbody>';
-    for (const k of itemKeys) html += `<tr><td>${ITEM_LABEL[k]}</td><td class="v">${T.items[k]}</td></tr>`;
+    for (const k of itemKeys) html += `<tr><td>${ITEM_LABEL[k]}</td><td class="v">${esc(T.items[k])}</td></tr>`;
     html += '</tbody></table>';
   }
 
@@ -4179,8 +4179,8 @@ function renderRoofBid() {
     `<tr>
       <td>${esc(l.label)}</td>
       <td class="num">${fmt(l.qty, l.q || 0)}</td>
-      <td>${l.unit}</td>
-      <td class="num"><input class="price" type="number" min="0" step="0.01" data-key="${l.key}" value="${l.price}"></td>
+      <td>${esc(l.unit)}</td>
+      <td class="num"><input class="price" type="number" min="0" step="0.01" data-key="${esc(l.key)}" value="${esc(l.price)}"></td>
       <td class="num">${money(l.ext)}</td>
     </tr>`).join('');
   const emptyMsg =
@@ -4429,11 +4429,11 @@ function dirtEye(vkey) {
 // key tracked in dirtGroupsCollapsed (fold) and dirtHidden (map visibility).
 function dirtGroupHeader(gkey, label, count, color) {
   const collapsed = dirtGroupsCollapsed.has(gkey);
-  const sw = color ? `<span class="ctr-sw" style="background:${color}"></span>` : '';
+  const sw = color ? `<span class="ctr-sw" style="background:${esc(color)}"></span>` : '';
   // gkey can carry material names with quotes (e.g. `18" hdpe`); URI-encode it so
   // it's always attribute-safe (decoded back in the toggle handler).
   return `<div class="dirt-grp" data-act="toggle-group" data-gkey="${encodeURIComponent(gkey)}">` +
-    `${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
+    `${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${esc(count)})</span>` +
     `${dirtEye(gkey)}<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
 }
 // The type/material label a takeoff groups under (mirrors takeoffSubtotals so the
@@ -4454,9 +4454,9 @@ function renderDirtPanel() {
   const setupDone = dirtSetupComplete();
   rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-sheets"><span>Sheets${setupDone ? ' ✓' : ''}</span><span class="v">${dirtSheetsCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtSheetsCollapsed) {
-    rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + E.existingPage : '—'}</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + esc(E.existingPage) : '—'}</span></div>`);
     rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
-    rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + esc(E.proposedPage) : '—'}</span></div>`);
     rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
     const alignVal = (E.existingPage && E.proposedPage && E.existingPage === E.proposedPage)
       ? 'n/a (same sheet)'
@@ -4471,7 +4471,7 @@ function renderDirtPanel() {
   // page's (a LIST filter — the plan still draws the current page). The eye on each
   // header/subheader is separate: it hides that group on the plan itself.
   const onPage = m => dirtShowAllPages || m.page === state.page;
-  const pageTag = m => (dirtShowAllPages && m.page !== state.page) ? ` · p${m.page}` : '';
+  const pageTag = m => (dirtShowAllPages && m.page !== state.page) ? ` · p${esc(m.page)}` : '';
   rows.push(`<label class="dirt-row dirt-allpages" style="cursor:pointer"><span>Show markups from all pages</span><input type="checkbox" id="showAllPagesChk" ${dirtShowAllPages ? 'checked' : ''}></label>`);
 
   // Contours — the focused surface's traced lines/spots/pads (current page, or all
@@ -4505,9 +4505,9 @@ function renderDirtPanel() {
         }
         for (const m of g.items) {
           const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
-          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
-            `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
-            `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}${pageTag(m)}</span>` +
+          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${esc(m.id)}">` +
+            `<span class="ctr-sw" style="background:${esc(elevColor(m.elev || 0, m.surface))}"></span>` +
+            `<span class="ctr-lbl">${m.elev != null ? esc(elevStr(m.elev)) + ' ft' : 'no elev'} · ${typ}${pageTag(m)}</span>` +
             `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
@@ -4555,8 +4555,8 @@ function renderDirtPanel() {
           if (dirtGroupsCollapsed.has(g.gkey)) continue;
         }
         for (const m of g.items) {
-          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
-            `<span class="ctr-sw" style="background:${g.color}"></span>` +
+          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${esc(m.id)}">` +
+            `<span class="ctr-sw" style="background:${esc(g.color)}"></span>` +
             `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}${pageTag(m)}</span>` +
             `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
@@ -5051,6 +5051,110 @@ const defaultDemo = () => ({ swell: 50, truckCap: 12, thickAsphalt: 3, thickConc
 const defaultFence = () => ({ holeDia: 10, holeDepth: 30, bagCF: 0.45 });
 const defaultLandscape = () => ({ mulchDepth: 3, rockDepth: 3, bedDepth: 6, rockDensity: 100, sodWaste: 5, seedRate: 5 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
+/* ---- inbound-data hardening ----
+ * Markups + doc settings arrive from OTHER users (live co-edit ops, shared company
+ * takeoffs) or from a file the user picked. Coerce numeric slots to finite numbers,
+ * page indexes to ints, and colors to a safe CSS shape, so a crafted value can't
+ * ride a numeric field into the panels' innerHTML. Rendering still esc()s every
+ * interpolation — this is the second layer. Shape-preserving: unknown keys pass
+ * through untouched so newer clients' fields survive a round-trip. */
+const numOr = (v, d) => { const n = typeof v === 'number' ? v : (v == null || v === '' ? NaN : Number(v)); return Number.isFinite(n) ? n : d; };
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const SAFE_COLOR_RE = /^(#[0-9a-f]{3,8}|[a-z]{3,24}|(rgb|hsl)a?\([\d.,%\s/]{1,48}\))$/i;
+const safeColor = (c, d) => (typeof c === 'string' && SAFE_COLOR_RE.test(c) ? c : d);
+const normPt = p => (isObj(p) ? { ...p, x: numOr(p.x, 0), y: numOr(p.y, 0) } : { x: 0, y: 0 });
+const normRing = r => (Array.isArray(r) ? r.map(normPt) : []);
+const MK_NUM_FIELDS = ['width', 'pitch', 'fontSize', 'height', 'sides', 'created', 'modified'];
+const MK_STR_FIELDS = ['kind', 'surface', 'text', 'etype', 'itype'];
+function normMarkup(m) {
+  if (!isObj(m) || m.id == null || m.id === '') return null;
+  const o = { ...m };
+  o.id = String(m.id).slice(0, 128);
+  o.page = Math.max(1, numOr(m.page, 1) | 0);
+  o.pts = normRing(m.pts);
+  if (m.outer != null) o.outer = normRing(m.outer);
+  if (m.holes != null) o.holes = Array.isArray(m.holes) ? m.holes.map(normRing) : [];
+  if (m.elev != null) o.elev = numOr(m.elev, null);
+  for (const k of MK_NUM_FIELDS) if (m[k] != null) o[k] = numOr(m[k], 0);
+  for (const k of MK_STR_FIELDS) if (m[k] != null) o[k] = String(m[k]).slice(0, k === 'text' ? 20000 : 64);
+  if (m.color != null) o.color = safeColor(m.color, '#e0533f');
+  if (m.cfg != null) {
+    if (!isObj(m.cfg)) delete o.cfg;
+    else {
+      o.cfg = { ...m.cfg };
+      if (o.cfg.color != null && o.cfg.color !== '') o.cfg.color = safeColor(o.cfg.color, '');
+      for (const k of Object.keys(o.cfg)) if (typeof o.cfg[k] === 'string') o.cfg[k] = o.cfg[k].slice(0, 2000);
+    }
+  }
+  return o;
+}
+function normMarkups(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const m of arr) { const n = normMarkup(m); if (n) out.push(n); }
+  return out;
+}
+// key → number maps (scales, roofPrices)
+function normNumMap(obj) {
+  const out = {};
+  if (!isObj(obj)) return out;
+  for (const k of Object.keys(obj)) { const n = numOr(obj[k], null); if (n != null) out[k] = n; }
+  return out;
+}
+function normScaleBars(obj) {
+  const out = {};
+  if (!isObj(obj)) return out;
+  for (const k of Object.keys(obj)) {
+    const b = obj[k];
+    if (isObj(b) && isObj(b.a) && isObj(b.b)) out[k] = { ...b, a: normPt(b.a), b: normPt(b.b), feet: numOr(b.feet, 0) };
+  }
+  return out;
+}
+// Trade settings: every key the defaults define as a number/string is coerced to
+// that type (unknown keys pass through). Missing keys stay missing, as before.
+function normSettings(obj, defFn) {
+  if (!isObj(obj)) return defFn();
+  const def = defFn();
+  const out = { ...obj };
+  for (const k of Object.keys(def)) {
+    if (!(k in obj)) continue;
+    if (typeof def[k] === 'number') out[k] = numOr(obj[k], def[k]);
+    else if (typeof def[k] === 'string') out[k] = obj[k] == null ? def[k] : String(obj[k]).slice(0, 64);
+  }
+  return out;
+}
+function normEarthwork(obj) {
+  if (!isObj(obj)) return defaultEarthwork();
+  const out = normSettings(obj, defaultEarthwork);
+  for (const k of ['existingPage', 'proposedPage']) if (k in obj) out[k] = obj[k] == null ? null : Math.max(1, numOr(obj[k], 1) | 0);
+  if ('align' in obj) out.align = isObj(obj.align) ? { ...obj.align, a: numOr(obj.align.a, 1), b: numOr(obj.align.b, 0), e: numOr(obj.align.e, 0), f: numOr(obj.align.f, 0) } : defaultEarthwork().align;
+  if ('result' in obj) {
+    if (!isObj(obj.result)) out.result = null;
+    else { out.result = { ...obj.result }; for (const k of Object.keys(out.result)) if (typeof out.result[k] !== 'number') out.result[k] = numOr(out.result[k], 0); }
+  }
+  return out;
+}
+const normPage = v => Math.max(1, numOr(v, 1) | 0);
+// A whole saved/shared/imported project payload → the same object with every
+// field above normalized in place of the raw one (absent fields stay absent).
+function normProjectData(d) {
+  if (!isObj(d)) return d;
+  const o = { ...d };
+  if ('markups' in d) o.markups = normMarkups(d.markups);
+  if ('scales' in d) o.scales = normNumMap(d.scales);
+  if ('scaleBars' in d) o.scaleBars = normScaleBars(d.scaleBars);
+  if ('roofPrices' in d) o.roofPrices = normNumMap(d.roofPrices);
+  for (const k of ['roofPitch', 'roofWaste', 'roofOP']) if (d[k] != null) o[k] = numOr(d[k], 0);
+  if (d.page != null) o.page = normPage(d.page);
+  if (d.earthwork != null) o.earthwork = normEarthwork(d.earthwork);
+  const T = { drywall: defaultDrywall, flooring: defaultFlooring, framing: defaultFraming, esc: defaultEsc, striping: defaultStriping, siding: defaultSiding, demo: defaultDemo, fence: defaultFence, landscape: defaultLandscape };
+  for (const k of Object.keys(T)) if (d[k] != null) o[k] = normSettings(d[k], T[k]);
+  if (d.trade != null) o.trade = String(d.trade).slice(0, 32);
+  if (d.bidMeta != null) o.bidMeta = isObj(d.bidMeta) ? d.bidMeta : {};
+  if (d.estimateId != null && typeof d.estimateId !== 'number' && !/^[\w-]{1,64}$/.test(String(d.estimateId))) o.estimateId = null;
+  return o;
+}
+
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
 
@@ -5140,6 +5244,7 @@ function resetDocState() {
 
 async function openProject(rec) {
   await saveProjectNow(); // flush the outgoing project first
+  if (rec && rec.data) rec = { ...rec, data: normProjectData(rec.data) };
   state.projectId = rec.id;
   state.projectName = rec.name;
   resetDocState();
@@ -5218,7 +5323,7 @@ function renderProjCurrent() {
   const n = state.doc ? state.doc.numPages : 0;
   const hasDoc = !!state.doc;
   const meta = hasDoc
-    ? `${esc(state.docName || 'plans')} · ${n} sheet${n === 1 ? '' : 's'}`
+    ? `${esc(state.docName || 'plans')} · ${esc(n)} sheet${n === 1 ? '' : 's'}`
     : 'No plans loaded yet.';
   $('projCurrent').innerHTML = `
     <div class="pc-name"></div>
@@ -5250,7 +5355,7 @@ async function showProjects() {
     row.innerHTML = `
       <div class="grow">
         <div class="name"></div>
-        <div class="meta">${r.docName ? esc(r.docName) + ' · ' : ''}${nMk} markup${nMk === 1 ? '' : 's'} · ${when}</div>
+        <div class="meta">${r.docName ? esc(r.docName) + ' · ' : ''}${esc(nMk)} markup${nMk === 1 ? '' : 's'} · ${esc(when)}</div>
       </div>
       ${r.id === state.projectId ? '<span class="pill">current</span>' : '<button class="btn tiny" data-act="open">Open</button>'}
       <button class="btn tiny" data-act="ren" title="Rename">Rename</button>
@@ -5336,6 +5441,7 @@ $('fileImport').addEventListener('change', async e => {
   // but reject files exported by a different tool
   const ok = d && (d.app === 'plan-room' || (!d.app && (Array.isArray(d.markups) || d.docB64)));
   if (!ok) { setMsg('That is not a Plan Room file.'); return; }
+  d = normProjectData(d);
   // Always land in a NEW project — never overwrite the one that's open. Suffix
   // the name so an imported copy is obviously distinct from its source.
   const baseName = d.name || file.name.replace(/\.planroom\.json$|\.json$/i, '');
@@ -6040,7 +6146,7 @@ async function shareConflict(c) {
   const who = esc(c.updatedByName || 'A teammate');
   const choice = await askChoice(
     'Someone else changed this shared takeoff',
-    `${who} saved changes since you opened it (now v${c.currentVersion}). What do you want to do?`,
+    `${who} saved changes since you opened it (now v${esc(c.currentVersion)}). What do you want to do?`,
     [
       { label: '📑 Keep both — save mine as a new, separate copy', value: 'fork', primary: true },
       { label: '⚠ Overwrite theirs with my version (discards their changes)', value: 'overwrite', danger: true },
@@ -6078,7 +6184,7 @@ async function refreshCompanyList() {
       const endBtn = s.can_end ? '<button class="btn tiny" data-act="end-live" title="Close this session for everyone">End</button>' : '';
       row.innerHTML =
         `<div class="grow"><div class="name"></div>` +
-        `<div class="meta"><span class="pill" style="background:var(--good);color:#062915">LIVE</span> ${s.host_name ? 'by ' + esc(s.host_name) + ' · ' : ''}${s.participants || 0} here</div></div>` +
+        `<div class="meta"><span class="pill" style="background:var(--good);color:#062915">LIVE</span> ${s.host_name ? 'by ' + esc(s.host_name) + ' · ' : ''}${esc(s.participants || 0)} here</div></div>` +
         endBtn +
         (mine ? '<span class="pill">in this</span>' : '<button class="btn tiny primary" data-act="join">Join live</button>');
       row.querySelector('.name').textContent = s.name || 'Live session';
@@ -6101,7 +6207,7 @@ async function refreshCompanyList() {
       row.className = 'proj-row' + (String(r.id) === String(state.serverId) ? ' current' : '');
       row.innerHTML =
         `<div class="grow"><div class="name"></div>` +
-        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}${lockBadge}</div></div>` +
+        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${esc(r.version)}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}${lockBadge}</div></div>` +
         lockBtn +
         (String(r.id) === String(state.serverId)
           ? '<span class="pill">current</span>'
@@ -6139,6 +6245,7 @@ async function copyCompanyProject(id) {
     t = await res.json();
   } catch (e) { companyMsg('Could not reach that shared project: ' + e.message, true); return; }
   if (!t.data || t.data.app !== 'plan-room') { companyMsg('That shared project could not be read.', true); return; }
+  t.data = normProjectData(t.data);
 
   // How should it land locally? (name field first — askModal returns it; the
   // radio choice is read from the modal body afterward, which persists.)
@@ -6321,7 +6428,7 @@ function areaResultRows(areaSf, cfg, perimFt) {
   } else if (cfg.mode !== 'area') {
     rows.push([cfg.mode === 'tons' ? 'Weight' : 'Volume', `${fmt(r.quantity, 1)} ${r.unit}`, 'total']);
   }
-  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
 }
 function readAreaCfg() {
   return {
@@ -6560,7 +6667,7 @@ function lineResultRows(lengthFt, cfg) {
       if (r.exportCY > 0.05) rows.push(['Net export (bank)', `${fmt(r.exportCY, 1)} CY`]);
     }
   }
-  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
 }
 function readLineCfg() {
   return {
@@ -6666,7 +6773,7 @@ const COUNT_PRESETS = {
 const readCountCfg = () => ({ label: $('ctLabel').value.trim() || 'Item', unit: $('ctUnit').value.trim() || 'EA', depth: parseFloat($('ctDepth').value) || 0 });
 const countResultRows = (n, cfg) => {
   const d = STORM_ON ? (parseFloat(cfg.depth) || 0) : 0;
-  let html = `<div class="res-row total"><span>${esc(cfg.label)}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}</span><b>${n} ${esc(cfg.unit)}</b></div>`;
+  let html = `<div class="res-row total"><span>${esc(cfg.label)}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}</span><b>${esc(n)} ${esc(cfg.unit)}</b></div>`;
   if (d > 0) html += `<div class="res-row"><span>Vertical feet</span><b>${fmt(n * d, 1)} VF</b></div>`;
   return html;
 };
@@ -7011,7 +7118,7 @@ function renderDrywallPanel() {
   const texOpts = ['none', 'smooth', 'orange', 'knockdown', 'popcorn'].map(k => `<option value="${k}">${TEXTURE_LABEL[k]}</option>`).join('');
   const insOpts = ['none', 'r11', 'r13', 'r15', 'r19', 'r21', 'sound'].map(k => `<option value="${k}">${INSUL_LABEL[k]}</option>`).join('');
   rows.push('<div class="roof-sub">Settings</div>');
-  rows.push(`<div class="dirt-set">Wall height <input type="number" id="dwHeight" min="1" step="0.5"> ft · new runs <b>${curDwSides}-side</b></div>`);
+  rows.push(`<div class="dirt-set">Wall height <input type="number" id="dwHeight" min="1" step="0.5"> ft · new runs <b>${esc(curDwSides)}-side</b></div>`);
   rows.push('<div class="dirt-set">Sheet <select id="dwSheet"><option value="32">4×8 (32)</option><option value="40">4×10 (40)</option><option value="48">4×12 (48)</option></select> SF · Waste <input type="number" id="dwWaste" min="0"> %</div>');
   rows.push('<div class="dirt-set">Paint <input type="number" id="dwCov" min="1"> SF/gal · Coats <input type="number" id="dwCoats" min="1"> · Finish <select id="dwFinish"><option>L3</option><option>L4</option><option>L5</option></select></div>');
   rows.push(`<div class="dirt-set">Texture <select id="dwTexture">${texOpts}</select> · Insulation <select id="dwInsul">${insOpts}</select></div>`);
@@ -7021,7 +7128,7 @@ function renderDrywallPanel() {
   for (const h of heights) {
     const ft = dheightFt(h);
     const isDef = Math.abs((Number(D.wallHeight) || 0) - ft) < 0.05;
-    rows.push(`<div class="dirt-row"><span>${esc(h.text || 'Height')}</span><span class="v">${fmt(ft, 1)} ft ${isDef ? '<b>· default</b>' : `<a class="dirt-link" data-huse="${ft}">use</a>`} <a class="dirt-link" data-hdel="${h.id}">✕</a></span></div>`);
+    rows.push(`<div class="dirt-row"><span>${esc(h.text || 'Height')}</span><span class="v">${fmt(ft, 1)} ft ${isDef ? '<b>· default</b>' : `<a class="dirt-link" data-huse="${esc(ft)}">use</a>`} <a class="dirt-link" data-hdel="${esc(h.id)}">✕</a></span></div>`);
   }
   rows.push(`<div class="dirt-set"><button class="btn" id="dwMeasureH">↕ Measure a height</button> <span class="hint">click floor→ceiling on an elevation sheet</span></div>`);
   rows.push('<div class="roof-sub">Quantities</div>');
@@ -7029,14 +7136,14 @@ function renderDrywallPanel() {
   if (T.openDeductSF > 0) R('− openings', `−${fmt(T.openDeductSF)}`);
   R('Drywall ceiling SF', fmt(T.ceilSF));
   rows.push(`<div class="dirt-row"><b>Board &amp; finish SF</b><span class="v"><b>${fmt(T.boardSF)}</b></span></div>`);
-  R(`Boards (${D.sheetSF} SF)`, fmt(T.boards, 0));
+  R(`Boards (${esc(D.sheetSF)} SF)`, fmt(T.boards, 0));
   R('Joint compound', `${fmt(T.mudGal, 1)} gal`);
   R('Tape', `${fmt(T.tapeLF, 0)} LF`);
   if (T.textureSF > 0.5) R(`Texture (${TEXTURE_LABEL[T.texture]})`, `${fmt(T.textureSF, 0)} SF`);
-  R(`Paint (${D.coats} coats)`, `${fmt(T.paintGal, 1)} gal`);
+  R(`Paint (${esc(D.coats)} coats)`, `${fmt(T.paintGal, 1)} gal`);
   if (T.insulSF > 0.5) R(`Insulation (${INSUL_LABEL[T.insul]})`, `${fmt(T.insulSF, 0)} SF`);
   const oc = T.openCounts, tl = T.trimLF;
-  if (oc.door || oc.window || oc.opening) R('Openings', [oc.door && oc.door + ' dr', oc.window && oc.window + ' win', oc.opening && oc.opening + ' op'].filter(Boolean).join(' · '));
+  if (oc.door || oc.window || oc.opening) R('Openings', esc([oc.door && oc.door + ' dr', oc.window && oc.window + ' win', oc.opening && oc.opening + ' op'].filter(Boolean).join(' · ')));
   const trimBits = ['base', 'crown', 'chair'].filter(k => tl[k] > 0.5).map(k => `${TRIM_LABEL[k]} ${fmt(tl[k], 0)}`);
   if (trimBits.length) R('Trim LF', trimBits.join(' · '));
   for (const k of ['act24', 'act22']) {
@@ -7277,7 +7384,7 @@ function renderFramingPanel() {
   else rows.push(`<div class="dirt-row"><b>Total wall LF</b><span class="v"><b>${fmt(T.totalLF, 0)}</b></span></div>`);
   if (T.openings.door || T.openings.window) {
     rows.push('<div class="roof-sub">Openings</div>');
-    R('Doors · windows', `${T.openings.door} · ${T.openings.window}`);
+    R('Doors · windows', `${esc(T.openings.door)} · ${esc(T.openings.window)}`);
     R('Header lumber', `${fmt(T.headerLF, 0)} LF`);
     R('King + jack studs', `${fmt(T.kingJack, 0)} EA`);
     R('Cripple studs', `${fmt(T.cripples, 0)} EA`);
@@ -7421,8 +7528,8 @@ function renderEscPanel() {
   else rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF</b></span></div>`);
   if (T.itemEA > 0) {
     rows.push('<div class="roof-sub">Point controls</div>');
-    for (const k of ESC_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(ESC_ITEM_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.itemEA} EA</b></span></div>`);
+    for (const k of ESC_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(ESC_ITEM_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${esc(T.itemEA)} EA</b></span></div>`);
   }
   if (T.areaSF > 0.5) {
     const M = escMaterials(T);
@@ -7559,11 +7666,11 @@ function renderStripingPanel() {
   rows.push(`<div class="dirt-set">New markings <select id="strpMark">${mkOpts}</select></div>`);
   if (T.stalls > 0) {
     rows.push('<div class="roof-sub">Stalls</div>');
-    for (const k of STRP_STALL_KINDS) { const ea = T.byStall[k]; if (!ea) continue; R(STRP_STALL_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total stalls</b><span class="v"><b>${T.stalls}</b></span></div>`);
+    for (const k of STRP_STALL_KINDS) { const ea = T.byStall[k]; if (!ea) continue; R(STRP_STALL_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total stalls</b><span class="v"><b>${esc(T.stalls)}</b></span></div>`);
     // ADA count is the number that gets a lot rejected, so it gets its own line
     // rather than being buried in the per-type list.
-    R('of which ADA', `${T.adaStalls} (${T.stalls ? fmt(T.adaStalls / T.stalls * 100, 1) : '0'}%)`);
+    R('of which ADA', `${esc(T.adaStalls)} (${T.stalls ? fmt(T.adaStalls / T.stalls * 100, 1) : '0'}%)`);
   }
   if (T.lineLF > 0.5) {
     rows.push('<div class="roof-sub">Painted runs</div>');
@@ -7572,8 +7679,8 @@ function renderStripingPanel() {
   }
   if (T.marks > 0) {
     rows.push('<div class="roof-sub">Markings & signs</div>');
-    for (const k of STRP_MARK_KINDS) { const ea = T.byMark[k]; if (!ea) continue; R(STRP_MARK_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.marks} EA</b></span></div>`);
+    for (const k of STRP_MARK_KINDS) { const ea = T.byMark[k]; if (!ea) continue; R(STRP_MARK_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${esc(T.marks)} EA</b></span></div>`);
   }
   if (!T.stalls && !T.marks && T.lineLF < 0.5) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — count stalls (⊞), trace a run (≡), or drop markings (◆).</div>');
   if (T.lineLF > 0.5) {
@@ -7730,8 +7837,8 @@ function renderSidingPanel() {
   }
   if (T.openings > 0) {
     rows.push('<div class="roof-sub">Openings</div>');
-    for (const k of SID_OPEN_KINDS) { const ea = T.openCounts[k]; if (!ea) continue; R(SID_OPEN_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.openings} EA</b></span></div>`);
+    for (const k of SID_OPEN_KINDS) { const ea = T.openCounts[k]; if (!ea) continue; R(SID_OPEN_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${esc(T.openings)} EA</b></span></div>`);
   }
   if (T.gutLF > 0.5) {
     rows.push('<div class="roof-sub">Gutters & downspouts</div>');
@@ -7748,7 +7855,7 @@ function renderSidingPanel() {
       if (!sf) continue;
       // only batts convert to bags; blown/foam are bid straight by SF
       const bags = SID_INS_BAGGED[k] ? ` · ${fmt(Math.ceil(sf * iw / cov), 0)} bags` : '';
-      R(SID_INS_LABEL[k], `${fmt(sf * iw, 0)} SF${bags}`);
+      R(SID_INS_LABEL[k], `${fmt(sf * iw, 0)} SF${esc(bags)}`);
     }
     rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.insSF, 0)} SF</b></span></div>`);
   }
@@ -7910,7 +8017,7 @@ function renderDemoPanel() {
       R(DM_AREA_LABEL[k], `${fmt(d.cy, 1)} CY · ${fmt(d.tons, 1)} t`);
     }
     rows.push(`<div class="dirt-row"><b>Total debris</b><span class="v"><b>${fmt(M.totalCY, 1)} CY · ${fmt(M.totalTons, 1)} t</b></span></div>`);
-    rows.push(`<div class="dirt-row"><b>Truck loads</b><span class="v"><b>${M.loads}</b></span></div>`);
+    rows.push(`<div class="dirt-row"><b>Truck loads</b><span class="v"><b>${esc(M.loads)}</b></span></div>`);
   }
   if (T.lineLF > 0.5) {
     rows.push('<div class="roof-sub">Linear removals</div>');
@@ -7919,8 +8026,8 @@ function renderDemoPanel() {
   }
   if (T.items > 0) {
     rows.push('<div class="roof-sub">Items & structures</div>');
-    for (const k of DM_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(DM_ITEM_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.items} EA</b></span></div>`);
+    for (const k of DM_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(DM_ITEM_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${esc(T.items)} EA</b></span></div>`);
   }
   if (T.lineLF > 0.5 || T.items > 0) rows.push('<div class="hint" style="margin:4px 0">Removals and items carry their haul inside the unit price, so they’re not in the CY or the load count above — counting them there would bill the hauling twice.</div>');
   if (T.areaSF < 0.5 && T.lineLF < 0.5 && !T.items) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace an area (▣), a removal (⌁), or click items (⊠).</div>');
@@ -8035,14 +8142,14 @@ function renderFencePanel() {
     for (const k of FN_LINE_KINDS) {
       const g = T.byLine[k];
       if (!g) continue;
-      R(`${FN_LINE_LABEL[k]} <span style="opacity:.6">@ ${FN_LINE_SPACING[k]}′</span>`, `${fmt(g.lf, 0)} LF · ${g.posts} posts`);
+      R(`${FN_LINE_LABEL[k]} <span style="opacity:.6">@ ${FN_LINE_SPACING[k]}′</span>`, `${fmt(g.lf, 0)} LF · ${esc(g.posts)} posts`);
     }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF · ${T.posts} posts</b></span></div>`);
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF · ${esc(T.posts)} posts</b></span></div>`);
   }
   if (T.gates > 0) {
     rows.push('<div class="roof-sub">Gates & end treatments</div>');
-    for (const k of FN_GATE_KINDS) { const ea = T.byGate[k]; if (!ea) continue; R(FN_GATE_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.gates} EA</b></span></div>`);
+    for (const k of FN_GATE_KINDS) { const ea = T.byGate[k]; if (!ea) continue; R(FN_GATE_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${esc(T.gates)} EA</b></span></div>`);
   }
   if (T.posts > 0) {
     const C = fenceConcrete(T);
@@ -8050,7 +8157,7 @@ function renderFencePanel() {
     rows.push('<div class="dirt-set">Hole <input type="number" id="fnDia" min="1" step="1" style="width:42px"> in ⌀ × <input type="number" id="fnDepth" min="1" step="1" style="width:42px"> in deep</div>');
     rows.push('<div class="dirt-set">Bag yield <input type="number" id="fnBag" min="0.05" step="0.05" style="width:48px"> CF/bag</div>');
     R('Per hole', `${fmt(C.holeCF, 2)} CF`);
-    R(`${T.posts} holes`, `${fmt(C.cy, 2)} CY · ${C.bags} bags`);
+    R(`${esc(T.posts)} holes`, `${fmt(C.cy, 2)} CY · ${esc(C.bags)} bags`);
     rows.push('<div class="hint" style="margin:4px 0">A cost basis only — not on the bid. The $/LF is installed, so posts and their concrete are already in it; billing them again would charge twice.</div>');
   }
   if (T.lineLF < 0.5 && !T.gates) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace a run (⌗) or click gates (⊓).</div>');
@@ -8193,13 +8300,13 @@ function renderLandscapePanel() {
   }
   if (T.plants > 0) {
     rows.push('<div class="roof-sub">Plants</div>');
-    for (const k of LS_PLANT_KINDS) { const ea = T.byPlant[k]; if (!ea) continue; R(LS_PLANT_LABEL[k], `${ea} EA`); }
-    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.plants} EA</b></span></div>`);
+    for (const k of LS_PLANT_KINDS) { const ea = T.byPlant[k]; if (!ea) continue; R(LS_PLANT_LABEL[k], `${esc(ea)} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${esc(T.plants)} EA</b></span></div>`);
   }
   if (T.lineLF > 0.5 || T.heads > 0) {
     rows.push('<div class="roof-sub">Irrigation</div>');
     for (const k of LS_LINE_KINDS) { const lf = T.byLine[k]; if (!lf) continue; R(LS_LINE_LABEL[k], `${fmt(lf, 0)} LF`); }
-    for (const k of LS_HEAD_KINDS) { const ea = T.byHead[k]; if (!ea) continue; R(LS_HEAD_LABEL[k], `${ea} EA`); }
+    for (const k of LS_HEAD_KINDS) { const ea = T.byHead[k]; if (!ea) continue; R(LS_HEAD_LABEL[k], `${esc(ea)} EA`); }
   }
   if (T.areaSF < 0.5 && !T.plants && T.lineLF < 0.5 && !T.heads) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace an area (▢), count plants (❋), or lay out irrigation (≀ ⊛).</div>');
   rows.push('<div class="hint" style="margin:4px 0">Each area bids in the unit its material is actually bought in — mulch by the CY, rock by the ton, sod by the SY. Seed bids by SF; the lbs above is the buying number. Prices in $ Bid.</div>');
@@ -8261,7 +8368,8 @@ function sessionDoc() {
   return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping, siding: state.siding, demo: state.demo, fence: state.fence, landscape: state.landscape };
 }
 function applySessionDoc(d) {
-  if (!d) return;
+  if (!d || typeof d !== 'object') return;
+  d = normProjectData(d);
   if (d.scales) state.scales = d.scales;
   if (d.scaleBars) state.scaleBars = d.scaleBars;
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
@@ -8348,13 +8456,15 @@ function applyStream(msg) {
   if (msg.type === 'ended') { endSessionLocal(true); return; }
   session.applying = true;
   if (msg.type === 'init') {
-    if (Array.isArray(msg.objects)) state.markups = msg.objects;
+    if (Array.isArray(msg.objects)) state.markups = normMarkups(msg.objects);
     applySessionDoc(msg.doc);
     updateLiveBar(msg.roster);
   } else if (msg.type === 'ops') {
     for (const op of msg.ops || []) {
       if (op.t === 'del') state.markups = state.markups.filter(m => m.id !== op.id);
       else if (op.t === 'up' && op.o) {
+        op.o = normMarkup(op.o);
+        if (!op.o) continue;
         const i = state.markups.findIndex(m => m.id === op.o.id);
         if (i >= 0) state.markups[i] = op.o; else state.markups.push(op.o);
       }
@@ -8491,7 +8601,7 @@ async function joinSession(id) {
   state.projectId = randId();
   state.projectName = t.name || 'Live session';
   resetDocState();
-  state.markups = Array.isArray(t.objects) ? t.objects : [];
+  state.markups = normMarkups(t.objects);
   applySessionDoc(t.doc);
   updateProjectBtn(); renderMarkupList(); syncRoofInputs();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -8505,7 +8615,7 @@ async function joinSession(id) {
         if (/json/i.test(pr.headers.get('content-type') || '')) { const pj = await pr.json(); buf = base64ToBytes(pj.b64).buffer; nm = pj.name || nm; }
         else buf = await pr.arrayBuffer();
         await openFromBytes(buf, nm, null);
-        if (t.doc && t.doc.page) await setPage(t.doc.page);
+        if (t.doc && t.doc.page) await setPage(normPage(t.doc.page));
       }
     } catch (_) { setMsg('Joined, but could not load the plans.'); }
   }
@@ -8577,9 +8687,9 @@ $('btnLive').addEventListener('click', async () => {
   try { const r = await apiLive('?tool=planroom', { timeout: 6000 }); if (r.ok) running = await r.json(); } catch (_) {}
   if (Array.isArray(running) && running.length) {
     const s0 = running[0];
-    const who = s0.host_name ? `${s0.host_name}'s` : 'A';
+    const who = s0.host_name ? `${esc(s0.host_name)}'s` : 'A';
     const pick = await askChoice('A live session is already running',
-      `${who} live co-edit is going${running.length > 1 ? ` (${running.length} running)` : ''}. Join it so everyone's in the same one, or start a separate session?`,
+      `${who} live co-edit is going${running.length > 1 ? ` (${esc(running.length)} running)` : ''}. Join it so everyone's in the same one, or start a separate session?`,
       [
         { label: '🟢 Join the live session', value: 'join', primary: true },
         { label: 'Start a separate session', value: 'new' },

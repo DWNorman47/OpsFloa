@@ -8,8 +8,8 @@
  * sitework tool still runs its own monolith and is NOT wired to this module;
  * see shared/PARITY.md. Raster-image support is new to the shared engine.
  *
- * Requires the pdf.js classic script (pdf.min.js) loaded first — it reads the
- * `pdfjsLib` global at call time, like every tool-app already does.
+ * Requires shared/pdfjs-init.mjs loaded first (it publishes pdf.js as the
+ * `pdfjsLib` global) — read at call time, like every tool-app already does.
  *
  * The uniform doc handle:
  *   { kind: 'pdf'|'image', numPages, raw,
@@ -58,7 +58,7 @@ export async function openDoc(data, opts = {}) {
 }
 
 async function openPdfDoc(bytes) {
-  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
   return {
     kind: 'pdf',
     numPages: pdf.numPages,

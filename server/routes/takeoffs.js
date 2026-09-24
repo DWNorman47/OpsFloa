@@ -10,6 +10,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { uploadBase64, deleteByUrl, getBytesByUrl, getPresignedUploadUrl, keyBelongsTo, safeKeyFromPublicUrl } = require('../r2');
+const { validateTakeoffData } = require('../utils/planDocValidate');
 
 const isAdmin = req => req.user.role === 'admin' || req.user.role === 'super_admin';
 
@@ -113,6 +114,9 @@ router.get('/:id/pdf', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { name, data, pdfBase64, pdfName } = req.body || {};
+    // `data` is opened by teammates' browsers — reject malformed shapes before storing.
+    const bad = validateTakeoffData(data);
+    if (bad) return res.status(400).json({ error: 'invalid takeoff data', detail: bad });
     let pdfUrl = null;
     if (req.body && req.body.pdfUrl) {
       // must be an object issued to THIS company by /upload-url — not an arbitrary
@@ -140,6 +144,8 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { name, data, version, overwrite } = req.body || {};
+    const bad = validateTakeoffData(data);
+    if (bad) return res.status(400).json({ error: 'invalid takeoff data', detail: bad });
     const cur = await pool.query(
       `SELECT t.version, t.updated_at, t.locked_by, t.locked_by_name, u.full_name AS updated_by_name
          FROM takeoff_projects t LEFT JOIN users u ON u.id = t.updated_by

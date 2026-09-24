@@ -28,6 +28,7 @@ const { getObjectStreamByUrl, uploadBase64, keyBelongsTo, safeKeyFromPublicUrl }
 const { takeoffFolder, pdfUrlBelongsToCompany: takeoffPdfBelongsToCompany } = require('./takeoffs');
 const { LIVE_SESSION_TOOLS, LIVE_SESSION_TOOL_DEFAULT } = require('../constants/liveSessionEnums');
 const { checkSessionClaims, planToolsAllowed } = require('../middleware/auth');
+const { validateOps, validateSessionDoc, validateSessionObjects } = require('../utils/planDocValidate');
 
 const rooms = new Map();        // sessionId(string) -> Room
 const SNAPSHOT_MS = 4000;       // coalesce DB snapshots
@@ -171,6 +172,9 @@ router.post('/', async (req, res) => {
   try {
     const b = req.body || {};
     const tool = LIVE_SESSION_TOOLS.includes(b.tool) ? b.tool : LIVE_SESSION_TOOL_DEFAULT;
+    // Everything here is relayed to teammates' browsers — reject malformed shapes up front.
+    const bad = validateSessionObjects(b.objects) || validateSessionDoc(b.doc);
+    if (bad) return res.status(400).json({ error: 'invalid session data', detail: bad });
     let pdfUrl = null;
     if (b.pdfUrl) { if (!sessionPdfUrlAllowed(b.pdfUrl, req.user.company_id)) return res.status(400).json({ error: 'bad pdfUrl' }); pdfUrl = String(b.pdfUrl); }
     // CORS-free fallback: the host couldn't PUT straight to R2, so it sent the
@@ -278,6 +282,10 @@ router.post('/:id/op', async (req, res) => {
     const room = await loadRoom(String(req.params.id));
     if (!room || room.companyId !== String(req.user.company_id)) return res.status(404).json({ error: 'not found' });
     const b = req.body || {};
+    // Validate BEFORE applying or relaying: ops/doc are rendered by every other
+    // participant, so a malformed batch is rejected whole (nothing applied).
+    const bad = validateOps(b.ops) || validateSessionDoc(b.doc);
+    if (bad) return res.status(400).json({ error: 'invalid ops', detail: bad });
     if (Array.isArray(b.ops) && b.ops.length) applyOps(room, b.ops);
     if (b.doc && typeof b.doc === 'object') {
       const ts = Number(b.docTs) || Date.now();

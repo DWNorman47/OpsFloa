@@ -1,5 +1,6 @@
 'use strict';
-pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
+// pdfjsLib (global) + its worker path are set up by ../shared/pdfjs-init.mjs, a module
+// script that runs before this deferred one.
 const { PDFDocument, degrees } = PDFLib;
 
 const $ = id => document.getElementById(id);
@@ -46,7 +47,7 @@ async function openFiles(fileList) {
       if (isImageFile(f)) { await addImageSource(f); continue; }
       const bytes = new Uint8Array(await f.arrayBuffer());
       // pdf.js detaches the buffer it's given, so hand it a copy and keep `bytes` for pdf-lib
-      const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+      const doc = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
       const src = state.sources.length;
       state.sources.push({ kind: 'pdf', name: f.name, bytes, doc });
       for (let p = 0; p < doc.numPages; p++)

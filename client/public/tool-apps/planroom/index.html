@@ -5,19 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=90">
-<script>
-(() => {
-  try {
-    if (!localStorage.getItem('tc_token') && !sessionStorage.getItem('tc_token')) {
-      window.location.replace('/login');
-    }
-  } catch (_) {
-    window.location.replace('/login');
-  }
-})();
-</script>
-<script src="../shared/pdf.min.js"></script>
+<link rel="stylesheet" href="styles.css?v=91">
+<script src="../shared/auth-guard.js?v=1"></script>
+<script type="module" src="../shared/pdfjs-init.mjs?v=1"></script>
 <script src="../shared/pdf-lib.min.js"></script>
 </head>
 <body>
@@ -841,6 +831,6 @@
 </div>
 
 <script src="../shared/update-check.js?v=1"></script>
-<script type="module" src="app.js?v=90"></script>
+<script type="module" src="app.js?v=91"></script>
 </body>
 </html>

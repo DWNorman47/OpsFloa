@@ -11,7 +11,10 @@
 /* ---------------- pure formatting ---------------- */
 
 export function fmt(n, d = 0) {
-  return n.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+  // Coerce non-numbers: String#toLocaleString returns the string verbatim, so a
+  // crafted string in a numeric slot (shared/live data) would reach innerHTML raw.
+  const x = typeof n === 'number' ? n : (Number(n) || 0);
+  return x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
 }
 
 // ISO 4217 code → a locale that renders that currency's LOCAL symbol (Intl takes
@@ -94,10 +97,10 @@ export function createModals({ overlay, title, body, ok, cancel }) {
     const val = await askModal({
       title: t,
       body: `
-        <input type="number" id="modalNum" step="any" value="${prefill ?? ''}">
+        <input type="number" id="modalNum" step="any" value="${esc(prefill ?? '')}">
         ${step ? `<div class="stepper">
-          <button class="btn" data-step="${-step}">− ${step}</button>
-          <button class="btn" data-step="${step}">+ ${step}</button>
+          <button class="btn" data-step="${-Number(step)}">− ${esc(step)}</button>
+          <button class="btn" data-step="${Number(step)}">+ ${esc(step)}</button>
         </div>` : ''}
         ${hint ? `<div class="hint">${hint}</div>` : ''}`,
       focusSel: '#modalNum',
