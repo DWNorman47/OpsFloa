@@ -12,6 +12,8 @@ import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { usePerm } from '../hooks/usePerm';
 
 import { silentError } from '../errorReporter';
+import RateHistory, { EffectiveDateField, withLockedConfirm, localToday } from './RateHistory';
+import { useConfirm } from './ConfirmDialog';
 function WorkerDocuments({ workerId }) {
   const t = useT();
   const toast = useToast();
@@ -255,7 +257,8 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   const [editUsernameChecking, setEditUsernameChecking] = useState(false);
   const [editUsernameSaving, setEditUsernameSaving] = useState(false);
 
-  const [editRateForm, setEditRateForm] = useState({ rate: '', rate_type: 'hourly', overtime_rule: 'daily', guaranteed_weekly_hours: '', guarantee_enabled: false, day_mark_mode: false });
+  const [editRateForm, setEditRateForm] = useState({ rate: '', rate_type: 'hourly', overtime_rule: 'daily', guaranteed_weekly_hours: '', guarantee_enabled: false, day_mark_mode: false, effective_date: '', effective_touched: false, orig_rate: '', orig_rate_type: 'hourly' });
+  const { confirm: confirmLocked, dialog: lockedDialog } = useConfirm();
   const [editRateSaving, setEditRateSaving] = useState(false);
 
   const [editPermForm, setEditPermForm] = useState({ full_access: true, keys: {} });
@@ -455,6 +458,12 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
       guarantee_enabled: gwh != null && gwh > 0,
       guaranteed_weekly_hours: gwh != null ? String(gwh) : '40',
       day_mark_mode: !!w.day_mark_mode,
+      // Effective-dated rates: a changed rate applies from this date (default today;
+      // past dates allowed). Untouched → the server uses the company's local today.
+      effective_date: localToday(),
+      effective_touched: false,
+      orig_rate: String(w.hourly_rate ?? 0),
+      orig_rate_type: w.rate_type || 'hourly',
     });
   };
 
@@ -505,7 +514,8 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   const saveRate = async id => {
     setEditRateSaving(true);
     try {
-      const r = await api.patch(`/admin/workers/${id}`, {
+      const rateChanged = parseFloat(editRateForm.rate) !== parseFloat(editRateForm.orig_rate) || editRateForm.rate_type !== editRateForm.orig_rate_type;
+      const payload = {
         hourly_rate: editRateForm.rate,
         rate_type: editRateForm.rate_type,
         overtime_rule: editRateForm.overtime_rule,
@@ -515,7 +525,11 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
         // day_mark_mode only meaningful for daily workers; harmless for hourly
         day_mark_mode: editRateForm.rate_type === 'daily' ? editRateForm.day_mark_mode : false,
         updated_at: editWorkerUpdatedAt,
-      });
+        ...(rateChanged && editRateForm.effective_touched && editRateForm.effective_date ? { rate_effective_date: editRateForm.effective_date } : {}),
+      };
+      // A backdate into LOCKED pay periods answers 409 locked_periods → confirm, resend.
+      const r = await withLockedConfirm(c => api.patch(`/admin/workers/${id}`, { ...payload, confirm_locked: c }), confirmLocked, t);
+      if (!r) return; // cancelled at the locked-period confirm
       onWorkerUpdated(r.data);
       cancelEdit();
     } catch (err) {
@@ -1101,6 +1115,13 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                                 <label htmlFor="mw-edit-rate" style={s.label}>{t.amount}</label>
                                 <input id="mw-edit-rate" style={{ ...s.input, maxWidth: 120 }} type="number" min="0" step="0.01" value={editRateForm.rate} onChange={e => setEditRateForm(f => ({ ...f, rate: e.target.value }))} />
                               </div>
+                              <EffectiveDateField
+                                id="mw-edit-rate-eff"
+                                style={s.fieldGroup}
+                                value={editRateForm.effective_date}
+                                today={localToday()}
+                                onChange={v => setEditRateForm(f => ({ ...f, effective_date: v, effective_touched: true }))}
+                              />
                               <div style={s.fieldGroup}>
                                 <label htmlFor="mw-edit-rate-type" style={s.label}>{t.rateType}</label>
                                 <select id="mw-edit-rate-type" style={s.input} value={editRateForm.rate_type} onChange={e => setEditRateForm(f => ({ ...f, rate_type: e.target.value }))}>
@@ -1156,6 +1177,16 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                               <button style={{ ...s.saveBtn, ...(editRateSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => saveRate(w.id)} disabled={editRateSaving}>{editRateSaving ? t.loading : t.save}</button>
                               <button style={s.cancelBtn} onClick={cancelEdit}>{t.cancel}</button>
                             </div>
+                            <RateHistory
+                              kind="worker"
+                              ownerId={w.id}
+                              currency={currency}
+                              onChanged={cur => {
+                                if (!cur) return;
+                                onWorkerUpdated({ id: w.id, hourly_rate: cur.rate, rate_type: cur.rate_type });
+                                setEditRateForm(f => ({ ...f, rate: String(cur.rate ?? 0), rate_type: cur.rate_type || 'hourly', orig_rate: String(cur.rate ?? 0), orig_rate_type: cur.rate_type || 'hourly' }));
+                              }}
+                            />
                           </div>
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -1460,6 +1491,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
           </ModalShell>
         </div>
       )}
+      {lockedDialog}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import { useHasAnyPerm } from '../hooks/usePerm';
 import { labelSg, labelPl } from '../companyLabels';
 import { safeLocal } from '../utils/safeStorage';
 import { downloadCsv } from '../utils/csv';
+import RateHistory from '../components/RateHistory';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -1377,6 +1378,23 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, allProjec
                     <option value="regular">{t.regular}</option>
                     <option value="prevailing">{t.prevailing}</option>
                   </select>
+                </div>
+              )}
+
+              {/* The project's own prevailing rate is effective-dated: each change
+                  applies from its date and earlier days keep the old rate. Saved
+                  directly (its own API), not with the form above. */}
+              {project.wage_type === 'prevailing' && (settings?.prevailing_wage_rate ?? 0) > 0 && (
+                <div style={pf.field}>
+                  <label style={pf.label}>{t.rhProjectRateTitle}</label>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>{t.rhProjectRateHint}</div>
+                  <RateHistory
+                    kind="project"
+                    ownerId={project.id}
+                    currency={settings?.currency || 'USD'}
+                    allowAdd
+                    onChanged={cur => { if (cur) onProjectUpdated?.({ ...project, prevailing_wage_rate: cur.rate }); }}
+                  />
                 </div>
               )}
 

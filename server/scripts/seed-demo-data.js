@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { seedBuiltinRoles } = require('../permissions');
 const { wallDateInTZ } = require('../utils/timeFormat');
+const { upsertRow } = require('../utils/rateHistoryStore');
+const { FAR_PAST } = require('../utils/rateHistory');
 
 // Manual or scheduled seed for visual QA. It creates/fills only the named
 // fictional company. Dates roll forward so Demo Operations stays useful as a
@@ -449,6 +451,11 @@ async function main() {
         },
         'id, full_name, role'
       );
+      // hourly_rate above is only the current-rate cache; the pay engine reads the
+      // effective-dated history (migration 0209). A (re)seed resets the demo worker to
+      // one rate for all time so cache and history agree.
+      await client.query("DELETE FROM worker_rate_history WHERE user_id = $1 AND effective_date > DATE '1900-01-01'", [row.id]);
+      await upsertRow('worker', { companyId, ownerId: row.id, rate, rateType: 'hourly', effectiveDate: FAR_PAST, note: 'Demo seed' }, client);
       users.push(row);
     }
     const existingUsers = await client.query(

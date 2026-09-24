@@ -122,6 +122,9 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
  * mixing two people's hours would invent overtime neither of them worked.
  * Each row must carry `user_id`, `rate`, and `ot_rule` (join them in the query).
  */
+// `opts.rateBook` (loadRateBookForEntries) prices every entry at the worker /
+// project / company-default rate in effect on its own work_date, so a raise today
+// can't re-cost a finished job. Every production caller passes it.
 // `opts.includeBurden` loads the result with the company's employer labor
 // burden (payroll taxes, workers' comp, insurance) via settings.labor_burden_pct.
 // This is a COST-reporting concept (job costing / P&L), NEVER what a worker is
@@ -175,6 +178,9 @@ function laborCostCents(entries, settings, opts = {}) {
       otConfig: otConfigFromSettings(s, roleId, userId),
       projectRateMap,
       settings: s,
+      // Effective-dated rates (utils/rateHistory loadRateBookForEntries): each entry at
+      // the rate in effect on its work_date. Absent → the current rate (legacy).
+      rateBook: opts.rateBook || null,
     });
     dollars += st.cost.regular + st.cost.overtime + st.cost.prevailing + st.cost.night;
   }
@@ -199,10 +205,13 @@ function laborCostCents(entries, settings, opts = {}) {
 // COALESCE(…,'daily') forced daily on a weekly company. rate_type / worker_type /
 // the project's prevailing rate let laborCostCents price like the pay engine; the
 // prevailing rate is a correlated subquery so callers need no extra JOIN.
+// te.company_id lets loadRateBookForLaborRows (utils/rateHistory.js) load the
+// effective-dated rates for these rows; `rate` / `rate_type` / `prevailing_rate` are
+// only the CURRENT-rate fallback for workers / projects with no rate history.
 // start_ts / end_ts / timezone feed entryDuration's DST correction (a shift across a
 // DST change is ±1h vs its wall-clock TIMEs); without them the correction is 0.
 const LABOR_ENTRY_COLUMNS = `
-  te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
+  te.company_id, te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
   te.wage_type, te.overtime_hours_override, te.project_id,
   te.start_ts, te.end_ts, te.timezone,
   (SELECT lp.prevailing_wage_rate FROM projects lp WHERE lp.id = te.project_id) AS prevailing_rate,

@@ -6648,3 +6648,43 @@ project health/workers/budget alert, dailyReports. Also left: scheduled-shift ho
 valuation (shifts have no tz), hours-rules auto_break trigger (wall hours), isTruncatedLongShift
 (flags a fall-back overnight clock-out as +1h "truncated" — review flag only).
 Tests: server/tests/payDst.test.js, client/src/utils/entryHours.test.js.
+
+## Effective-dated pay rates (2026-09-24, uncommitted on dev)
+A raise today used to re-price last year's stubs, re-run payroll CSVs, finished-job P&L and QBO
+re-pushes (every surface read the CURRENT users.hourly_rate / rate_type /
+projects.prevailing_wage_rate / default_hourly_rate). Now: migration **0209** adds
+worker_rate_history / project_prevailing_rate_history / company_default_rate_history, backfilled
+with the current values at 1900-01-01 (pay for existing history unchanged). Rule: rate for an
+entry = row with greatest effective_date <= work_date; own rate 0/missing → company default in
+effect that day; before the first row → earliest row; no rows at all → the cache column (legacy).
+Resolver + batched loader: `server/utils/rateHistory.js`. Writes: `utils/rateHistoryStore.js`.
+- Engine: `buildPayStatement({ rateBook })` prices each entry at its own dated rate. Rate-aware OT
+  (splitRateAware) is reused as-is — a mid-week raise is just a multi-rate week (tested equal to
+  calling it directly, both OT methods). Premium/per-band path: straight time and OT priced at the
+  hour-weighted rates of the entries they came from (identical to single-rate when one rate).
+  hourly↔daily switch mid-period: the period is split into runs by type, each run sees the rest
+  of the week as weekly-OT context. Leave priced at the rate on each leave day; weekly guarantee
+  at the period-end rate. One-rate periods are byte-identical to before (blendRate returns r).
+- Routed through the resolver: all three loaders (invoice, OT report, payroll CSV, pay stubs,
+  payroll run, QBO payroll JE), laborCostCents callers (invoice T&M, project spend, P&L/WIP,
+  portfolio), QBO bills (per-line rate from the engine's `pay_rate`), certified payroll WH-347,
+  the project bill (`GET /projects/:id/entries`, now through buildPayStatement instead of a copy
+  of the engine), project metrics estimated_cost, project health approx_cost. Left on current
+  rate (display / gates): worker list, auth /me, clock day-mark gate, client WorkerSummary
+  earnings estimate on the worker Dashboard (client-side hours × current rate).
+- Writes: worker PATCH / project PATCH / settings PATCH no longer write the rate columns; a real
+  change becomes a history row (default from company-local today; `rate_effective_date`,
+  `prevailing_rate_effective_date`, `default_rate_effective_date` backdate/postdate) and the
+  column is refreshed. Invite/create/project create/signup/superadmin demo record the initial
+  rate at 1900-01-01; demo seed resets demo workers to one rate. First dated change for an owner
+  with no history snapshots the cache as a 1900 baseline first.
+- API `routes/rateHistory.js` (list/add/delete, never the last row). Hourly cache job
+  `jobs/rateCacheRefresh.js` (company-local midnight differs per tz, so hourly, idempotent,
+  DISABLE_BACKGROUND_JOBS-gated).
+- **Locked periods (owner's call):** backdating is always allowed; if the changed span reaches a
+  pay_periods row, the server returns 409 `locked_periods` (count + periods) unless
+  `confirm_locked: true`; the UI names the periods and asks. Same for deleting a row.
+- Audit trail: `settings.updated` logged new default_hourly_rate values with timestamps, so the
+  company default history IS reconstructable; worker.updated / project.updated logged no
+  details, so worker and project rate history is NOT. Nothing reconstructed automatically.
+Tests: rateHistory, payStatementRateHistory, rateHistoryRoute (server); RateHistory.test.jsx.

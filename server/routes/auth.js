@@ -9,6 +9,7 @@ const { sendEmail } = require('../email');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const pool = require('../db');
+const { recordInitialRate } = require('../utils/rateHistoryStore');
 const { requireAuth } = require('../middleware/auth');
 const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
@@ -414,6 +415,8 @@ router.post('/register', authLimiter, async (req, res) => {
     for (const [key, value] of defaults) {
       await client.query('INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3)', [companyId, key, value]);
     }
+    // The default rate is effective-dated (rate history, 0209): record the initial one.
+    await recordInitialRate('company', { companyId, rate: 30 }, client);
     if (timezone && /^[A-Za-z_]+\/[A-Za-z_\/]+$/.test(timezone)) {
       await client.query('INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3)', [companyId, 'company_timezone', timezone]);
     }

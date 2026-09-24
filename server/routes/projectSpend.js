@@ -16,6 +16,7 @@ const { requireProjectFinancialAccess, requireProjectFinancialWrite } = require(
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES, PROJECT_EXPENSE_STATUSES, PROJECT_EXPENSE_STATUS_DEFAULT } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
+const { loadRateBookForLaborRows } = require('../utils/rateHistory');
 const { equipmentUsageCents, manualExpensesByStatus, materialsCents, projectFrozen } = require('../utils/projectCost');
 
 const FROZEN_MSG = 'This job is closed — reopen its close-out to change costs.';
@@ -63,7 +64,7 @@ async function laborSpent(projectId, settings) {
         AND te.end_time IS NOT NULL`,
     [projectId]
   );
-  return laborCostCents(r.rows, settings, { includeBurden: true });
+  return laborCostCents(r.rows, settings, { includeBurden: true, rateBook: await loadRateBookForLaborRows(r.rows) });
 }
 
 // Stub for the forthcoming sub PO + payment integration.

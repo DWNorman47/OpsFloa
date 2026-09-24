@@ -9,6 +9,7 @@ const { seedBuiltinRoles } = require('../permissions');
 const { COMPANY_SUBSCRIPTION_STATUSES, COMPANY_PLANS } = require('../constants/companyEnums');
 const { validatePassword } = require('../passwordPolicy');
 const { logAudit } = require('../auditLog');
+const { recordInitialRate } = require('../utils/rateHistoryStore');
 
 const DEMO_COMPANY_NAME = 'OpsFloa Demo Workspace';
 const DEMO_COMPANY_SLUG = 'opsfloa-demo-workspace';
@@ -25,6 +26,7 @@ async function insertDemoUser(client, companyId, roleId, role, username, fullNam
      RETURNING id, username, full_name, role`,
     [companyId, username, hash, fullName, firstName, rest.join(' ') || null, role, roleId, email, rate, workerType]
   );
+  await recordInitialRate('worker', { companyId, ownerId: rows[0].id, rate, rateType: 'hourly' }, client);
   return rows[0];
 }
 
@@ -184,6 +186,7 @@ async function createDemoWorkspace(client) {
       [company.id, key, value]
     );
   }
+  await recordInitialRate('company', { companyId: company.id, rate: parseFloat(settings.default_hourly_rate) }, client);
 
   const clients = [];
   for (const row of [
@@ -226,12 +229,12 @@ async function createDemoWorkspace(client) {
   ]) {
     await client.query(
       `INSERT INTO time_entries
-        (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, rate,
+        (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type,
          notes, status, approved_by, approved_at, break_minutes, timezone, clock_source)
        VALUES ($1,$2,$3,CURRENT_DATE + ($4 || ' days')::INTERVAL,$5::time,$6::time,
          (CURRENT_DATE + ($4 || ' days')::INTERVAL + $5::time) AT TIME ZONE 'America/Phoenix',
          (CURRENT_DATE + ($4 || ' days')::INTERVAL + $6::time) AT TIME ZONE 'America/Phoenix',
-         'regular',34,$7,$8::varchar,$9,CASE WHEN $8::varchar='approved' THEN NOW() - INTERVAL '1 day' ELSE NULL END,$10,'America/Phoenix','worker')`,
+         'regular',$7,$8::varchar,$9,CASE WHEN $8::varchar='approved' THEN NOW() - INTERVAL '1 day' ELSE NULL END,$10,'America/Phoenix','worker')`,
       [company.id, ...e]
     );
   }

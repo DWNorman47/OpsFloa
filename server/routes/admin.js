@@ -31,7 +31,9 @@ const { sendEmail } = require('../email');
 const { hoursWorked, entryDuration, dstAdjustHours, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, nightHoursForEntry, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
 const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
-const { workerStatement, companyStatements } = require('../utils/payStatement');
+const { workerStatement, companyStatements, buildPayStatement } = require('../utils/payStatement');
+const { loadRateBook, loadRateBookForEntries, workerRateOn, prevailingRateOn, blendRate } = require('../utils/rateHistory');
+const rateStore = require('../utils/rateHistoryStore');
 const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
@@ -52,6 +54,12 @@ function workerInScope(req, targetId) {
   return !ids || !ids.length || ids.map(Number).includes(Number(targetId));
 }
 const DENY_WORKER = { error: 'Not authorized for this worker' };
+
+// A new worker's / project's first rate goes into rate history (utils/rateHistoryStore).
+// Non-fatal: with no history row the pay engine prices from the cache column anyway.
+async function recordInitialRateSafe(kind, args) {
+  try { await rateStore.recordInitialRate(kind, args); } catch (err) { logger.warn({ err, kind }, 'initial rate history insert failed'); }
+}
 
 // Legacy { to, subject, html } send shape → central sendEmail(); re-throw on
 // provider failure so the invite try/catch still sets email_sent correctly.
@@ -253,7 +261,30 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
     }
     const current = await getSettings(companyId);
     const changed = {};
+    // default_hourly_rate is effective-dated (company_default_rate_history, 0209): a
+    // change is a dated history row (default from today, company time zone;
+    // `default_rate_effective_date` may backdate it) and the setting is refreshed as
+    // the current-rate cache — so a new default never re-prices past pay. Validated
+    // + locked-period-checked BEFORE any setting is written; recorded after the loop.
+    let defaultRateChange = null;
+    if (req.body.default_hourly_rate !== undefined || req.body.default_rate_effective_date) {
+      const val = parseFloat(req.body.default_hourly_rate !== undefined ? req.body.default_hourly_rate : current.default_hourly_rate);
+      if (!Number.isFinite(val) || val <= 0) return res.status(400).json({ error: 'Invalid value for default_hourly_rate' });
+      const r2 = x => Math.round(parseFloat(x) * 100) / 100;
+      const eff = req.body.default_rate_effective_date || null;
+      if (eff || r2(val) !== r2(current.default_hourly_rate)) {
+        const today = await rateStore.companyToday(companyId);
+        const v = rateStore.validateChange('company', { rate: r2(val), effective_date: eff || today, note: req.body.default_rate_note }, today);
+        if (v.error) return res.status(400).json({ error: v.error });
+        const locked = await rateStore.checkLocked('company', companyId, companyId, v.value.effectiveDate);
+        if (locked.length && !(req.body.confirm_locked === true || req.body.confirm_locked === 'true')) {
+          return res.status(409).json(rateStore.lockedConflict(locked));
+        }
+        defaultRateChange = { change: v.value, today };
+      }
+    }
     for (const key of allowed) {
+      if (key === 'default_hourly_rate') continue; // effective-dated — handled above/below
       if (req.body[key] !== undefined) {
         if (FEATURE_KEYS.includes(key)) {
           const val = req.body[key] ? '1' : '0';
@@ -392,6 +423,18 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
           if (current[key] !== val) changed[key] = val;
         }
       }
+    }
+    if (defaultRateChange) {
+      const out = await rateStore.addChange('company', {
+        companyId, ownerId: companyId, change: defaultRateChange.change, today: defaultRateChange.today,
+        confirmLocked: true, createdBy: req.user.id, // locked periods were checked (and confirmed) above
+      });
+      await logAudit(companyId, req.user.id, req.user.full_name, 'settings.default_rate_history.added', 'settings', null, 'Company default rate', {
+        rate: defaultRateChange.change.rate, effective_date: defaultRateChange.change.effectiveDate, note: defaultRateChange.change.note,
+        previous: out.previous, backdated: defaultRateChange.change.effectiveDate < defaultRateChange.today,
+        locked_periods_affected: out.lockedPeriods.length,
+      });
+      if (out.cache && out.cache.rate !== current.default_hourly_rate) changed.default_hourly_rate = out.cache.rate;
     }
     if (Object.keys(changed).length === 0) { const s = await getSettings(companyId); return res.json(s); }
     await logAudit(companyId, req.user.id, req.user.full_name, 'settings.updated', 'settings', null, 'Settings', changed);
@@ -1192,7 +1235,7 @@ router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'
     const summary = {
       total_hours: st.hours.total, regular_hours: st.hours.regular, overtime_hours: st.hours.overtime, prevailing_hours: st.hours.prevailing,
       overtime_bands: st.hours.overtimeBands,
-      rate: st.rates.rate, regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
+      rate: st.rates.rate, rate_changes: st.rates.changes || null, regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
       night_hours: st.hours.night, night_cost: st.cost.night,
       guarantee_shortfall_hours: st.hours.guaranteeShortfall, guarantee_min_hours: st.hours.guaranteeMin,
       guarantee_weeks: st.hours.guaranteeWeeks, guarantee_cost: st.cost.guarantee,
@@ -1467,6 +1510,8 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
         assignedClassification, email, tokenHash, expires,
       ]
     );
+    // First rate on record (dated 1900-01-01 = "for all time until a dated change").
+    await recordInitialRateSafe('worker', { companyId, ownerId: result.rows[0].id, rate: assignedRate, rateType: assignedRateType, createdBy: req.user.id });
     await logAudit(companyId, req.user.id, req.user.full_name, 'worker.invited', 'worker', result.rows[0].id, full_name, {
       email,
       role_id: resolvedRoleId,
@@ -1635,6 +1680,7 @@ router.post('/workers', requireAdmin, requirePerm('manage_workers'),
       'INSERT INTO users (company_id, username, password_hash, full_name, first_name, middle_name, last_name, role, role_id, language, hourly_rate, rate_type, overtime_rule, email, email_confirmed, must_change_password, worker_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, true, $15) RETURNING id, username, full_name, first_name, middle_name, last_name, role, role_id, language, hourly_rate, rate_type, overtime_rule, email, worker_type',
       [companyId, username, hash, full_name, first_name || null, middle_name || null, last_name || null, resolvedLegacyRole, resolvedRoleId, assignedLanguage, assignedRate, assignedRateType, assignedOTRule, assignedEmail, assignedWorkerType]
     );
+    await recordInitialRateSafe('worker', { companyId, ownerId: result.rows[0].id, rate: assignedRate, rateType: assignedRateType, createdBy: req.user.id });
     await logAudit(companyId, req.user.id, req.user.full_name, 'worker.created', 'worker', result.rows[0].id, full_name, { role: resolvedLegacyRole, role_id: resolvedRoleId });
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -1711,12 +1757,31 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
       fields.push(`token_version = COALESCE(token_version, 0) + 1`);
     }
     if (language) { fields.push(`language = $${idx++}`); values.push(language); }
+    // hourly_rate / rate_type are NOT written to the columns directly any more: a
+    // change becomes an effective-dated rate-history row (default: from today in the
+    // company's time zone — never retroactive unless a past date is chosen) and the
+    // columns are refreshed as the current-rate cache. See utils/rateHistoryStore.js.
+    let rateChange = null;
     if (hourly_rate !== undefined) {
       const rv = parseFloat(hourly_rate);
       if (isNaN(rv) || rv < 0) return res.status(400).json({ error: 'hourly_rate must be a non-negative number' });
-      fields.push(`hourly_rate = $${idx++}`); values.push(rv);
     }
-    if (rate_type !== undefined) { fields.push(`rate_type = $${idx++}`); values.push(rate_type); }
+    if (hourly_rate !== undefined || rate_type !== undefined || req.body.rate_effective_date) {
+      const cur = await rateStore.readCache('worker', companyId, req.params.id);
+      if (!cur) return res.status(404).json({ error: 'Worker not found' });
+      const r2 = x => (x == null ? null : Math.round(parseFloat(x) * 100) / 100);
+      const newRate = hourly_rate !== undefined ? r2(hourly_rate) : r2(cur.rate);
+      const newType = rate_type !== undefined ? rate_type : cur.rate_type;
+      const eff = req.body.rate_effective_date || null;
+      // The edit form re-sends the whole row; only a real change (or an explicit
+      // effective date) records history.
+      if (eff || newRate !== r2(cur.rate) || newType !== cur.rate_type) {
+        const today = await rateStore.companyToday(companyId);
+        const v = rateStore.validateChange('worker', { rate: newRate, rate_type: newType, effective_date: eff || today, note: req.body.rate_note }, today);
+        if (v.error) return res.status(400).json({ error: v.error });
+        rateChange = { change: v.value, today };
+      }
+    }
     if (day_mark_mode !== undefined) { fields.push(`day_mark_mode = $${idx++}`); values.push(!!day_mark_mode); }
     if (overtime_rule !== undefined) { fields.push(`overtime_rule = $${idx++}`); values.push(overtime_rule); }
     if (email !== undefined) {
@@ -1765,6 +1830,15 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
         return res.status(409).json({ error: 'conflict' });
       }
     }
+    let rateOut = null;
+    if (rateChange) {
+      rateOut = await rateStore.addChange('worker', {
+        companyId, ownerId: parseInt(req.params.id, 10), change: rateChange.change, today: rateChange.today,
+        confirmLocked: req.body.confirm_locked === true || req.body.confirm_locked === 'true', createdBy: req.user.id,
+      });
+      // Backdated into locked pay periods → nothing saved; the UI confirms and resends.
+      if (rateOut.conflict) return res.status(409).json(rateOut.conflict);
+    }
     fields.push(`updated_at = NOW()`);
     values.push(req.params.id);
     values.push(companyId);
@@ -1773,8 +1847,15 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
       values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+    if (rateOut) {
+      await logAudit(companyId, req.user.id, req.user.full_name, 'worker.rate_history.added', 'worker', result.rows[0].id, result.rows[0].full_name, {
+        rate: rateChange.change.rate, rate_type: rateChange.change.rateType, effective_date: rateChange.change.effectiveDate,
+        note: rateChange.change.note, previous: rateOut.previous, backdated: rateChange.change.effectiveDate < rateChange.today,
+        locked_periods_affected: rateOut.lockedPeriods.length,
+      });
+    }
     await logAudit(companyId, req.user.id, req.user.full_name, 'worker.updated', 'worker', result.rows[0].id, result.rows[0].full_name);
-    res.json(result.rows[0]);
+    res.json(rateOut ? { ...result.rows[0], rate_history: rateOut.rows, locked_periods: rateOut.lockedPeriods } : result.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -1942,7 +2023,8 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     if (projectResult.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
 
     const entriesResult = await pool.query(
-      `SELECT te.*, COALESCE(u.invoice_name, u.full_name) as worker_name, u.username, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id
+      `SELECT te.*, COALESCE(u.invoice_name, u.full_name) as worker_name, u.username, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.worker_type,
+              to_char(te.work_date, 'YYYY-MM-DD') AS work_date
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        WHERE te.project_id = $1
@@ -1959,61 +2041,36 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     entries.forEach(e => { workerRoleById[e.user_id] = e.role_id; });
     entries = roundEntriesFromSettings(entries, settings, { workerRoleById });
 
-    // Per-worker OT using each worker's own rule. All of a worker's hours
-    // (regular + prevailing at the project rate) go through the shared rate-aware
-    // engine so prevailing / multi-rate hours earn overtime, consistent with the
-    // worker invoice. Premium OT configs + daily-rate workers keep the per-band path.
+    // Per-worker pay through the ONE engine (buildPayStatement — the same assembler
+    // as the worker invoice / payroll / laborCostCents): each worker's own OT rule,
+    // rate-aware OT across regular + prevailing hours, premium configs per band,
+    // daily-rate workers, night differential. Every entry is priced at the rate IN
+    // EFFECT ON ITS work_date (worker / project prevailing / company default rate
+    // history), so a raise today can't re-price an already-billed period. from/to
+    // are NOT passed: a project bill carries only worked hours, never range-level
+    // pay (no-clock-in guarantees, weekly guarantee, leave).
     const effectivePrevRate = parseFloat(projectResult.rows[0].prevailing_wage_rate) || settings.prevailing_wage_rate;
-    const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
-    const wagePriority = settings.overtime_wage_priority || DEFAULT_OVERTIME_WAGE_PRIORITY;
-    const workerEntries = {};
+    const projectRateMap = {};
+    if (projectResult.rows[0].prevailing_wage_rate != null) projectRateMap[projectResult.rows[0].id] = parseFloat(projectResult.rows[0].prevailing_wage_rate);
+    const rateBook = entries.length ? await loadRateBookForEntries(companyId, entries) : null;
+    const workerEntries = new Map();
     entries.forEach(e => {
-      if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: otRuleFromSettings(settings, e.overtime_rule), role_id: e.role_id };
-      workerEntries[e.user_id].items.push(e);
+      if (!workerEntries.has(e.user_id)) workerEntries.set(e.user_id, []);
+      workerEntries.get(e.user_id).push(e);
     });
     let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0, nightHours = 0, nightCost = 0;
     const otConfigByRole = otConfigByRoleFactory(settings);
-    Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule, role_id }) => {
-      const otConfig = otConfigByRole(role_id, items[0]?.user_id ?? null);
-      if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
-        const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
-        const s = splitRateAware(items, { rule: overtime_rule, threshold: otThreshold(settings, overtime_rule), weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod, wagePriority });
-        for (const e of items) e.overtime_hours = 0;
-        s.worked.forEach((e, i) => { e.overtime_hours = s.perEntry[i].ot; });
-        regularHours += s.regularHours; overtimeHours += s.overtimeHours; prevailingHours += s.prevailingHours;
-        regularCost += s.regularCost; overtimeCost += s.overtimeCost; prevailingCost += s.prevailingCost;
-      } else {
-        // Per-band path: OT on regular only, prevailing flat (premium configs / daily rate).
-        const reg = items.filter(e => e.wage_type === 'regular');
-        const bandThreshold = otThreshold(settings, overtime_rule);
-        const { regularHours: rh, overtimeHours: oh, otBands } = computeOT(reg, overtime_rule, bandThreshold, settings.week_start, otConfig);
-        annotateEntryOvertime(reg, overtime_rule, bandThreshold, settings.week_start, otConfig);
-        regularHours += rh; overtimeHours += oh;
-        if (rate_type === 'daily') {
-          // Pass regular_shift_hours so daily OT prices at daily ÷ standard day, matching
-          // the worker invoice (buildPayStatement); the 7th arg defaulted to 8 before.
-          const dailyHours = parseFloat(settings.regular_shift_hours) || 8;
-          const dc = computeDailyPayCosts(reg, overtime_rule, bandThreshold, rate, settings.overtime_multiplier, otConfig, dailyHours, settings.week_start);
-          regularCost += dc.regularCost; overtimeCost += dc.overtimeCost;
-        } else {
-          regularCost += rh * rate;
-          overtimeCost += otBandsCost(otBands, rate, settings.overtime_multiplier);
-          // Night differential is its own factor (not folded into overtime) — matches the worker invoice.
-          const nd = otConfig && otConfig.nightDifferential;
-          if (nd) {
-            const npct = parseFloat(nd.pct) || 0, nfrom = parseFloat(nd.fromHour), nto = parseFloat(nd.toHour);
-            if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
-              nightCost += nightPremiumCost(reg, nd, rate);
-              for (const e of reg) nightHours += nightHoursForEntry(e, nfrom, nto);
-            }
-          }
-        }
-        items.filter(e => e.wage_type === 'prevailing').forEach(e => {
-          const h = entryDuration(e); // paid hours, DST-corrected — same as the OT engine
-          prevailingHours += h; prevailingCost += h * effectivePrevRate;
-        });
-      }
-    });
+    for (const items of workerEntries.values()) {
+      const f = items[0];
+      const st = buildPayStatement({
+        worker: { id: f.user_id, hourly_rate: f.hourly_rate, rate_type: f.rate_type || 'hourly', overtime_rule: f.overtime_rule, role_id: f.role_id, worker_type: f.worker_type, guaranteed_weekly_hours: 0 },
+        entries: items,
+        otConfig: otConfigByRole(f.role_id, f.user_id ?? null),
+        projectRateMap, rateBook, settings,
+      });
+      regularHours += st.hours.regular; overtimeHours += st.hours.overtime; prevailingHours += st.hours.prevailing; nightHours += st.hours.night;
+      regularCost += st.cost.regular; overtimeCost += st.cost.overtime; prevailingCost += st.cost.prevailing; nightCost += st.cost.night;
+    }
 
     const totalHours = regularHours + overtimeHours + prevailingHours;
     const totalCost = regularCost + overtimeCost + prevailingCost + nightCost;
@@ -2052,6 +2109,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
                 te.break_minutes, te.wage_type, te.overtime_hours_override,
                 te.start_ts, te.end_ts, te.timezone,
                 COALESCE(u.hourly_rate, $2) AS rate,
+                u.hourly_rate AS own_rate, u.rate_type,
                 COALESCE(u.overtime_rule, 'daily') AS ot_rule,
                 u.role_id AS role_id
            FROM time_entries te
@@ -2060,6 +2118,10 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         [companyId, defaultRate]
       ),
     ]);
+    // Estimated cost prices each entry at the worker's rate IN EFFECT on its date
+    // (rate history), not today's rate. One batched load for the company's workers.
+    const metricsRateBook = await loadRateBook({ companyId, userIds: null, projectIds: [], to: null });
+    const metricsRateOf = e => workerRateOn(metricsRateBook, { id: e.user_id, hourly_rate: e.own_rate, rate_type: e.rate_type }, e.work_date, { default_hourly_rate: defaultRate }).rate;
 
     const metricsRoleById = {};
     entriesRes.rows.forEach(e => { metricsRoleById[e.user_id] = e.role_id; });
@@ -2093,7 +2155,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         const h = entryDuration(e); // same paid-hours definition as computePaid's regular+OT (DST-corrected)
         totalHours += h;
         if (e.wage_type === 'prevailing') prevailingHours += h;
-        estimatedCost += h * parseFloat(e.rate);
+        estimatedCost += h * metricsRateOf(e);
         workerIds.add(e.user_id);
       }
       return {
@@ -2259,12 +2321,30 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
       }
       fields.push(`budget_dollars = $${idx++}`); values.push(budget_dollars);
     }
-    if (prevailing_wage_rate !== undefined) {
-      if (prevailing_wage_rate !== null && prevailing_wage_rate < 0) {
+    // The prevailing rate is effective-dated (rate history, migration 0209): a change
+    // becomes a history row (default from today, company time zone; a past
+    // `prevailing_rate_effective_date` backdates it) and the column is refreshed as the
+    // current-rate cache — never written directly, so past pay keeps the old rate.
+    let prevChange = null;
+    if (prevailing_wage_rate !== undefined || req.body.prevailing_rate_effective_date) {
+      if (prevailing_wage_rate != null && prevailing_wage_rate < 0) {
         logFailure(req, 'admin.projects.update', 'negative_wage_rate', { prevailing_wage_rate });
         return res.status(400).json({ error: 'prevailing_wage_rate must be non-negative' });
       }
-      fields.push(`prevailing_wage_rate = $${idx++}`); values.push(prevailing_wage_rate);
+      const cur = await rateStore.readCache('project', companyId, req.params.id);
+      if (!cur) {
+        logFailure(req, 'admin.projects.update', 'not_found', { project_id: req.params.id });
+        return res.status(404).json({ error: 'Project not found' });
+      }
+      const r2 = x => (x == null ? null : Math.round(parseFloat(x) * 100) / 100);
+      const newRate = prevailing_wage_rate !== undefined ? r2(prevailing_wage_rate) : r2(cur.rate);
+      const eff = req.body.prevailing_rate_effective_date || null;
+      if (eff || newRate !== r2(cur.rate)) {
+        const today = await rateStore.companyToday(companyId);
+        const v = rateStore.validateChange('project', { rate: newRate, effective_date: eff || today, note: req.body.prevailing_rate_note }, today);
+        if (v.error) return res.status(400).json({ error: v.error });
+        prevChange = { change: v.value, today };
+      }
     }
     if (required_checklist_template_id !== undefined) {
       fields.push(`required_checklist_template_id = $${idx++}`);
@@ -2306,7 +2386,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
       }
       fields.push(`visible_to_user_ids = $${idx++}`); values.push(value);
     }
-    if (fields.length === 0) {
+    if (fields.length === 0 && !prevChange && prevailing_wage_rate === undefined) {
       logFailure(req, 'admin.projects.update', 'nothing_to_update');
       return res.status(400).json({ error: 'Nothing to update' });
     }
@@ -2322,6 +2402,14 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
         return res.status(409).json({ error: 'conflict' });
       }
     }
+    let prevOut = null;
+    if (prevChange) {
+      prevOut = await rateStore.addChange('project', {
+        companyId, ownerId: parseInt(req.params.id, 10), change: prevChange.change, today: prevChange.today,
+        confirmLocked: req.body.confirm_locked === true || req.body.confirm_locked === 'true', createdBy: req.user.id,
+      });
+      if (prevOut.conflict) return res.status(409).json(prevOut.conflict);
+    }
     fields.push(`updated_at = NOW()`);
     values.push(req.params.id);
     values.push(companyId);
@@ -2333,8 +2421,15 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
       logFailure(req, 'admin.projects.update', 'not_found', { project_id: req.params.id });
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (prevOut) {
+      await logAudit(companyId, req.user.id, req.user.full_name, 'project.prevailing_rate_history.added', 'project', result.rows[0].id, result.rows[0].name, {
+        rate: prevChange.change.rate, effective_date: prevChange.change.effectiveDate, note: prevChange.change.note,
+        previous: prevOut.previous, backdated: prevChange.change.effectiveDate < prevChange.today,
+        locked_periods_affected: prevOut.lockedPeriods.length,
+      });
+    }
     await logAudit(companyId, req.user.id, req.user.full_name, 'project.updated', 'project', result.rows[0].id, result.rows[0].name);
-    res.json(result.rows[0]);
+    res.json(prevOut ? { ...result.rows[0], prevailing_rate_history: prevOut.rows, locked_periods: prevOut.lockedPeriods } : result.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -2455,6 +2550,7 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
        geoFieldsPresent === 3 ? geo_radius_ft : null,
        hour_limit_mode || 'off', hlNumOrNull(daily_hour_limit), hlNumOrNull(weekly_hour_limit), hour_limit_overflow_project_id || null, !!is_overhead]
     );
+    if (pwr != null) await recordInitialRateSafe('project', { companyId, ownerId: result.rows[0].id, rate: pwr, createdBy: req.user.id });
     await logAudit(companyId, req.user.id, req.user.full_name, 'project.created', 'project', result.rows[0].id, name, { wage_type: wt });
     const newProject = result.rows[0];
     res.status(201).json(newProject);
@@ -2634,24 +2730,35 @@ router.get('/projects/:id/health', requireAdmin, async (req, res) => {
           WHERE project_id=$1 AND company_id=$2 AND status='open')::int             AS open_rfis,
          (SELECT COUNT(*) FROM field_reports
           WHERE project_id=$1 AND company_id=$2
-            AND COALESCE(report_date, reported_at::date) >= CURRENT_DATE - 7)::int  AS reports_week,
-         (SELECT ROUND(COALESCE(SUM(
-            EXTRACT(EPOCH FROM (
-              CASE WHEN te.end_time < te.start_time
-                THEN te.end_time + INTERVAL '1 day' - te.start_time
-                ELSE te.end_time - te.start_time
-              END
-            )) / 3600 * COALESCE(u.hourly_rate, (
-              SELECT value::numeric FROM settings
-              WHERE company_id=$2 AND key='default_hourly_rate' LIMIT 1
-            ), 30)
-          ), 0)::numeric, 0)
-          FROM time_entries te
-          JOIN users u ON te.user_id = u.id
-          WHERE te.project_id=$1 AND te.company_id=$2)                              AS approx_cost`,
+            AND COALESCE(report_date, reported_at::date) >= CURRENT_DATE - 7)::int  AS reports_week`,
       [req.params.id, companyId]
     );
-    res.json(result.rows[0]);
+    // approx_cost: raw punch hours × the worker's rate IN EFFECT on each entry's
+    // date (rate history; own rate missing → company default that day, else 30).
+    // A rough snapshot, not the pay engine — same shape as before, but a raise
+    // today no longer re-prices the project's past labor.
+    const [hoursRes, defRes] = await Promise.all([
+      pool.query(
+        `SELECT te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, u.hourly_rate, u.rate_type,
+                EXTRACT(EPOCH FROM (
+                  CASE WHEN te.end_time < te.start_time
+                    THEN te.end_time + INTERVAL '1 day' - te.start_time
+                    ELSE te.end_time - te.start_time
+                  END
+                )) / 3600 AS hours
+           FROM time_entries te
+           JOIN users u ON te.user_id = u.id
+          WHERE te.project_id=$1 AND te.company_id=$2`,
+        [req.params.id, companyId]
+      ),
+      pool.query("SELECT value FROM settings WHERE company_id=$1 AND key='default_hourly_rate' LIMIT 1", [companyId]),
+    ]);
+    const healthRows = hoursRes.rows || [];
+    const healthBook = healthRows.length ? await loadRateBook({ companyId, userIds: healthRows.map(r => r.user_id), projectIds: [], to: null }) : null;
+    const healthDefault = { default_hourly_rate: parseFloat(defRes.rows?.[0]?.value) || 30 };
+    const approx = healthRows.reduce((sum, r) => sum + (parseFloat(r.hours) || 0)
+      * workerRateOn(healthBook, { id: r.user_id, hourly_rate: r.hourly_rate, rate_type: r.rate_type }, r.work_date, healthDefault).rate, 0);
+    res.json({ ...result.rows[0], approx_cost: String(Math.round(approx)) });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -3731,7 +3838,8 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
     const rows = workers.rows.map(w => {
       const st = statements.get(w.id);
       return {
-        worker_id: w.id, worker_name: w.invoice_name || w.full_name, rate: st.rates.rate, rate_type: w.rate_type || 'hourly', overtime_rule: w.overtime_rule || 'daily',
+        worker_id: w.id, worker_name: w.invoice_name || w.full_name, rate: st.rates.rate, rate_type: st.rates.rateType || w.rate_type || 'hourly', overtime_rule: w.overtime_rule || 'daily',
+        rate_changes: st.rates.changes || null, // effective-dated rate changes inside the range (rate = the latest)
         regular_hours: n2(st.hours.regular),
         overtime_hours: n2(st.hours.overtime),
         prevailing_hours: n2(st.hours.prevailing),
@@ -4244,7 +4352,7 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     workers.rows.forEach(w => {
       const st = statements.get(w.id);
       lines.push([
-        esc(w.invoice_name || w.full_name), w.rate_type || 'hourly', w.overtime_rule || 'daily', st.rates.rate.toFixed(2),
+        esc(w.invoice_name || w.full_name), st.rates.rateType || w.rate_type || 'hourly', w.overtime_rule || 'daily', st.rates.rate.toFixed(2),
         st.hours.regular.toFixed(2), st.hours.overtime.toFixed(2), st.hours.prevailing.toFixed(2),
         st.hours.sick.toFixed(2),
         st.hours.vacation.toFixed(2),
@@ -4552,10 +4660,20 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
 
     const s = await getSettings(companyId);
     const defaultRate = parseFloat(s.default_hourly_rate) || 30;
+    // Effective-dated rates (worker / project prevailing / company default): a WH-347
+    // certifies what was PAID that week, so each day is priced at the rate in effect
+    // on that day — never today's rate. One batched load for the report's rows.
+    const cpRateBook = result.rows.length ? await loadRateBookForEntries(companyId, result.rows) : null;
+    const cpSettings = { ...s, default_hourly_rate: defaultRate };
+    const companyPrevRate = parseFloat(s.prevailing_wage_rate) || 45;
+    if (projectId && cpRateBook) {
+      const atWeekEnd = prevailingRateOn(cpRateBook, projectId, week_end, { [projectId]: projectPrevRate });
+      projectPrevRate = atWeekEnd != null ? atWeekEnd : projectPrevRate;
+    }
     // Number.isFinite guards the NaN hole: parseFloat(undefined) is NaN, and
     // `NaN ?? 45` stays NaN (nullish only catches null/undefined) — which would
     // make every prevailing cost + the OT math + gross NaN on the report.
-    const prevRate = Number.isFinite(projectPrevRate) ? projectPrevRate : (parseFloat(s.prevailing_wage_rate) || 45);
+    const prevRate = Number.isFinite(projectPrevRate) ? projectPrevRate : companyPrevRate;
 
     const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const emptyDays = () => ({ mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 });
@@ -4572,11 +4690,15 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     result.rows.forEach(r => { cpRoleById[r.user_id] = r.role_id; });
     for (const row of roundEntriesFromSettings(result.rows, s, { workerRoleById: cpRoleById })) {
       if (!workerMap[row.user_id]) {
+        // Displayed rate / type = the ones in effect at week end (costs are per day).
+        const atEnd = workerRateOn(cpRateBook, { id: row.user_id, hourly_rate: row.hourly_rate, rate_type: row.rate_type }, week_end, cpSettings);
         workerMap[row.user_id] = {
           worker_id: row.user_id,
           worker_name: row.worker_name,
-          rate: parseFloat(row.hourly_rate) || defaultRate,
-          rate_type: row.rate_type || 'hourly',
+          own_rate: row.hourly_rate,
+          cache_rate_type: row.rate_type,
+          rate: atEnd.rate,
+          rate_type: atEnd.rateType,
           classification: row.classification || null,
           overtime_rule: otRuleFromSettings(s, row.overtime_rule),
           role_id: row.role_id,
@@ -4596,16 +4718,19 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
       // every regular hour is priced at a whole day (an ~8× overstatement of gross). This
       // is an hourly-equivalent basis; it can differ slightly from the daily-rate pay stub
       // (days × daily rate) when a worker's daily hours ≠ the standard shift.
-      const wageRate = w.rate_type === 'daily'
-        ? w.rate / (parseFloat(s.regular_shift_hours) || 8)
-        : w.rate;
+      const shiftH = parseFloat(s.regular_shift_hours) || 8;
+      const rateOn = d => workerRateOn(cpRateBook, { id: w.worker_id, hourly_rate: w.own_rate, rate_type: w.cache_rate_type }, d, cpSettings);
+      const wageRateOnDate = d => { const r = rateOn(d); return r.rateType === 'daily' ? r.rate / shiftH : r.rate; };
+      const wageRateOf = e => wageRateOnDate(e.work_date);
+      const wageRate = wageRateOnDate(week_end); // single-rate fallback
       const regular_days = emptyDays(), prevailing_days = emptyDays(), ot_days = emptyDays();
       const dayKeyOf = e => DAY_KEYS[new Date(e.work_date + 'T00:00:00Z').getUTCDay()];
       const dur = entryDuration; // paid hours (DST-corrected, break clamped) — matches splitRateAware/computeOT
       const classificationOf = e => e.entry_classification || e.classification || w.classification || 'Unclassified';
       const prevailingRateOf = e => {
-        const projectRate = parseFloat(e.project_prevailing_wage_rate);
-        return Number.isFinite(projectRate) ? projectRate : prevRate;
+        const cur = parseFloat(e.project_prevailing_wage_rate);
+        const dated = prevailingRateOn(cpRateBook, e.project_id, e.work_date, Number.isFinite(cur) ? { [e.project_id]: cur } : {});
+        return dated != null ? dated : prevRate;
       };
       const classMap = new Map();
       const classRow = e => {
@@ -4631,7 +4756,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
       let regular_cost = 0, prevailing_cost = 0, overtime_cost = 0, night_premium = 0;
 
       if (hasSimpleOtConfig(otConfig)) {
-        const baseRateOf = e => (e.wage_type === 'prevailing' ? prevailingRateOf(e) : wageRate);
+        const baseRateOf = e => (e.wage_type === 'prevailing' ? prevailingRateOf(e) : wageRateOf(e));
         const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: otThreshold(s, w.overtime_rule), weekStart: s.week_start, otMult, baseRateOf, method: otMethod, wagePriority });
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
@@ -4688,7 +4813,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
           }
           cr.regular_days[dk] = +(cr.regular_days[dk] + (h - otH)).toFixed(2);
           cr.regular_total += h - otH;
-          cr.regular_cost += (h - otH) * wageRate;
+          cr.regular_cost += (h - otH) * wageRateOf(e);
         }
         // A minimum-daily floor tops a short worked day up to its minimum; those hours are
         // in rh but not on any entry above, so add them to their day column — otherwise the
@@ -4702,21 +4827,30 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
             const cr = classRow(source);
             cr.regular_days[dk] = +(cr.regular_days[dk] + f.hours).toFixed(2);
             cr.regular_total += f.hours;
-            cr.regular_cost += f.hours * wageRate;
+            cr.regular_cost += f.hours * wageRateOnDate(f.date);
           }
         }
         regular_total = rh; overtime_total = oh;
-        regular_cost = rh * wageRate;
-        overtime_cost = otBandsCost(otBands, wageRate, otMult);
+        // Straight time / OT at the rate(s) in effect on each day; one rate in the
+        // week → blendRate returns it verbatim (identical to single-rate math).
+        const otOfE = e => Math.min(Math.max(0, e.overtime_hours || 0), dur(e));
+        regular_cost = rh * blendRate([
+          ...reg.map(e => ({ w: dur(e) - otOfE(e), r: wageRateOf(e) })),
+          ...(floorDet || []).map(f => ({ w: f.hours, r: wageRateOnDate(f.date) })),
+        ], wageRate);
+        overtime_cost = otBandsCost(otBands, blendRate(reg.map(e => ({ w: otOfE(e), r: wageRateOf(e) })), wageRate), otMult);
         const premiumOtRate = overtime_total > 0 ? overtime_cost / overtime_total : 0;
         for (const cr of classMap.values()) cr.overtime_cost = cr.overtime_total * premiumOtRate;
         // Night differential is an additive premium on regular hours worked in the
         // night window — same source as buildPayStatement's night_premium. Without
         // this, gross_pay understated pay for any worker with a night_diff rule.
-        if (w.rate_type !== 'daily' && otConfig && otConfig.nightDifferential) {
-          night_premium = nightPremiumCost(reg, otConfig.nightDifferential, w.rate);
+        if (otConfig && otConfig.nightDifferential) {
           for (const e of reg) {
-            classRow(e).night_premium += nightPremiumCost([e], otConfig.nightDifferential, w.rate);
+            const r = rateOn(e.work_date);
+            if (r.rateType === 'daily') continue; // daily-rate days carry no night premium
+            const np = nightPremiumCost([e], otConfig.nightDifferential, r.rate);
+            night_premium += np;
+            classRow(e).night_premium += np;
           }
         }
         for (const e of w.items.filter(e => e.wage_type === 'prevailing')) {

@@ -213,6 +213,7 @@ const liveSessions = require('./routes/liveSessions');
 app.get('/api/live/:id/stream', liveSessions.streamHandler);
 app.use('/api/live', requireAuth, requirePlanToolsAddon, liveSessions.router);
 app.use('/api/time-entries', require('./routes/timeEntries'));
+app.use('/api/admin', require('./routes/rateHistory')); // effective-dated worker / prevailing / default rates (0209)
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)
 const qboRouter = require('./routes/qbo');
@@ -439,6 +440,8 @@ const server = app.listen(PORT, () => {
     startTakeoffOrphanSweepJob();
     const { startLiveSessionSweepJob } = require('./jobs/liveSessionSweep'); // end abandoned live sessions
     startLiveSessionSweepJob();
+    const { startRateCacheRefreshJob } = require('./jobs/rateCacheRefresh'); // future-dated rate changes → current-rate cache
+    startRateCacheRefreshJob();
     const { startCron } = require('./cron');
     startCron();
   }

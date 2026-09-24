@@ -108,7 +108,10 @@ describe('GET /admin/certified-payroll classification attribution', () => {
         { ...base, work_date: '2026-07-20', entry_classification: 'Operator' },
         { ...base, work_date: '2026-07-21', entry_classification: 'Laborer' },
       ] })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] }) // settings
+      .mockResolvedValueOnce({ rows: [] }) // worker_rate_history
+      .mockResolvedValueOnce({ rows: [] }) // project_prevailing_rate_history
+      .mockResolvedValueOnce({ rows: [] }) // company_default_rate_history
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });

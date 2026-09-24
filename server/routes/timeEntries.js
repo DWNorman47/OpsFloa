@@ -531,6 +531,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         // Priced by the shared engine (the stub used to recompute these on the client).
         rate: st.rates.rate,
         rate_type: st.rates.rateType,
+        rate_changes: st.rates.changes || null, // a dated rate change inside the period (rate = the latest)
         regular_days: st.hours.regularDays,
         regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
         night_cost: st.cost.night,

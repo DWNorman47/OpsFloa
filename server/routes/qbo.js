@@ -15,6 +15,7 @@ const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hou
 const { entryDuration } = require('../utils/payCalculations');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { companyStatements, buildPayStatement } = require('../utils/payStatement');
+const { loadRateBookForEntries, workerRateOn } = require('../utils/rateHistory');
 const { startOfWeek, toYMD } = require('../utils/weekBounds');
 const { isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 
@@ -884,6 +885,9 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
   for (const e of paidRows) {
     if (e.project_id != null && e.prevailing_wage_rate != null) projectRateMap[e.project_id] = parseFloat(e.prevailing_wage_rate);
   }
+  // Effective-dated rates: a re-push after a raise must bill last month's hours at
+  // last month's rate. One batched load for every worker / project on the bill.
+  const rateBook = paidRows.length ? await loadRateBookForEntries(companyId, paidRows) : null;
 
   const byUser = new Map();
   const get = (uid, row) => {
@@ -931,7 +935,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
 
   for (const g of groups) {
     g.labor = g.worker && g.billable.length
-      ? billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel: firstBill(g), leave: leaveByUser.get(g.worker.id) || NO_LEAVE })
+      ? billLabor(g, { settings, projectRateMap, rateBook, from, to, includeRangeLevel: firstBill(g), leave: leaveByUser.get(g.worker.id) || NO_LEAVE })
       : null;
   }
   return groups;
@@ -942,7 +946,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
  * into bill lines (amounts in integer cents). Sum of every line === the
  * statement's labor pay (minus range-level pay when it's excluded).
  */
-function billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel, leave }) {
+function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, includeRangeLevel, leave }) {
   const worker = includeRangeLevel ? g.worker : { ...g.worker, guaranteed_weekly_hours: 0 };
   const stmt = buildPayStatement({
     worker,
@@ -953,6 +957,7 @@ function billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel, l
     deductions: [], // a bill is gross pay; deductions are the payer's side
     otConfig: otConfigFromSettings(settings, worker.role_id ?? null, worker.id),
     projectRateMap,
+    rateBook,
     settings,
     from: from || null,
     to: to || null,
@@ -960,29 +965,33 @@ function billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel, l
   });
   const { rate, rateType, prevailingWageRate } = stmt.rates;
   const shiftHours = parseFloat(settings.regular_shift_hours) || 8;
-  const hourly = rateType === 'daily' ? (shiftHours > 0 ? rate / shiftHours : 0) : rate;
   const paidHoursOf = entryDuration; // the engine's paid hours (DST-corrected) — lines must reconcile to the statement
-  const baseRateOf = e => (e.wage_type === 'prevailing'
+  // The engine stamps each row with the rate it was priced at (pay_rate — the rate
+  // in effect on that work_date); the fallbacks only cover a hand-built statement.
+  const baseRateOf = e => (e.pay_rate != null ? e.pay_rate : (e.wage_type === 'prevailing'
     ? (projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevailingWageRate)
-    : rate);
+    : rate));
+  const rateTypeOf = e => e.pay_rate_type || rateType;
+  // Rule-generated hours on date d: the worker's rate in effect that day.
+  const rateOnDate = d => (rateBook ? workerRateOn(rateBook, worker, d, settings) : { rate, rateType });
 
   const real = stmt.entries.filter(e => !e.synthetic);
   // Daily-rate workers: each worked day pays the daily rate once — split it across
   // that day's entries by hours so every project still gets its share.
   const dayHours = new Map(), dayCount = new Map();
-  if (rateType === 'daily') {
+  {
     for (const e of real) {
-      if (e.wage_type !== 'regular') continue;
+      if (e.wage_type !== 'regular' || rateTypeOf(e) !== 'daily') continue;
       dayHours.set(e.work_date, (dayHours.get(e.work_date) || 0) + paidHoursOf(e));
       dayCount.set(e.work_date, (dayCount.get(e.work_date) || 0) + 1);
     }
   }
   const entryLines = real.map(e => {
     const hours = paidHoursOf(e);
-    if (rateType === 'daily' && e.wage_type === 'regular') {
+    if (rateTypeOf(e) === 'daily' && e.wage_type === 'regular') {
       const dh = dayHours.get(e.work_date) || 0;
       const share = dh > 0 ? hours / dh : 1 / (dayCount.get(e.work_date) || 1);
-      const amount = rate * share;
+      const amount = baseRateOf(e) * share; // that day's daily rate, split by hours
       return { entry: e, hours, unitPrice: hours > 0 ? amount / hours : amount, amountC: toCents(amount) };
     }
     const base = baseRateOf(e);
@@ -994,7 +1003,9 @@ function billLabor(g, { settings, projectRateMap, from, to, includeRangeLevel, l
   const floorLines = stmt.entries
     .filter(e => e.synthetic && !RANGE_LEVEL_KINDS.has(e.kind))
     .map(f => {
-      const perHour = rateType === 'daily' ? (f.kind === 'guarantee' ? hourly : 0) : rate;
+      const r = rateOnDate(f.work_date);
+      const fHourly = r.rateType === 'daily' ? (shiftHours > 0 ? r.rate / shiftHours : 0) : r.rate;
+      const perHour = r.rateType === 'daily' ? (f.kind === 'guarantee' ? fHourly : 0) : r.rate;
       return {
         hours: parseFloat(f.hours) || 0,
         amountC: toCents((parseFloat(f.hours) || 0) * perHour),

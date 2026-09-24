@@ -487,3 +487,50 @@ CREATE INDEX IF NOT EXISTS idx_entry_messages_unread      ON entry_messages(comp
 ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS qbo_activity_id VARCHAR(50);
 ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS qbo_synced_at   TIMESTAMP;
 
+-- ---------------------------------------------------------------------------
+-- Effective-dated pay rates (migration 0209). The rate for an entry is the row
+-- with the greatest effective_date <= work_date (server/utils/rateHistory.js).
+-- users.hourly_rate / users.rate_type, projects.prevailing_wage_rate and the
+-- default_hourly_rate setting are the CURRENT-rate cache (row in effect today).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS worker_rate_history (
+  id             SERIAL PRIMARY KEY,
+  company_id     UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  hourly_rate    NUMERIC(10,2),                       -- NULL/0 → company default that day
+  rate_type      VARCHAR(20) NOT NULL DEFAULT 'hourly',
+  effective_date DATE NOT NULL,
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note           TEXT,
+  CONSTRAINT chk_worker_rate_history_rate_type CHECK (rate_type IN ('hourly', 'daily')),
+  CONSTRAINT chk_worker_rate_history_rate_nonneg CHECK (hourly_rate IS NULL OR hourly_rate >= 0),
+  CONSTRAINT uq_worker_rate_history_user_date UNIQUE (user_id, effective_date)
+);
+CREATE INDEX IF NOT EXISTS idx_worker_rate_history_user_date ON worker_rate_history (user_id, effective_date);
+CREATE INDEX IF NOT EXISTS idx_worker_rate_history_company   ON worker_rate_history (company_id);
+CREATE TABLE IF NOT EXISTS project_prevailing_rate_history (
+  id             SERIAL PRIMARY KEY,
+  company_id     UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  rate           NUMERIC(10,2),                       -- NULL = no project rate → company prevailing_wage_rate
+  effective_date DATE NOT NULL,
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note           TEXT,
+  CONSTRAINT chk_project_prevailing_rate_history_nonneg CHECK (rate IS NULL OR rate >= 0),
+  CONSTRAINT uq_project_prevailing_rate_history_project_date UNIQUE (project_id, effective_date)
+);
+CREATE INDEX IF NOT EXISTS idx_project_prevailing_rate_history_project_date ON project_prevailing_rate_history (project_id, effective_date);
+CREATE INDEX IF NOT EXISTS idx_project_prevailing_rate_history_company      ON project_prevailing_rate_history (company_id);
+CREATE TABLE IF NOT EXISTS company_default_rate_history (
+  id             SERIAL PRIMARY KEY,
+  company_id     UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  rate           NUMERIC(10,2) NOT NULL,
+  effective_date DATE NOT NULL,
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note           TEXT,
+  CONSTRAINT chk_company_default_rate_history_nonneg CHECK (rate >= 0),
+  CONSTRAINT uq_company_default_rate_history_company_date UNIQUE (company_id, effective_date)
+);

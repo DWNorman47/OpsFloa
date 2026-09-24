@@ -14,6 +14,7 @@ const {
   computeLineTotal,
 } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
+const { loadRateBookForLaborRows } = require('../utils/rateHistory');
 const { sendEmail } = require('../email');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { projectBelongsToCompany, clientBelongsToCompany } = require('../utils/tenantRefs');
@@ -338,7 +339,9 @@ router.post('/from-project/:projectId', requireAuth, requireCommercialAccess, as
         [proj.id]
       ),
     ]);
-    const laborCents = laborCostCents(entriesRes.rows, settings);
+    // Each entry at the rate in effect on its work_date (a later raise must not
+    // re-price already-worked T&M hours).
+    const laborCents = laborCostCents(entriesRes.rows, settings, { rateBook: await loadRateBookForLaborRows(entriesRes.rows) });
     const lines = [];
     let sort = 0;
     if (laborCents > 0) lines.push({ category: 'labor', sort_order: sort++, description: `Labor — ${proj.name}`, qty: 1, unit: null, unit_cost_cents: laborCents, total_cents: laborCents, notes: null });

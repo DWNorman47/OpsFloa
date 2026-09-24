@@ -49,13 +49,18 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
     deductions = [], net_pay = 0, deferred_deductions = [],
     rate: workerRate = 0, overtime_multiplier: otMult = 1.5,
     prevailing_wage_rate: prevRate = 0, sick_rate = 0, vacation_rate = 0,
-    rate_type = 'hourly', regular_days = null,
+    rate_type = 'hourly', regular_days = null, rate_changes = null,
   } = stub.summary;
   // Daily-rate workers are paid days × daily-rate, so the "regular pay" line reads
   // "N days × rate/day" (which reconciles to the total) instead of an "/hr" line
   // that can't be checked against the hours shown.
   const isDaily = rate_type === 'daily';
-  const regularPayLabel = isDaily
+  // A dated rate change inside the period: each day was paid at the rate in effect
+  // that day, so list the rates instead of one "× rate" that wouldn't reconcile.
+  const rateChanges = Array.isArray(rate_changes) && rate_changes.length > 1 ? rate_changes : null;
+  const regularPayLabel = rateChanges
+    ? `${t.regularPay} (${rateChanges.map(c => `${fmtMoney(c.rate)}${c.rateType === 'daily' ? t.rhPerDay : '/hr'} ${t.rhFromShort} ${c.from}`).join(' → ')})`
+    : isDaily
     // Days-form when regular pay is purely worked days × rate; plain label when it also
     // includes guaranteed extra hours (priced at daily ÷ 8), so "/hr" is never shown for a daily worker.
     ? (regular_days != null

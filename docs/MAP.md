@@ -37,6 +37,15 @@ engine, not here:
 `GET /export/worker-hours` (admin.js) is a lean hours-only export; it shares the OT
 engine (`computeOT` + role tiered config) but not the full statement.
 
+**Rates are effective-dated** (migration 0209): `utils/rateHistory.js` is the resolver
+(rate for an entry = history row with the greatest `effective_date <= work_date`; own rate
+0/missing → company default that day) + `loadRateBook` (batched, one query per history).
+Loaders pass `rateBook` to `buildPayStatement`; `laborCostCents` takes `opts.rateBook`
+(`loadRateBookForLaborRows`). `users.hourly_rate/rate_type`, `projects.prevailing_wage_rate`,
+setting `default_hourly_rate` are only the CURRENT-rate cache. Writes: `utils/rateHistoryStore.js`
+(baseline, locked-period check, cache refresh) · API `routes/rateHistory.js` · hourly cache
+job `jobs/rateCacheRefresh.js` · UI `client/src/components/RateHistory.jsx`.
+
 **Engine internals** (`server/utils/`): `hoursRules.js` (the policy: parse, rounding,
 role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder's
 `sick_value`/min_daily/etc.) · `payCalculations.js` (`computeOT`, `annotateEntryOvertime`,

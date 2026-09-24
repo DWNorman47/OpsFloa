@@ -10,6 +10,8 @@ import HelpTip from './HelpTip';
 import MileageRateEditor from './MileageRateEditor';
 import { EXPERIMENTAL_SETTINGS_ENABLED } from '../experimentalSettings';
 import { safeLocal } from '../utils/safeStorage';
+import RateHistory, { EffectiveDateField, withLockedConfirm, localToday } from './RateHistory';
+import { useConfirm } from './ConfirmDialog';
 const TIMEZONES = [
   { value: 'America/New_York',    label: 'Eastern Time (ET)' },
   { value: 'America/Chicago',     label: 'Central Time (CT)' },
@@ -173,6 +175,11 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
   });
   const [saving, setSaving] = useState(null); // section key or null
   const [saved, setSaved] = useState(null);   // section key or null
+  // Company default rate is effective-dated: a changed default applies from this
+  // date (default today; untouched → the server's company-local today).
+  const [defaultEff, setDefaultEff] = useState({ date: localToday(), touched: false });
+  const [rateHistoryKey, setRateHistoryKey] = useState(0);
+  const { confirm: confirmLocked, dialog: lockedDialog } = useConfirm();
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -263,7 +270,9 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
   const saveSection = async (section) => {
     setSaving(section); setError('');
     try {
-      const r = await api.patch('/admin/settings', {
+      const defaultChanged = parseFloat(form.default_hourly_rate) !== parseFloat(settings?.default_hourly_rate);
+      const payload = {
+        ...(defaultChanged && defaultEff.touched && defaultEff.date ? { default_rate_effective_date: defaultEff.date } : {}),
         prevailing_wage_rate: parseFloat(form.prevailing_wage_rate),
         default_hourly_rate: parseFloat(form.default_hourly_rate),
         labor_burden_pct: parseFloat(form.labor_burden_pct) || 0,
@@ -340,8 +349,13 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         report_weekly_payroll: form.report_weekly_payroll,
         report_weekly_low_stock: form.report_weekly_low_stock,
         report_monthly_valuation: form.report_monthly_valuation,
-      });
+      };
+      // A default-rate change backdated into LOCKED pay periods → 409 → confirm → resend.
+      const r = await withLockedConfirm(c => api.patch('/admin/settings', { ...payload, confirm_locked: c }), confirmLocked, t);
+      if (!r) return; // cancelled at the locked-period confirm
       onSettingsUpdated(r.data);
+      setRateHistoryKey(k => k + 1);
+      setDefaultEff({ date: localToday(), touched: false });
       // Bust the worker-facing settings cache so gating toggles (Project
       // Integration, modules, etc.) take effect on the next request instead of
       // the next TTL window.
@@ -968,6 +982,24 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={styles.suffix}>/hr</span>
             </div>
           </div>
+          {parseFloat(form.default_hourly_rate) !== parseFloat(settings?.default_hourly_rate) && (
+            <div style={styles.row}>
+              <EffectiveDateField
+                id="rates-default-eff"
+                value={defaultEff.date}
+                today={localToday()}
+                onChange={v => setDefaultEff({ date: v, touched: true })}
+                style={{ maxWidth: 340 }}
+              />
+            </div>
+          )}
+          <RateHistory
+            kind="company"
+            ownerId={null}
+            currency={form.currency}
+            reloadKey={rateHistoryKey}
+            onChanged={cur => { if (cur) { onSettingsUpdated({ ...settings, default_hourly_rate: cur.rate }); set('default_hourly_rate', String(cur.rate)); } }}
+          />
           <div style={styles.row}>
             <div>
               <label style={styles.label}>{t.ratesLaborBurden}</label>
@@ -1446,6 +1478,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         );
       })()}
 
+      {lockedDialog}
     </div>
   );
 }

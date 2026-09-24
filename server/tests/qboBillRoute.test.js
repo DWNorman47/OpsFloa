@@ -35,6 +35,9 @@ jest.mock('../services/qbo', () => ({
 
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
 jest.mock('../utils/payStatement', () => ({ ...jest.requireActual('../utils/payStatement'), companyStatements: jest.fn() }));
+// Rate history: null book → current-rate pricing, so these query-order mocks stay as
+// they were. The dated-rate bill test below hands the route a real book.
+jest.mock('../utils/rateHistory', () => ({ ...jest.requireActual('../utils/rateHistory'), loadRateBookForEntries: jest.fn(async () => null) }));
 
 const express = require('express');
 const request = require('supertest');
@@ -42,6 +45,7 @@ const pool    = require('../db');
 const qbo     = require('../services/qbo');
 const { companyStatements } = require('../utils/payStatement');
 const qboRoute = require('../routes/qbo');
+const rateHistory = require('../utils/rateHistory');
 
 function makeApp() {
   const app = express();
@@ -486,3 +490,30 @@ describe('POST /api/qbo/push-bills', () => {
     expect(nightLine.unitPrice).toBeCloseTo(45 * 0.25); // 11.25
   });
 });
+
+describe('push-bills-preview — effective-dated rates', () => {
+  beforeEach(() => {
+    pool.query.mockReset();
+    pool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  test('a re-push after a raise bills each day at the rate in effect that day', async () => {
+    rateHistory.loadRateBookForEntries.mockResolvedValueOnce(rateHistory.makeRateBook({ workerRows: [
+      { user_id: 10, effective_date: '1900-01-01', hourly_rate: 40, rate_type: 'hourly' },
+      { user_id: 10, effective_date: '2026-04-02', hourly_rate: 45, rate_type: 'hourly' },
+    ] }));
+    pool.query
+      .mockResolvedValueOnce(otOff())
+      .mockResolvedValueOnce({ rows: [
+        timeRow({ id: 1, work_date: '2026-04-01' }),               // 8h before the raise
+        timeRow({ id: 2, work_date: '2026-04-02' }),               // 8h on the raise date
+      ] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await request(makeApp()).post('/api/qbo/push-bills-preview').send({ from: '2026-04-01', to: '2026-04-30' });
+    expect(res.status).toBe(200);
+    const g = res.body.groups.find(x => x.user_id === 10);
+    expect(g.labor_amount).toBe(8 * 40 + 8 * 45);
+    expect(g.overtime_premium).toBe(0);
+  });
+});
+
