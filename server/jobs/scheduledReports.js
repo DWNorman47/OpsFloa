@@ -5,7 +5,7 @@ const { sendEmail } = require('../email');
 const { runJob } = require('./runJob');
 const { weekRange } = require('../utils/weekBounds');
 const { hoursWorked } = require('../utils/payCalculations');
-const { loadSettings, computePaid } = require('../utils/paidHours');
+const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paidHours');
 const { formatCurrency, companyCurrency } = require('../currency');
 const { escapeHtml } = require('../utils/htmlEscape');
 
@@ -107,11 +107,10 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
   // ended up never seeing `hours_rules`: the policy wasn't on the list, so it
   // could never apply, and this email quietly disagreed with the invoice.
   const settings = await loadSettings(companyId);
-  const otRule = settings.overtime_rule || 'daily';
 
   const entRes = await pool.query(
     `SELECT te.user_id, te.work_date, te.start_time, te.end_time, te.break_minutes,
-            te.wage_type, te.overtime_hours_override, u.full_name, u.role_id
+            te.wage_type, te.overtime_hours_override, u.full_name, u.role_id, u.overtime_rule
        FROM users u
   LEFT JOIN time_entries te ON te.user_id = u.id
         AND te.company_id = $1
@@ -125,7 +124,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
   const byUser = new Map();
   for (const row of entRes.rows) {
     const key = row.user_id || `nohrs-${row.full_name}`;
-    if (!byUser.has(key)) byUser.set(key, { full_name: row.full_name, role_id: row.role_id, entries: [] });
+    if (!byUser.has(key)) byUser.set(key, { full_name: row.full_name, role_id: row.role_id, overtime_rule: row.overtime_rule, entries: [] });
     if (row.work_date) byUser.get(key).entries.push(row);
   }
 
@@ -134,7 +133,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
   // hours_rules, so a company with a policy would have been emailed one set of
   // numbers and billed another.
   const workerRows = [...byUser.values()].map(u => {
-    const { paid, regularHours, overtimeHours } = computePaid(u.entries, settings, { rule: otRule, roleId: u.role_id ?? null, userId: u.entries[0]?.user_id ?? null });
+    const { paid, regularHours, overtimeHours } = computePaid(u.entries, settings, { rule: otRuleFromSettings(settings, u.overtime_rule), roleId: u.role_id ?? null, userId: u.entries[0]?.user_id ?? null });
     const totalH = paid.reduce((s, e) => s + hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60, 0);
     return { full_name: u.full_name, entry_count: u.entries.length, total_hours: totalH, overtime_hours: overtimeHours, regular_hours: regularHours };
   }).sort((a, b) => b.total_hours - a.total_hours);

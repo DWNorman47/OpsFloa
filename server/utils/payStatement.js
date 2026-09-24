@@ -10,6 +10,7 @@ const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = req
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
 const { resolveRuleset, deductionsForRole, splitDeductionsByTiming } = require('./paycheckRun');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+const { normWeekStart } = require('./weekBounds');
 
 // Resolve the worker's paycheck ruleset, then split their role's company deductions +
 // personal deductions into the ones that come out every paycheck vs. the ones GROUPED
@@ -46,6 +47,58 @@ function previewDeductionSplit(settings, worker, workerDedRows) {
 
 const cents = n => Math.round((Number(n) || 0) * 100) / 100;
 
+// Chronological order (work_date, then start_time) — the same order every loader's
+// SQL uses. Stable, so same-slot rows keep their incoming order.
+function sortChrono(list) {
+  return list.slice().sort((a, b) => {
+    const d = String(ymd(a.work_date)).localeCompare(String(ymd(b.work_date)));
+    return d !== 0 ? d : String(a.start_time || '').localeCompare(String(b.start_time || ''));
+  });
+}
+
+// otBands(a) − otBands(b), matched by multiplier (null = the default multiplier).
+function diffBands(a, b) {
+  const m = new Map();
+  for (const x of a || []) m.set(x.mult, (m.get(x.mult) || 0) + x.hours);
+  for (const x of b || []) m.set(x.mult, (m.get(x.mult) || 0) - x.hours);
+  return [...m.entries()].map(([mult, hours]) => ({ hours, mult })).filter(x => x.hours > 1e-9);
+}
+
+// Add k days to a 'YYYY-MM-DD' key (UTC, TZ-independent).
+function addDays(dk, k) {
+  const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]) + k * 86400000).toISOString().substring(0, 10);
+}
+
+/**
+ * The full week_start-aligned weeks touching [from,to]: { from, to } widened back
+ * to the first week's start and forward to the last week's end. Null bounds → null
+ * (an all-time range has no clipped weeks).
+ */
+function fullWeekSpan(from, to, weekStart) {
+  if (!from || !to) return null;
+  const f = ymd(from), t = ymd(to);
+  const ws = normWeekStart(weekStart ?? 1); // same normalization computeOT's week buckets use
+  const dow = dk => { const m = dk.match(/^(\d{4})-(\d{2})-(\d{2})$/); return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay(); };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  const wf = addDays(f, -((dow(f) - ws + 7) % 7));
+  const wt = addDays(t, 6 - ((dow(t) - ws + 7) % 7));
+  return { from: wf, to: wt };
+}
+
+// Split one worker's paid entries (already covering the full-week span) into the
+// in-period rows and the week-context rows outside [from,to].
+function splitPeriod(rows, from, to) {
+  const f = ymd(from), t = ymd(to);
+  const inRange = [], context = [];
+  for (const e of rows || []) {
+    const d = ymd(e.work_date);
+    (d >= f && d <= t ? inRange : context).push(e);
+  }
+  return { inRange, context };
+}
+
 /**
  * @param opts.worker            { id, invoice_name, full_name, email, hourly_rate,
  *                                 rate_type, overtime_rule, role_id, guaranteed_weekly_hours }
@@ -58,8 +111,17 @@ const cents = n => Math.round((Number(n) || 0) * 100) / 100;
  * @param opts.settings          scalar settings (thresholds, multiplier, rates, leave %, regular shift)
  * @param opts.from,opts.to      period (may be null for an all-time invoice)
  * @param opts.explain           attach settings_used / leaveDetail + per-entry OT/wage notes
+ * @param opts.weekContextEntries PAID entries OUTSIDE [from,to] but inside the
+ *                                (week_start-aligned) weeks that [from,to] touches.
+ *                                Weekly OT is a whole-week fact: these count toward
+ *                                each week's threshold, but only in-period hours
+ *                                are paid here — the OT goes to the chronologically
+ *                                later hours, so the period holding the hours past
+ *                                the threshold gets that OT and two adjacent periods
+ *                                sum to the full week. Ignored unless the worker's
+ *                                effective rule is 'weekly' (daily OT is per-day).
  */
-function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false, weekWorkedDays = null }) {
+function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false, weekWorkedDays = null, weekContextEntries = null }) {
   // 'unpaid' team members are tracked (hours are still computed from their entries) but
   // earn NOTHING. Force every wage RATE to 0 and drop the pay artifacts (guarantee top-up,
   // leave, deductions, per-project prevailing rates) so ALL pay math below yields $0 —
@@ -100,6 +162,16 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   // materialized below as real entry rows so no paid hour is invisible.
   let floorDetail = [];
 
+  // Weekly rule + a period that clips a week: the out-of-period hours of those weeks
+  // (see weekContextEntries). `withCtx` is every entry of the touched weeks in
+  // chronological order; `inPeriod` marks the ones this statement pays.
+  const ctx = (rule === 'weekly' && from && to && Array.isArray(weekContextEntries) && weekContextEntries.length)
+    // Shallow copies: the OT annotation mutates rows, and a context row may be
+    // another period's in-period row (workerPeriodStatements shares one fetch).
+    ? weekContextEntries.map(e => ({ ...e })) : null;
+  const inPeriod = ctx ? new Set(paid) : null;
+  const withCtx = ctx ? sortChrono([...ctx, ...paid]) : paid;
+
   if (rateType !== 'daily' && hasSimpleOtConfig(otConfig)) {
     // ── Rate-aware path ─────────────────────────────────────────────────────
     // ALL worked hours (regular + prevailing, any per-project prevailing rate)
@@ -110,10 +182,16 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // 'regular_first' draws OT from regular hours before prevailing on a mixed day/
     // week (default 'chronological' = today's behavior). See payEnums.js.
     const wagePriority = settings.overtime_wage_priority === 'regular_first' ? 'regular_first' : 'chronological';
-    const split = splitRateAware(paid, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod, wagePriority });
+    const split = splitRateAware(withCtx, {
+      rule, threshold, weekStart, otMult, baseRateOf, method: otMethod, wagePriority,
+      ...(inPeriod ? { countIf: e => inPeriod.has(e) } : {}),
+    });
     // Per-entry OT + reason for the line-item display column (BillPDF / WorkerMetrics).
     for (const e of paid) { e.overtime_hours = 0; e.overtime_reason = null; }
-    split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason; });
+    split.worked.forEach((e, i) => {
+      if (inPeriod && !inPeriod.has(e)) return; // context rows are never shown or paid here
+      e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason;
+    });
     ({ regularHours, overtimeHours, prevailingHours, regularCost: regularCostRaw, overtimeCost: overtimeCostRaw, prevailingCost: prevailingCostRaw } = split);
     totalHours = regularHours + overtimeHours + prevailingHours;
     // Simple config → every OT hour is at the one multiplier.
@@ -123,14 +201,30 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
     // windows, night differential) that need per-band attribution. Prevailing
     // stays flat here until the per-band rate-aware work lands.
-    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, {
+    const otRange = {
       from, to, workedDays: weekWorkedDays,
       // Paid-leave hours per day: a no-clock-in daily guarantee only tops the day up
       // to its floor counting leave already paid (no double-pay; partial leave still
       // gets the remainder).
       leaveByDate: (leave && leave.leaveByDate instanceof Map) ? leave.leaveByDate : null,
-    });
-    annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
+    };
+    let ot;
+    if (ctx) {
+      // Chronological attribution over the whole week: this period's share is
+      // OT(week hours up to `to`) − OT(week hours before `from`). Buckets are
+      // cumulative per week, so the difference is exactly the in-period hours'
+      // regular/OT split, per band (tiers, overrides and windows are additive).
+      const fromKey = ymd(from);
+      const before = ctx.filter(e => ymd(e.work_date) < fromKey);
+      const upTo = computeOT(sortChrono([...before, ...paid]), rule, threshold, weekStart, otConfig, otRange);
+      const prior = computeOT(before, rule, threshold, weekStart, otConfig);
+      ot = { ...upTo, regularHours: upTo.regularHours - prior.regularHours, overtimeHours: upTo.overtimeHours - prior.overtimeHours, otBands: diffBands(upTo.otBands, prior.otBands) };
+    } else {
+      ot = computeOT(paid, rule, threshold, weekStart, otConfig, otRange);
+    }
+    // Per-entry OT over every entry of the touched weeks (chronological), so the
+    // in-period rows carry the OT they earned given the week's earlier hours.
+    annotateEntryOvertime(withCtx, rule, threshold, weekStart, otConfig);
     regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
     floorDetail = ot.floorDetail || [];
     prevailingHours = 0; prevailingCostRaw = 0;
@@ -145,14 +239,16 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     totalHours = regularHours + overtimeHours + prevailingHours;
     if (rateType === 'daily') {
       const dailyHours = parseFloat(settings.regular_shift_hours) || 8; // daily rate ÷ standard day (8) → hourly
-      const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig, dailyHours);
+      const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig, dailyHours, weekStart);
       // Worked days pay a flat daily rate (they showed up). Guaranteed EXTRA hours
       // (min_daily no-clock-in, no worked entry) are paid at the hourly rate — daily ÷ 8
       // — per guaranteed hour, so a 4h guarantee is half a day's pay, not a whole one.
       const guaranteeHours = floorDetail.filter(f => f.kind === 'guarantee').reduce((s, f) => s + (parseFloat(f.hours) || 0), 0);
       regularDays = guaranteeHours > 0 ? null : dc.days; // days-form label only when it reconciles to days × rate
       regularCostRaw = dc.regularCost + guaranteeHours * dc.hourly;
-      overtimeCostRaw = dc.overtimeCost;
+      // With week context the in-period OT bands come from the whole-week split above
+      // (dc only sees this period's entries); days stay the in-period days.
+      overtimeCostRaw = ctx ? otBandsCost(ot.otBands, dc.hourly, otMult) : dc.overtimeCost;
     } else {
       regularCostRaw = regularHours * rate;
       overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult);
@@ -320,6 +416,9 @@ async function loadProjectRateMap(companyId) {
  * the invoice and (per period) the pay stubs.
  */
 async function workerStatement({ companyId, worker, settings, from, to, explain = false }) {
+  // Entries are fetched for the FULL weeks touching [from,to] so weekly OT sees the
+  // whole week; only [from,to] is paid (buildPayStatement weekContextEntries).
+  const span = fullWeekSpan(from, to, settings.week_start);
   const [entriesR, reimbR, dedR, projectRateMap, leave, weekWorkedR] = await Promise.all([
     pool.query(
       // work_date AS text — this column wins over te.*'s Date. pg returns DATE as
@@ -333,7 +432,7 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
          AND ($2::date IS NULL OR te.work_date >= $2::date)
          AND ($3::date IS NULL OR te.work_date <= $3::date)
        ORDER BY te.work_date ASC, te.start_time ASC`,
-      [worker.id, from || null, to || null]
+      [worker.id, (span ? span.from : from) || null, (span ? span.to : to) || null]
     ),
     pool.query(
       `SELECT r.id, r.amount, r.description, r.category, r.expense_date, r.project_id, p.name AS project_name
@@ -364,14 +463,15 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
     ),
   ]);
 
-  const entries = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
+  const rounded = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
+  const { inRange: entries, context: weekContextEntries } = span ? splitPeriod(rounded, from, to) : { inRange: rounded, context: [] };
   const otConfig = otConfigFromSettings(settings, worker.role_id, worker.id);
   const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
 
   const stmt = buildPayStatement({
     worker, entries, reimbursements: reimbR.rows, leave, deductions: previewDeductions,
-    otConfig, projectRateMap, settings, from, to, explain, weekWorkedDays,
+    otConfig, projectRateMap, settings, from, to, explain, weekWorkedDays, weekContextEntries,
   });
   stmt.deferredDeductions = deferredNames; // grouped/monthly deductions shown at payroll run, not here
   return stmt;
@@ -392,6 +492,8 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
   const workerRoleById = {};
   list.forEach(w => { workerRoleById[w.id] = w.role_id; });
 
+  // Full weeks touching [from,to], so weekly OT sees the whole week (see workerStatement).
+  const span = fullWeekSpan(from, to, settings.week_start);
   const [entriesR, dedR, projectRateMap, leaveByUser, weekWorkedR] = await Promise.all([
     pool.query(
       // ORDER BY is REQUIRED, not cosmetic: rate-aware OT attributes overtime to
@@ -399,11 +501,16 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
       // gross depends on entry order. The single-worker loaders order the same
       // way; without this, the overtime report / payroll CSV could disagree with
       // the invoice for a multi-rate worker (nondeterministic DB scan order).
-      `SELECT te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.break_minutes, te.mileage
+      //
+      // Explicit column list: it MUST carry every te.* column the engine reads —
+      // overtime_hours_override was missing, so the report / CSV / QBO journal
+      // ignored admin OT overrides the invoice and stubs honoured.
+      `SELECT te.id, te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, to_char(te.work_date, 'YYYY-MM-DD') AS work_date,
+              te.break_minutes, te.mileage, te.overtime_hours_override
        FROM time_entries te
        WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'
        ORDER BY te.user_id, te.work_date ASC, te.start_time ASC`,
-      [companyId, from, to]
+      [companyId, span ? span.from : from, span ? span.to : to]
     ),
     pool.query(
       'SELECT user_id, id, name, kind, value, cap_amount, active FROM worker_deductions WHERE company_id = $1 AND active = true ORDER BY id',
@@ -436,9 +543,11 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
   const otConfigByRole = otConfigByRoleFactory(settings);
   for (const w of list) {
     const { previewDeductions, deferredNames } = previewDeductionSplit(settings, w, dedByUser[w.id] || []);
+    const { inRange, context } = span ? splitPeriod(byWorker[w.id] || [], from, to) : { inRange: byWorker[w.id] || [], context: [] };
     const stmt = buildPayStatement({
       worker: w,
-      entries: byWorker[w.id] || [],
+      entries: inRange,
+      weekContextEntries: context,
       reimbursements: [],
       leave: leaveByUser.get(w.id) || { sick: 0, vacation: 0 },
       deductions: previewDeductions,
@@ -471,6 +580,9 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
   const day = d => ymd(d);
   const minDate = list.reduce((m, p) => (day(p.period_start) < m ? day(p.period_start) : m), day(list[0].period_start));
   const maxDate = list.reduce((m, p) => (day(p.period_end) > m ? day(p.period_end) : m), day(list[0].period_end));
+  // Entries for the FULL weeks touching the span, so each period's weekly OT sees
+  // the whole week (incl. the parts in an adjacent / not-requested period).
+  const span = fullWeekSpan(minDate, maxDate, settings.week_start) || { from: minDate, to: maxDate };
 
   const [entriesR, dedR, projectRateMap, leaveReqs, leaveShifts, weekWorkedR] = await Promise.all([
     pool.query(
@@ -478,7 +590,7 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
        FROM time_entries te LEFT JOIN projects p ON te.project_id = p.id
        WHERE te.user_id = $1 AND te.status = 'approved' AND te.work_date >= $2 AND te.work_date <= $3
        ORDER BY te.work_date, te.start_time`,
-      [worker.id, minDate, maxDate]
+      [worker.id, span.from, span.to]
     ),
     pool.query(
       'SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true ORDER BY id',
@@ -519,9 +631,12 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
     const entries = paidAll.filter(e => e.work_date >= ps && e.work_date <= pe);
     const leave = computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, settings.regular_shift_hours, ps, pe);
     if (entries.length === 0 && leave.sick === 0 && leave.vacation === 0) continue; // leave-only periods still show; fully-empty drop
+    // This period's week context: rows outside [ps,pe] but in the weeks it touches.
+    const pw = fullWeekSpan(ps, pe, settings.week_start);
+    const weekContextEntries = pw ? paidAll.filter(e => (e.work_date < ps || e.work_date > pe) && e.work_date >= pw.from && e.work_date <= pw.to) : [];
     const statement = buildPayStatement({
       worker, entries, reimbursements: [], leave, deductions: previewDeductions,
-      otConfig, projectRateMap, settings, from: ps, to: pe, explain: false, weekWorkedDays,
+      otConfig, projectRateMap, settings, from: ps, to: pe, explain: false, weekWorkedDays, weekContextEntries,
     });
     statement.deferredDeductions = deferredNames; // grouped/monthly deductions shown at payroll run, not here
     out.push({ period, statement });

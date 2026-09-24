@@ -12,7 +12,7 @@ const { USER_WORKER_TYPES } = require('../constants/userEnums');
 // enabled would have had OpsFloa's own invoice and its QuickBooks bill disagree
 // about the same day. Rounding is applied at each point entries are fetched, so
 // the four separate hour calculations below can't drift apart again.
-const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paidHours');
+const { loadSettings, computePaid, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
 const { otBandsCost, nightPremiumCost, nightHoursForEntry } = require('../utils/payCalculations');
 const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
@@ -415,6 +415,7 @@ router.post('/push', requireAdmin, requirePerm('manage_integrations'), async (re
        JOIN users u ON te.user_id = u.id
        LEFT JOIN projects p ON te.project_id = p.id
        WHERE te.company_id = $1
+         AND te.status = 'approved'
          AND ($2::date IS NULL OR te.work_date >= $2::date)
          AND ($3::date IS NULL OR te.work_date <= $3::date)`,
       [companyId, from || null, to || null]
@@ -803,7 +804,7 @@ async function getOvertimeSettings(companyId) {
   // `hours_rules`: the policy wasn't in the list, so it couldn't be applied.
   const settings = await loadSettings(companyId);
   const rule = settings.overtime_rule || 'daily';
-  const threshold = parseFloat(settings.overtime_threshold) || (rule === 'weekly' ? 40 : 8);
+  const threshold = otThreshold(settings, rule);
   const multiplier = parseFloat(settings.overtime_multiplier) || 1.5;
   const weekStart = parseInt(settings.week_start ?? 1, 10);
   return { rule, threshold, multiplier, weekStart, settings };
@@ -836,7 +837,9 @@ function computeGroupOvertime(group, ot) {
     // rate, so OT is priced at that same rate; the premium is what's added on top
     // of the straight time already billed per entry.
     const method = ot.settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
-    const ra = rateAwarePay(entries, { rule, threshold: ot.threshold, weekStart: ot.weekStart, otMult: ot.multiplier, baseRateOf: () => group.hourlyRate, method });
+    // Threshold for THIS worker's effective rule — the company threshold only
+    // applies when their rule matches the company rule (see otThreshold).
+    const ra = rateAwarePay(entries, { rule, threshold: otThreshold(ot.settings, rule), weekStart: ot.weekStart, otMult: ot.multiplier, baseRateOf: () => group.hourlyRate, method });
     const premium = ra.cost - (ra.straightHours + ra.overtimeHours) * group.hourlyRate;
     // Simple configs never carry a night differential (that routes to the per-band path).
     return { overtimeHours: ra.overtimeHours, overtimePremium: premium, nightHours: 0, nightPremium: 0, rule };

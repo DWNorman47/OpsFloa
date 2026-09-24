@@ -781,6 +781,8 @@ function otBandsCost(otBands, baseRate, defaultMult) {
  * @param {number} dailyRate        - amount earned per full day
  * @param {number} overtimeMultiplier
  * @param {object} [otConfig=null]  - tiered-OT config; null = single tier
+ * @param {number} [dailyHours=8]   - standard workday (daily rate ÷ this = hourly)
+ * @param {number} [weekStart=1]    - company week_start (0=Sun … 6=Sat), weekly rule only
  * @returns {{ regularCost: number, overtimeCost: number }}
  */
 // A daily-rate worker's OVERTIME and any extra hours are priced at an hourly rate
@@ -788,14 +790,16 @@ function otBandsCost(otBands, baseRate, defaultMult) {
 // ÷ the OT threshold, which can differ (a 10h threshold, or a weekly-40 threshold,
 // would otherwise mis-price the daily worker's OT). Returns `hourly` so the caller
 // prices extra/guaranteed hours the same way.
-function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overtimeMultiplier, otConfig = null, dailyHours = 8) {
+function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overtimeMultiplier, otConfig = null, dailyHours = 8, weekStart = 1) {
   const regular = entries.filter(e => e.wage_type === 'regular');
   const days = new Set(regular.map(e => ymd(e.work_date))).size;
   const hourly = dailyHours > 0 ? dailyRate / dailyHours : 0;
   if (overtimeRule === 'none') {
     return { regularCost: days * dailyRate, overtimeCost: 0, days, hourly };
   }
-  const { otBands } = computeOT(entries, overtimeRule, threshold, 1, otConfig);
+  // The company week_start, not a hardcoded Monday — a Sunday-start company's weekly
+  // OT bucketed the Sunday into the previous week and under-paid the OT.
+  const { otBands } = computeOT(entries, overtimeRule, threshold, weekStart, otConfig);
   return {
     regularCost: days * dailyRate,
     overtimeCost: otBandsCost(otBands, hourly, overtimeMultiplier),

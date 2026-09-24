@@ -1,7 +1,7 @@
 const pool = require('../db');
 const { ADMIN_SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { roundEntriesFromSettings, otConfigFromSettings, sickRulesFromSettings, sickRulesByRoleFactory } = require('./hoursRules');
-const { computeOT, otBandsCost, nightPremiumCost, shiftHoursByDate, computeLeaveHours } = require('./payCalculations');
+const { computeOT, shiftHoursByDate, computeLeaveHours } = require('./payCalculations');
 
 /**
  * The ONE way to turn raw punches into paid hours and money.
@@ -27,8 +27,21 @@ const { computeOT, otBandsCost, nightPremiumCost, shiftHoursByDate, computeLeave
  * silently gave a weekly company an 8-hour weekly threshold (OT after the first
  * day). Every surface must use this so they can't disagree (qbo already did 40).
  */
+//
+// The stored `overtime_threshold` is the threshold of the COMPANY overtime_rule —
+// it is never empty in production (default 8, superadmin creation stores '8'). A
+// worker whose own rule differs from the company's (users.overtime_rule override)
+// must get THEIR rule's default instead: a weekly-rule worker in a daily company
+// otherwise got a weekly threshold of 8 (OT after the first day), and a daily-rule
+// worker in a weekly company a daily threshold of 40 (no daily OT ever). `rule`
+// null/'none' → the stored value (callers that only need the multiplier, or where
+// the threshold is irrelevant).
 function otThreshold(settings, rule) {
-  return parseFloat((settings || {}).overtime_threshold) || (rule === 'weekly' ? 40 : 8);
+  const s = settings || {};
+  const ruleDefault = rule === 'weekly' ? 40 : 8;
+  const companyRule = s.overtime_rule || 'daily';
+  if ((rule === 'daily' || rule === 'weekly') && rule !== companyRule) return ruleDefault;
+  return parseFloat(s.overtime_threshold) || ruleDefault;
 }
 
 /** The three numbers the pipeline reads off company settings, coerced safely. */
@@ -114,26 +127,56 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
 // This is a COST-reporting concept (job costing / P&L), NEVER what a worker is
 // paid or what a client is billed — so it's opt-in and OFF by default. Only the
 // project spend + P&L paths pass it true; invoices and every pay surface don't.
+//
+// The labor cost of an entry set is what the worker is PAID for it, so each
+// worker's rows go through the pay engine (buildPayStatement) — the same
+// assembler the invoice / stubs / payroll use. Before, this re-derived pay by
+// hand and drifted: prevailing hours cost $0 (only wage_type 'regular' was
+// priced), a daily-rate worker's `hourly_rate` (a DAY rate) was multiplied by
+// hours ($200/day × 8h = $1600), and 'unpaid' workers were costed. Only the
+// worked-hours lines count (regular, OT, prevailing, night premium); leave, the
+// weekly guarantee and deductions are period concepts, not job cost.
 function laborCostCents(entries, settings, opts = {}) {
-  const { multiplier } = payNumbers(settings);
+  // Lazy: payStatement requires this module.
+  const { buildPayStatement } = require('./payStatement');
+  const s = settings || {};
   const byWorker = new Map();
   for (const e of entries || []) {
     const k = e.user_id ?? 'unknown';
     if (!byWorker.has(k)) byWorker.set(k, []);
-    byWorker.get(k).push(e);
+    // Copy: the engine annotates rows (overtime_hours) — never mutate the caller's.
+    byWorker.get(k).push({ ...e });
   }
 
   let dollars = 0;
   for (const rows of byWorker.values()) {
-    const rate = parseFloat(rows[0].rate) || 0;
-    if (!rate) continue;
-    const rule = otRuleFromSettings(settings, rows[0].ot_rule);
-    const { paid, regularHours, otBands, otConfig } = computePaid(rows, settings, { rule, roleId: rows[0].role_id ?? null, userId: rows[0].user_id ?? null });
-    dollars += regularHours * rate;
-    dollars += otBandsCost(otBands, rate, multiplier);
-    if (otConfig && otConfig.nightDifferential) {
-      dollars += nightPremiumCost(paid, otConfig.nightDifferential, rate);
+    const first = rows[0];
+    if (first.worker_type === 'unpaid') continue; // tracked, never paid → no labor cost
+    const roleId = first.role_id ?? null;
+    const userId = first.user_id ?? null;
+    // Chronological, like every pay loader: rate-aware OT is order-dependent.
+    rows.sort((a, b) => {
+      const d = String(a.work_date).localeCompare(String(b.work_date));
+      return d !== 0 ? d : String(a.start_time || '').localeCompare(String(b.start_time || ''));
+    });
+    const projectRateMap = {};
+    for (const r of rows) {
+      const pr = parseFloat(r.prevailing_rate);
+      if (r.project_id != null && Number.isFinite(pr)) projectRateMap[r.project_id] = pr;
     }
+    const paid = roundEntriesFromSettings(rows, s, roleId != null ? { workerRoleById: { [userId]: roleId } } : {});
+    const st = buildPayStatement({
+      worker: {
+        id: userId, hourly_rate: first.rate, rate_type: first.rate_type || 'hourly',
+        overtime_rule: first.ot_rule ?? null, role_id: roleId, worker_type: first.worker_type,
+        guaranteed_weekly_hours: 0,
+      },
+      entries: paid,
+      otConfig: otConfigFromSettings(s, roleId, userId),
+      projectRateMap,
+      settings: s,
+    });
+    dollars += st.cost.regular + st.cost.overtime + st.cost.prevailing + st.cost.night;
   }
   if (opts.includeBurden) {
     const burden = parseFloat(settings?.labor_burden_pct);
@@ -150,11 +193,20 @@ function laborCostCents(entries, settings, opts = {}) {
 // shift has end < start. The two SQL labor paths this replaced omitted it and
 // wrapped the result in GREATEST(0, …), which turned every overnight shift into
 // a negative interval clamped to zero — overnight labor cost $0.
+//
+// ot_rule is the RAW users.overtime_rule (no COALESCE): a null rule inherits the
+// company overtime_rule in otRuleFromSettings, exactly as the pay engine does —
+// COALESCE(…,'daily') forced daily on a weekly company. rate_type / worker_type /
+// the project's prevailing rate let laborCostCents price like the pay engine; the
+// prevailing rate is a correlated subquery so callers need no extra JOIN.
 const LABOR_ENTRY_COLUMNS = `
   te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
-  te.wage_type, te.overtime_hours_override,
+  te.wage_type, te.overtime_hours_override, te.project_id,
+  (SELECT lp.prevailing_wage_rate FROM projects lp WHERE lp.id = te.project_id) AS prevailing_rate,
   COALESCE(u.hourly_rate, 0) AS rate,
-  COALESCE(u.overtime_rule, 'daily') AS ot_rule,
+  u.rate_type AS rate_type,
+  u.worker_type AS worker_type,
+  u.overtime_rule AS ot_rule,
   u.role_id AS role_id`;
 
 /**

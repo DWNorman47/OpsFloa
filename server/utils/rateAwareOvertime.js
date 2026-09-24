@@ -73,9 +73,13 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
     const totalHours = straightHours + overtimeHours;
     const regularRate = totalHours > 0 ? totalStraightPay / totalHours : 0;
     cost = totalStraightPay + overtimeHours * regularRate * (otMult - 1);
+    // Per-entry share (so a caller can price a SUBSET — e.g. the in-period part of
+    // a week that straddles a pay-period boundary). Σ p.cost === cost.
+    for (const p of perEntry) p.cost = (p.st + p.ot) * p.baseRate + p.ot * regularRate * (otMult - 1);
   } else {
     // Each hour at its own rate; OT hours additionally × mult.
-    cost = perEntry.reduce((s, p) => s + p.st * p.baseRate + p.ot * p.baseRate * otMult, 0);
+    for (const p of perEntry) p.cost = p.st * p.baseRate + p.ot * p.baseRate * otMult;
+    cost = perEntry.reduce((s, p) => s + p.cost, 0);
   }
 
   return { straightHours, overtimeHours, cost, perEntry };
@@ -115,18 +119,27 @@ function hasSimpleOtConfig(otConfig) {
  * `overtime_hours` on its rows for the per-day line-item column.
  *
  * Same args as rateAwarePay. Callers gate on hasSimpleOtConfig() first.
+ *
+ * `opts.countIf(entry)` (optional): the threshold is computed over ALL entries,
+ * but only entries for which it returns true are summed into the returned hours
+ * and costs. Used for a week straddling a pay-period boundary: the whole week
+ * decides which hours are OT (chronologically), the period is paid only its own.
  */
 function splitRateAware(entries, opts) {
   const worked = (entries || []).filter(e => e.start_time && e.end_time);
   const ra = rateAwarePay(worked, opts);
-  let regularHours = 0, overtimeHours = 0, prevailingHours = 0, regularCost = 0, prevailingCost = 0;
+  const countIf = opts && typeof opts.countIf === 'function' ? opts.countIf : null;
+  let regularHours = 0, overtimeHours = 0, prevailingHours = 0, regularCost = 0, prevailingCost = 0, totalCost = 0;
   worked.forEach((e, i) => {
+    if (countIf && !countIf(e)) return;
     const p = ra.perEntry[i];
     overtimeHours += p.ot;
+    totalCost += p.cost;
     if (e.wage_type === 'prevailing') { prevailingHours += p.st; prevailingCost += p.st * p.baseRate; }
     else { regularHours += p.st; regularCost += p.st * p.baseRate; }
   });
-  const overtimeCost = ra.cost - regularCost - prevailingCost;
+  // No filter → the calculator's own total (byte-identical to before).
+  const overtimeCost = (countIf ? totalCost : ra.cost) - regularCost - prevailingCost;
   return { regularHours, overtimeHours, prevailingHours, regularCost, overtimeCost, prevailingCost, perEntry: ra.perEntry, worked };
 }
 
