@@ -1,3 +1,4 @@
+-- migrate:no-transaction (manages its own BEGIN/COMMIT)
 -- Time Clock / Workforce route rename: rewrite stored inbox.link URLs so
 -- pre-rename notifications still deep-link to the right tab after the deploy.
 --

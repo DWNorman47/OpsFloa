@@ -1,3 +1,4 @@
+-- migrate:no-transaction (manages its own BEGIN/COMMIT)
 -- Merge clock_in_self + clock_out_self into a single clock_self permission.
 -- Original design split them by mistake — a worker who can clock in but not
 -- out gets stuck clocked in forever, which is worse than not being able to

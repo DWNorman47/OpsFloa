@@ -182,6 +182,149 @@ async function spendTotals(projectId, settings) {
   };
 }
 
+// ── Batched portfolio loader ─────────────────────────────────────────────────
+// The portfolio views (pnl-summary, WIP JSON + CSV) used to call the per-project
+// helpers above once per project — ~14 queries × N projects, sequentially. This
+// loads the same figures for a whole project set with one GROUP BY project_id
+// query per source. Semantics mirror the per-project helpers exactly (including
+// their per-source error fallbacks); tests/projectReportsBatch.test.js pins
+// batched == per-project. The projectCost.js helpers (equipment, manual
+// expenses, materials) have no batch form yet and still run per project.
+const toCents = v => parseInt(v, 10) || 0;
+function byProject(rows, col = 'project_id') {
+  const m = new Map();
+  for (const r of rows) m.set(String(r[col]), r);
+  return m;
+}
+
+async function loadPortfolioFinancials(projectIds, companyId, settings) {
+  const out = new Map();
+  if (!projectIds.length) return out;
+  const ids = projectIds;
+  const q = async (sql, params, fallback) => {
+    try { return (await pool.query(sql, params)).rows; } catch { return fallback; }
+  };
+
+  const [explicitRows, estimateRows, coRows, budgetRows, laborRows, subsPaidRows, subsCommittedRows] = await Promise.all([
+    // contract_value_cents may not exist pre-0188 → [] = "no explicit value".
+    q('SELECT id, contract_value_cents FROM projects WHERE id = ANY($1)', [ids], []),
+    q(`SELECT DISTINCT ON (converted_project_id) converted_project_id AS project_id, total_cents
+         FROM estimates
+        WHERE converted_project_id = ANY($1) AND status IN ('accepted')
+        ORDER BY converted_project_id, responded_at DESC NULLS LAST`, [ids], []),
+    q(`SELECT project_id, COALESCE(SUM(total_cents), 0)::bigint AS sum
+         FROM change_orders WHERE project_id = ANY($1) AND status = 'accepted'
+        GROUP BY project_id`, [ids], []),
+    q(`SELECT project_id, COALESCE(SUM(budget_cents), 0)::bigint AS sum
+         FROM project_budget_categories WHERE project_id = ANY($1)
+        GROUP BY project_id`, [ids], []),
+    q(`SELECT ${LABOR_ENTRY_COLUMNS}
+         FROM time_entries te
+         JOIN users u ON te.user_id = u.id
+        WHERE te.project_id = ANY($1)
+          AND te.status != 'rejected'
+          AND te.start_time IS NOT NULL
+          AND te.end_time IS NOT NULL`, [ids], null),
+    q(`SELECT po.project_id, COALESCE(SUM(p.amount_cents), 0)::bigint AS cents
+         FROM subcontract_po_payments p
+         JOIN subcontract_pos po ON p.po_id = po.id
+        WHERE po.project_id = ANY($1)
+        GROUP BY po.project_id`, [ids], []),
+    q(`SELECT po.project_id, COALESCE(SUM(po.amount_cents - COALESCE(paid.cents, 0)), 0)::bigint AS cents
+         FROM subcontract_pos po
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(amount_cents), 0)::bigint AS cents
+             FROM subcontract_po_payments WHERE po_id = po.id
+         ) paid ON true
+        WHERE po.project_id = ANY($1) AND po.status IN ('issued', 'partial')
+        GROUP BY po.project_id`, [ids], []),
+  ]);
+
+  // Invoices: one failure zeroes every figure, like invoiceTotals().
+  let billedMap = new Map(), collectedMap = new Map();
+  try {
+    const [billed, collected] = await Promise.all([
+      pool.query(
+        `SELECT i.project_id,
+                COALESCE(SUM(i.total_cents), 0) AS billed_cents,
+                COALESCE(SUM(i.retainage_held_cents - i.retainage_released_cents), 0) AS retainage_outstanding_cents
+           FROM invoices i
+          WHERE i.project_id = ANY($1) AND i.company_id = $2 AND i.status NOT IN ('void', 'draft')
+          GROUP BY i.project_id`, [ids, companyId]),
+      pool.query(
+        `SELECT i2.project_id, COALESCE(SUM(p.amount_cents), 0) AS collected_cents
+           FROM invoice_payments p
+           JOIN invoices i2 ON i2.id = p.invoice_id
+          WHERE i2.project_id = ANY($1) AND i2.company_id = $2 AND i2.status <> 'void'
+          GROUP BY i2.project_id`, [ids, companyId]),
+    ]);
+    billedMap = byProject(billed.rows);
+    collectedMap = byProject(collected.rows);
+  } catch { /* leave empty → zeros */ }
+
+  const explicitMap = byProject(explicitRows, 'id');
+  const estimateMap = byProject(estimateRows);
+  const coMap = byProject(coRows);
+  const budgetMap = byProject(budgetRows);
+  const subsPaidMap = byProject(subsPaidRows);
+  const subsCommittedMap = byProject(subsCommittedRows);
+  const laborByProject = new Map();
+  for (const r of laborRows || []) {
+    const k = String(r.project_id);
+    if (!laborByProject.has(k)) laborByProject.set(k, []);
+    laborByProject.get(k).push(r);
+  }
+
+  for (const id of ids) {
+    const k = String(id);
+    // Contract value — same precedence as contractValueCents().
+    const explicit = explicitMap.get(k);
+    let base = explicit && explicit.contract_value_cents != null ? parseInt(explicit.contract_value_cents, 10) : null;
+    if (base == null && estimateMap.has(k)) base = parseInt(estimateMap.get(k).total_cents, 10);
+    const budgetTotal = budgetMap.has(k) ? parseInt(budgetMap.get(k).sum, 10) : 0;
+    const contractValue = base != null
+      ? base + (coMap.has(k) ? toCents(coMap.get(k).sum) : 0)
+      : budgetTotal;
+
+    // Spend — same buckets as spendTotals(). laborCostCents runs per project,
+    // exactly as spendTotals calls it (OT is computed within one project's rows).
+    let labor = 0;
+    if (laborRows) {
+      try { labor = laborCostCents(laborByProject.get(k) || [], settings, { includeBurden: true }); } catch { labor = 0; }
+    }
+    let manualExpenses = 0, manualCommitted = 0;
+    try {
+      const { spent, committed } = await manualExpensesByStatus(id);
+      manualExpenses = sumMap(spent);
+      manualCommitted = sumMap(committed);
+    } catch { /* table may not exist */ }
+    const [equipUsage, mat] = await Promise.all([
+      equipmentUsageCents(id),
+      materialsCents(id, settings.materials_cost_basis),
+    ]);
+    const subsSpent = subsPaidMap.has(k) ? parseInt(subsPaidMap.get(k).cents, 10) : 0;
+    const subsCommitted = subsCommittedMap.has(k) ? parseInt(subsCommittedMap.get(k).cents, 10) : 0;
+    const spend = {
+      spent_cents:     labor + manualExpenses + mat.spent + subsSpent + equipUsage,
+      committed_cents: subsCommitted + manualCommitted + mat.committed,
+      by_source: {
+        labor, materials: mat.spent, materials_committed: mat.committed,
+        subs_spent: subsSpent, subs_committed: subsCommitted,
+        manual_expenses: manualExpenses, manual_committed: manualCommitted, equipment_usage: equipUsage,
+      },
+    };
+
+    const invoices = {
+      billed_cents:    billedMap.has(k) ? toCents(billedMap.get(k).billed_cents) : 0,
+      collected_cents: collectedMap.has(k) ? toCents(collectedMap.get(k).collected_cents) : 0,
+      retainage_outstanding_cents: billedMap.has(k) ? toCents(billedMap.get(k).retainage_outstanding_cents) : 0,
+    };
+
+    out.set(k, { contractValue, spend, invoices, budgetTotal });
+  }
+  return out;
+}
+
 // Standard divide-with-null-guard: pct or null if denominator is zero.
 function pctOrNull(num, den, decimals = 1) {
   if (!den) return null;
@@ -275,17 +418,12 @@ router.get('/projects/pnl-summary', requireAuth, requireFinancialReportsAccess, 
       'SELECT id, name FROM projects WHERE company_id = $1 AND active = true ORDER BY name',
       [companyId]
     );
-    // For each project, run the same lookups. Sequential keeps the SQL
-    // load reasonable (portfolio is dozens of projects max for most companies).
+    // One batched load for the whole portfolio (was ~14 queries per project).
     const settings = await loadSettings(companyId);
+    const fin = await loadPortfolioFinancials(projRes.rows.map(p => p.id), companyId, settings);
     const rows = [];
     for (const p of projRes.rows) {
-      const [contractValue, spend, invoices, budgetTotal] = await Promise.all([
-        contractValueCents(p.id),
-        spendTotals(p.id, settings),
-        invoiceTotals(p.id, companyId),
-        budgetTotalCents(p.id),
-      ]);
+      const { contractValue, spend, invoices, budgetTotal } = fin.get(String(p.id));
       const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
       // EAC forecast: max(spent+committed, budget) — same as the per-project P&L.
       const projected_profit_cents = contractValue - Math.max(spend.spent_cents + spend.committed_cents, budgetTotal || 0);
@@ -326,23 +464,11 @@ router.get('/wip-report', requireAuth, requireFinancialReportsAccess, async (req
       [companyId]
     );
     const settings = await loadSettings(companyId);
+    const fin = await loadPortfolioFinancials(projRes.rows.map(p => p.id), companyId, settings);
     const rows = [];
     let totalContract = 0, totalCost = 0, totalEarned = 0, totalBilled = 0;
     for (const p of projRes.rows) {
-      const [contractValue, spend, invoices, budgetSum] = await Promise.all([
-        contractValueCents(p.id),
-        spendTotals(p.id, settings),
-        invoiceTotals(p.id, companyId),
-        (async () => {
-          try {
-            const r = await pool.query(
-              'SELECT COALESCE(SUM(budget_cents),0)::bigint AS sum FROM project_budget_categories WHERE project_id = $1',
-              [p.id]
-            );
-            return parseInt(r.rows[0].sum, 10);
-          } catch { return 0; }
-        })(),
-      ]);
+      const { contractValue, spend, invoices, budgetTotal: budgetSum } = fin.get(String(p.id));
       // Cost-to-cost % complete. Use budget as the denominator (matches
       // the "estimated total cost" the cost-to-cost convention expects).
       // Fall back to contract value if no budget set.
@@ -406,20 +532,11 @@ router.get('/wip-report/export', requireAuth, requireFinancialReportsAccess, asy
     const escape = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="wip-report-${new Date().toISOString().slice(0,10)}.csv"`);
+    // Load before the first write so a DB failure can still answer 500.
+    const fin = await loadPortfolioFinancials(projRes.rows.map(p => p.id), companyId, csvSettings);
     res.write(headers.join(',') + '\n');
     for (const p of projRes.rows) {
-      const [contractValue, spend, invoices, budgetSum] = await Promise.all([
-        contractValueCents(p.id), spendTotals(p.id, csvSettings), invoiceTotals(p.id, companyId),
-        (async () => {
-          try {
-            const r = await pool.query(
-              'SELECT COALESCE(SUM(budget_cents),0)::bigint AS sum FROM project_budget_categories WHERE project_id = $1',
-              [p.id]
-            );
-            return parseInt(r.rows[0].sum, 10);
-          } catch { return 0; }
-        })(),
-      ]);
+      const { contractValue, spend, invoices, budgetTotal: budgetSum } = fin.get(String(p.id));
       // Match the JSON path exactly: cap at 100, round to 1 decimal.
       // Previously the CSV used an uncapped float-then-toFixed(1) so a
       // 138% blown budget would CSV as "138.4" while the JSON capped to
@@ -450,3 +567,5 @@ router.get('/wip-report/export', requireAuth, requireFinancialReportsAccess, asy
 
 module.exports = router;
 module.exports.computeProjectPnl = computeProjectPnl;
+// Exposed for tests (batched == per-project parity).
+module.exports._internals = { loadPortfolioFinancials, contractValueCents, spendTotals, invoiceTotals, budgetTotalCents };

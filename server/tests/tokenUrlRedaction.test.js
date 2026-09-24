@@ -1,31 +1,7 @@
-// Verifies the redactTokenInUrl helper used by the pino-http serializer.
-// The function isn't exported from server/index.js; we re-create the
-// regex set here and assert their behavior. This is the kind of test
-// where the test itself doubles as documentation for the security
-// invariant.
-
-const TOKENIZED_URL_PATTERNS = [
-  /^(\/api)?\/public\/book\/manage\/([^/?]+)/,
-  /^(\/api)?\/public\/estimates\/(view|accept|decline)\/([^/?]+)/,
-  /^(\/api)?\/public\/change-orders\/(view|accept|decline)\/([^/?]+)/,
-  /^(\/api)?\/public\/lien-waivers\/sign\/([^/?]+)/,
-  /^\/e\/([^/?]+)/,
-  /^\/co\/([^/?]+)/,
-  /^\/lien-waiver-sign\/([^/?]+)/,
-  /^\/book\/manage\/([^/?]+)/,
-];
-
-function redactTokenInUrl(url) {
-  if (!url) return url;
-  for (const re of TOKENIZED_URL_PATTERNS) {
-    const m = url.match(re);
-    if (m) {
-      const tokenIndex = m.length - 1;
-      return url.replace(m[tokenIndex], '[redacted]');
-    }
-  }
-  return url;
-}
+// Verifies the redactTokenInUrl helper used by the pino-http serializer
+// (index.js → utils/redactUrl.js). The test doubles as documentation for the
+// security invariant: no replayable credential reaches the log stream.
+const { redactTokenInUrl } = require('../utils/redactUrl');
 
 describe('redactTokenInUrl', () => {
   test.each([
@@ -61,6 +37,21 @@ describe('redactTokenInUrl', () => {
     '',                                   // empty
   ])('leaves non-token URL %s alone', (input) => {
     expect(redactTokenInUrl(input)).toBe(input);
+  });
+
+  test.each([
+    ['/api/live/12/stream?ticket=abc.def', '/api/live/12/stream?ticket=[redacted]'],
+    ['/api/live/12/stream?token=eyJhbGciOi.x.y&client=c1', '/api/live/12/stream?token=[redacted]&client=c1'],
+    ['/api/live/12/stream?client=c1&ticket=t1', '/api/live/12/stream?client=c1&ticket=[redacted]'],
+    ['/api/anything?access_token=zzz#frag', '/api/anything?access_token=[redacted]#frag'],
+    ['/api/x?TOKEN=Upper', '/api/x?TOKEN=[redacted]'],
+    ['/api/public/estimates/view/secret?token=again', '/api/public/estimates/view/[redacted]?token=[redacted]'],
+  ])('redacts credential query params on any path: %s', (input, expected) => {
+    expect(redactTokenInUrl(input)).toBe(expected);
+  });
+
+  test('does not touch params that merely contain the word', () => {
+    expect(redactTokenInUrl('/api/x?tokens_used=5&ticketing=on')).toBe('/api/x?tokens_used=5&ticketing=on');
   });
 
   test('returns falsy input untouched', () => {

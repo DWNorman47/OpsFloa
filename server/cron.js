@@ -92,9 +92,28 @@ async function sendShiftReminders() {
   }
 }
 
-// Track which companies have already received a sign-off reminder this Friday
-// (in-memory, resets on restart — worst case workers get a second reminder)
-const signoffReminderSentDates = new Map(); // company_id -> 'YYYY-MM-DD'
+// Company-local calendar date (YYYY-MM-DD) — the once-per-Friday key.
+function getDateInTimezone(timezone) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch {
+    return new Date().toISOString().substring(0, 10);
+  }
+}
+
+// Atomically claim today's sign-off reminder for a company. Persisted
+// (companies.signoff_reminder_sent_on, migration 0202) so a deploy/restart on a
+// Friday — startCron runs the job on boot — doesn't re-push everyone. The
+// conditional UPDATE is the lock: only one caller gets the row back.
+async function claimSignoffReminderDay(companyId, localDate) {
+  const { rowCount } = await pool.query(
+    `UPDATE companies SET signoff_reminder_sent_on = $2::date
+      WHERE id = $1 AND signoff_reminder_sent_on IS DISTINCT FROM $2::date
+      RETURNING id`,
+    [companyId, localDate]
+  );
+  return rowCount > 0;
+}
 
 // Send push notifications on Fridays to workers with unsigned entries from this week.
 async function sendSignoffReminders() {
@@ -124,10 +143,8 @@ async function sendSignoffReminders() {
       const nowHour = getHourInTimezone(timezone);
       if (nowHour < startHour || nowHour >= endHour) continue;
 
-      // Only send once per Friday per company
-      const todayStr = new Date().toISOString().substring(0, 10);
-      if (signoffReminderSentDates.get(company_id) === todayStr) continue;
-      signoffReminderSentDates.set(company_id, todayStr);
+      // Only send once per Friday per company (persisted claim — survives restarts)
+      if (!(await claimSignoffReminderDay(company_id, getDateInTimezone(timezone)))) continue;
 
       // Find workers with unsigned pending entries this week
       const workersResult = await pool.query(
@@ -444,4 +461,4 @@ function startCron() {
   console.log(`[cron] Shift / sign-off / trial-expiry / stale-clock crons started${bookingRemindersOn ? ' + booking reminders' : ' (booking reminders OFF)'}`);
 }
 
-module.exports = { startCron };
+module.exports = { startCron, sendSignoffReminders, claimSignoffReminderDay, getDateInTimezone };

@@ -68,6 +68,22 @@ async function lint() {
     return;
   }
 
+  // Passes 1–2 re-run EVERY migration and commit each one — on a real database
+  // that re-executes one-shot data migrations (0003 drops company_chat, 0068
+  // truncates worker_availability, ...). dotenv above picks up server/.env, so a
+  // plain `npm run lint:migrations` on a dev machine used to hit the Neon dev
+  // branch (it did, 2026-09-24). Only a local/throwaway Postgres is allowed
+  // (CI uses localhost); anything else needs an explicit opt-in.
+  let dbHost = '';
+  try { dbHost = new URL(process.env.DATABASE_URL).hostname; } catch (_) { /* unparseable → treated as remote */ }
+  const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(dbHost);
+  if (!isLocal && process.env.LINT_MIGRATIONS_ALLOW_REMOTE !== 'yes-this-db-is-disposable') {
+    console.log(`[migrations-lint] DATABASE_URL host "${dbHost || '?'}" is not local — static checks only.`);
+    console.log('  The apply passes run every migration against that DB. Point DATABASE_URL at a throwaway');
+    console.log('  local Postgres, or set LINT_MIGRATIONS_ALLOW_REMOTE=yes-this-db-is-disposable.');
+    return;
+  }
+
   const pool = new Pool({
     connectionString: stripSslMode(process.env.DATABASE_URL),
     ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },

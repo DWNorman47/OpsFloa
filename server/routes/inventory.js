@@ -967,7 +967,10 @@ router.post('/transactions', requireAuth, requireInventoryView, TXN_COERCE, asyn
     }
 
     const absQty = Math.abs(qty);
-    const snapshotCost = unit_cost != null ? parseFloat(unit_cost) : item.rows[0].unit_cost;
+    // Only inventory managers may override the snapshot cost. A worker posting an `issue`
+    // always snapshots the catalog cost — a body unit_cost would skew job costing.
+    const overrideCost = admin && unit_cost != null && unit_cost !== '' ? parseFloat(unit_cost) : NaN;
+    const snapshotCost = Number.isFinite(overrideCost) && overrideCost >= 0 ? overrideCost : item.rows[0].unit_cost;
 
     // Validate UOM IDs belong to this item if provided
     const resolvedUomId   = uom_id   ? parseInt(uom_id)   : null;
@@ -2440,6 +2443,9 @@ router.get('/purchase-orders', requireAuth, requirePerm('manage_inventory'), asy
                 SUM(qty_ordered)    AS total_ordered,
                 SUM(qty_received)   AS total_received
          FROM purchase_order_lines
+         -- Scope to this company's POs: unfiltered, this aggregated every
+         -- tenant's PO lines on each list request.
+         WHERE po_id IN (SELECT id FROM purchase_orders WHERE company_id = $1)
          GROUP BY po_id
        ) agg ON agg.po_id = po.id
        WHERE ${conditions.join(' AND ')}

@@ -745,7 +745,13 @@ router.get('/impersonation-log', requireSuperAdmin, async (req, res) => {
 // delete handler targets — kept in sync by structure.
 router.get('/companies/:id/export', requireSuperAdmin, async (req, res) => {
   const id = req.params.id;
-  const companyRes = await pool.query('SELECT * FROM companies WHERE id = $1', [id]);
+  let companyRes;
+  try {
+    companyRes = await pool.query('SELECT * FROM companies WHERE id = $1', [id]);
+  } catch (err) {
+    logger.error({ err }, 'company export lookup failed');
+    return res.status(500).json({ error: 'Export failed' });
+  }
   if (companyRes.rowCount === 0) return res.status(404).json({ error: 'Company not found' });
 
   // Same list as the delete handler. If you add a new company_id table,
@@ -810,7 +816,9 @@ router.get('/companies/:id/export', requireSuperAdmin, async (req, res) => {
       try {
         // Most tables have company_id directly. A handful don't — skip
         // them gracefully so a refactor elsewhere doesn't break export.
-        const r = await pool.query(`SELECT * FROM ${table} WHERE company_id = $1 ORDER BY id`, [id]);
+        // queryLong: a big tenant's audit_log / time_entries can exceed the
+        // pool's 30s statement_timeout; this export legitimately runs long.
+        const r = await pool.queryLong(`SELECT * FROM ${table} WHERE company_id = $1 ORDER BY id`, [id], 120000);
         const rows = table === 'users' ? r.rows.map(scrubUser) : r.rows;
         value = JSON.stringify(rows, null, 2);
       } catch (err) {

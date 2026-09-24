@@ -1,3 +1,4 @@
+-- migrate:no-transaction (manages its own BEGIN/COMMIT)
 -- Phase A backfill: seed built-in roles per company + assign role_id to
 -- every user. Idempotent — safe to re-run. Runs after 0088 creates the tables.
 --

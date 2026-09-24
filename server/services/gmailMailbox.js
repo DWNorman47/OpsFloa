@@ -92,23 +92,26 @@ let openPath = null;      // mailbox currently SELECTed on `conn`
 let queue = Promise.resolve();
 let idleTimer = null;
 
+let createClient = opts => new ImapFlow(opts);
+function setClientFactoryForTests(factory) { createClient = factory; conn = null; openPath = null; allMailPath = null; }
+
 async function getConnection() {
   if (conn && conn.usable) return conn;
   openPath = null;
-  conn = new ImapFlow({
+  const client = createClient({
     host: 'imap.gmail.com',
     port: 993,
     secure: true,
     auth: { user: process.env.MAILBOX_GMAIL_USER, pass: process.env.MAILBOX_GMAIL_APP_PASSWORD },
     logger: false,
   });
-  conn.on('error', err => {
+  conn = client;
+  client.on('error', err => {
     logger.warn({ err: { message: err.message } }, 'mailbox: imap connection error');
-    conn = null;
-    openPath = null;
+    if (conn === client) { conn = null; openPath = null; } // not a newer connection
   });
-  await conn.connect();
-  return conn;
+  await client.connect();
+  return client;
 }
 
 /** SELECT `path` only when it isn't the mailbox already open — reopening on
@@ -127,30 +130,83 @@ async function findAllMailPath(client) {
   return allMailPath;
 }
 
+// Errors that mean "the connection is dead", not "the command failed". Only
+// these are worth a reconnect + retry — a 404 we threw ourselves, a NO/BAD
+// response, or a parse error would just fail again (and used to double the
+// work and latency of every miss).
+const CONNECTION_ERROR_CODES = new Set([
+  'NoConnection', 'EConnectionClosed', 'ClosedAfterConnectTLS', 'ClosedAfterConnectText',
+  'ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ETIMEOUT', 'EHOSTUNREACH', 'ECONNREFUSED',
+  'ENOTFOUND', 'EAI_AGAIN', 'GREETING_TIMEOUT', 'CONNECT_TIMEOUT', 'UPGRADE_TIMEOUT',
+]);
+// Our own per-op timeout is deliberately NOT retried: the caller already
+// waited the full budget, and a retry would double it.
+function isConnectionError(err) {
+  if (!err || err.status) return false; // our own 404-style errors
+  if (CONNECTION_ERROR_CODES.has(err.code)) return true;
+  return /socket (is already )?closed|connection (not available|closed)|socket timeout/i.test(err.message || '');
+}
+
+// Per-operation ceiling. The queue is shared, so one hung IMAP command used to
+// block every later mailbox request until Gmail dropped the socket. On timeout
+// the connection is torn down (aborting the hung command) and the next caller
+// reconnects.
+const DEFAULT_OP_TIMEOUT_MS = 30 * 1000;
+// Full-source fetches (message view, attachment download) can carry tens of MB.
+const FULL_MESSAGE_TIMEOUT_MS = 90 * 1000;
+
+function dropConnection() {
+  const c = conn;
+  conn = null;
+  openPath = null;
+  try { c?.close?.(); } catch { /* already closed */ }
+}
+
+async function runWithTimeout(fn, timeoutMs) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      dropConnection();
+      reject(Object.assign(new Error(`mailbox operation timed out after ${timeoutMs}ms`), { code: 'MAILBOX_OP_TIMEOUT' }));
+    }, timeoutMs);
+  });
+  // Connecting counts against the same budget as the command.
+  const work = (async () => {
+    const client = await getConnection();
+    return fn(client, await findAllMailPath(client));
+  })();
+  work.catch(() => {}); // a late rejection after the timeout won — already handled
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Run `fn(client, allMail)` with exclusive use of the shared connection.
- * Errors reject the caller but never poison the queue; a dead connection
- * is retried once with a fresh one.
+ * Errors reject the caller but never poison the queue. A connection-type
+ * failure is retried once on a fresh connection — unless `canRetry(err)`
+ * says no (non-idempotent ops such as APPEND once the command was sent).
  */
-function withMailbox(fn) {
+function withMailbox(fn, { timeoutMs = DEFAULT_OP_TIMEOUT_MS, canRetry = () => true } = {}) {
   const run = queue.then(async () => {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-    let client;
     try {
-      client = await getConnection();
-      return await fn(client, await findAllMailPath(client));
+      return await runWithTimeout(fn, timeoutMs);
     } catch (err) {
+      if (!isConnectionError(err) || !canRetry(err)) throw err;
       // Stale/broken connection — reconnect once and retry.
-      try { await conn?.logout?.(); } catch { /* already gone */ }
-      conn = null;
-      client = await getConnection();
-      return await fn(client, await findAllMailPath(client));
+      logger.info({ err: { message: err.message, code: err.code } }, 'mailbox: reconnecting after connection error');
+      dropConnection();
+      return await runWithTimeout(fn, timeoutMs);
     } finally {
       idleTimer = setTimeout(() => {
         conn?.logout?.().catch(() => {});
         conn = null;
         openPath = null;
-      }, IDLE_CLOSE_MS).unref?.();
+      }, IDLE_CLOSE_MS);
+      idleTimer.unref?.();
     }
   });
   queue = run.catch(() => {});
@@ -343,7 +399,7 @@ async function getMessage(account, uid) {
         size: a.size || 0,
       })),
     };
-  });
+  }, { timeoutMs: FULL_MESSAGE_TIMEOUT_MS });
 }
 
 /** Re-parse and return one attachment's bytes (no caching — single-user tool). */
@@ -361,7 +417,7 @@ async function getAttachment(account, uid, index) {
     const att = (parsed.attachments || [])[index];
     if (!att) throw Object.assign(new Error('Attachment not found'), { status: 404 });
     return { filename: att.filename || `attachment-${index + 1}`, contentType: att.contentType || 'application/octet-stream', content: att.content };
-  });
+  }, { timeoutMs: FULL_MESSAGE_TIMEOUT_MS });
 }
 
 async function setSeen(uid, seen) {
@@ -420,17 +476,25 @@ function buildRawMessage({ from, to, cc, subject, text, inReplyTo, references, d
 async function appendSent(account, fields) {
   const prefix = accountPrefix(account);
   invalidateListCache();
+  // APPEND isn't idempotent: if the command went out and the connection died
+  // before the OK, Gmail may already have stored it, and a retry files a second
+  // Sent copy. Build the message once (stable Message-ID) and only retry
+  // failures that happened before APPEND was issued.
+  const raw = Buffer.from(buildRawMessage(fields), 'utf8');
+  let appendIssued = false;
   return withMailbox(async client => {
     try {
       await client.mailboxCreate(`${prefix}/Sent`);
     } catch (err) {
       if (!/ALREADYEXISTS/i.test(err.responseText || err.message || '')) throw err;
     }
-    await client.append(`${prefix}/Sent`, Buffer.from(buildRawMessage(fields), 'utf8'), ['\\Seen']);
-  });
+    appendIssued = true;
+    await client.append(`${prefix}/Sent`, raw, ['\\Seen']);
+  }, { canRetry: () => !appendIssued });
 }
 
 module.exports = {
+  _internals: { withMailbox, isConnectionError, setClientFactoryForTests },
   isConfigured, accounts, isKnownAccount, isValidFolderName, isReservedFolder,
   listFolders, createFolder, deleteFolder,
   listMessages, getMessage, getAttachment, setSeen, moveToFolder,

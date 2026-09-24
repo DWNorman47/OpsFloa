@@ -1,3 +1,4 @@
+-- migrate:no-transaction (manages its own BEGIN/COMMIT)
 -- TIMESTAMPTZ migration — Phase 1 backfill.
 --
 -- Populates the new start_ts / end_ts columns on time_entries and shifts,

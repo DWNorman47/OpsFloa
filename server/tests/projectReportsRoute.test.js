@@ -130,16 +130,17 @@ describe('GET /api/wip-report', () => {
         return Promise.resolve({ rows: [{ id: 42, name: 'Cedar Apts' }] });
       }
       if (/FROM estimates/.test(sql) && /converted_project_id/.test(sql)) {
-        return Promise.resolve({ rowCount: 1, rows: [{ total_cents: '28500000' }] });  // $285k contract
+        // Portfolio views load batched (GROUP BY project_id) → rows carry project_id.
+        return Promise.resolve({ rowCount: 1, rows: [{ project_id: 42, total_cents: '28500000' }] });  // $285k contract
       }
       if (/FROM project_budget_categories/.test(sql)) {
-        return Promise.resolve({ rows: [{ sum: '21400000' }] });  // $214k budgeted cost
+        return Promise.resolve({ rows: [{ project_id: 42, sum: '21400000' }] });  // $214k budgeted cost
       }
       if (/FROM invoices\b/.test(sql)) {
-        return Promise.resolve({ rows: [{ billed_cents: '18000000', collected_cents: '18000000' }] });
+        return Promise.resolve({ rows: [{ project_id: 42, billed_cents: '18000000', collected_cents: '18000000' }] });
       }
       if (/FROM time_entries/.test(sql)) {
-        return Promise.resolve({ rows: [{ user_id: 1, work_date: '2026-04-01', start_time: '08:00:00', end_time: '16:00:00', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '1775', ot_rule: 'none' }] });  // 8h @ $1,775 = $14,200
+        return Promise.resolve({ rows: [{ project_id: 42, user_id: 1, work_date: '2026-04-01', start_time: '08:00:00', end_time: '16:00:00', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '1775', ot_rule: 'none' }] });  // 8h @ $1,775 = $14,200
       }
       if (/FROM project_expenses/.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
       if (/FROM subcontract_po_payments/.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
@@ -163,7 +164,7 @@ describe('GET /api/wip-report', () => {
   });
 
   test('totals row aggregates across projects', async () => {
-    let projectCallCount = 0;
+    const both = row => [1, 2].map(project_id => ({ project_id, ...row }));
     pool.query.mockImplementation((sql) => {
       if (/FROM projects/.test(sql) && /WHERE company_id/.test(sql)) {
         return Promise.resolve({ rows: [
@@ -172,12 +173,11 @@ describe('GET /api/wip-report', () => {
         ] });
       }
       if (/FROM estimates/.test(sql)) {
-        projectCallCount++;
-        return Promise.resolve({ rowCount: 1, rows: [{ total_cents: '10000000' }] });
+        return Promise.resolve({ rowCount: 2, rows: both({ total_cents: '10000000' }) });
       }
-      if (/FROM project_budget_categories/.test(sql)) return Promise.resolve({ rows: [{ sum: '8000000' }] });
-      if (/FROM invoices\b/.test(sql)) return Promise.resolve({ rows: [{ billed_cents: '5000000', collected_cents: '5000000' }] });
-      if (/FROM time_entries/.test(sql)) return Promise.resolve({ rows: [{ dollars: '4000' }] });
+      if (/FROM project_budget_categories/.test(sql)) return Promise.resolve({ rows: both({ sum: '8000000' }) });
+      if (/FROM invoices\b/.test(sql)) return Promise.resolve({ rows: both({ billed_cents: '5000000', collected_cents: '5000000' }) });
+      if (/FROM time_entries/.test(sql)) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [{ cents: '0' }] });
     });
     const res = await request(makeApp()).get('/api/wip-report');

@@ -3387,7 +3387,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
         if (autopush.rows[0]?.value !== '1') return;
         const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
         if (!company.rows[0]?.qbo_realm_id) return;
-        const worker = await pool.query('SELECT qbo_employee_id, qbo_vendor_id, worker_type FROM users WHERE id = $1', [entry.user_id]);
+        const worker = await pool.query('SELECT qbo_employee_id, qbo_vendor_id, worker_type, role_id FROM users WHERE id = $1', [entry.user_id]);
         const w = worker.rows[0];
         if (!w) return;
         if (w.worker_type === 'unpaid') return; // unpaid workers' labor is not synced to QBO
@@ -3399,10 +3399,9 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
         const proj = await pool.query('SELECT qbo_customer_id, qbo_class_id FROM projects WHERE id = $1', [entry.project_id]);
         const customerId = proj.rows[0]?.qbo_customer_id;
         if (!customerId) return;
-        let ms = new Date(`1970-01-01T${entry.end_time}`) - new Date(`1970-01-01T${entry.start_time}`);
-        if (ms < 0) ms += 86400000;
-        const hours = Math.max(0, ms / 3600000 - (entry.break_minutes || 0) / 60);
-        const workDate = entry.work_date.toISOString().substring(0, 10);
+        // The PAID (rounded) punch, break-net — same helper as the manual push + retry,
+        // which used rounded punches while this path sent the raw one.
+        const [{ hours, workDate }] = qbo.timeActivityHours([entry], await getSettings(companyId), { [entry.user_id]: w.role_id });
         const activity = await qbo.pushTimeActivity(companyId, {
           ...(usesVendor ? { vendorId: w.qbo_vendor_id } : { employeeId: w.qbo_employee_id }),
           customerId,
@@ -4435,24 +4434,32 @@ router.post('/broadcast', requireAdmin, requirePerm('manage_settings'), requireP
   if (!message?.trim()) return res.status(400).json({ error: 'message required' });
   if (message.length > 200) return res.status(400).json({ error: 'Message must be 200 characters or fewer' });
   const companyId = req.user.company_id;
-  await sendPushToAllWorkers(companyId, {
-    title: `📢 ${req.user.company_name || 'Announcement'}`,
-    body: message.trim(),
-    url: '/timeclock',
-  });
-  // Create inbox item for every active worker (single batch insert)
-  const broadcastWorkers = await pool.query(
-    `SELECT id FROM users WHERE company_id = $1 AND role = 'worker' AND active = true`,
-    [companyId]
-  );
-  createInboxItemBatch(
-    broadcastWorkers.rows.map(w => w.id),
-    companyId, 'announcement',
-    `📢 ${req.user.company_name || 'Announcement'}`,
-    message.trim(), '/timeclock'
-  );
-  await logAudit(companyId, req.user.id, req.user.full_name, 'broadcast.sent', null, null, null, { message: message.trim() });
+  const title = `📢 ${req.user.company_name || 'Announcement'}`;
+  try {
+    // Create inbox item for every active worker (single batch insert)
+    const broadcastWorkers = await pool.query(
+      `SELECT id FROM users WHERE company_id = $1 AND role = 'worker' AND active = true`,
+      [companyId]
+    );
+    createInboxItemBatch(
+      broadcastWorkers.rows.map(w => w.id),
+      companyId, 'announcement',
+      title,
+      message.trim(), '/timeclock'
+    );
+    await logAudit(companyId, req.user.id, req.user.full_name, 'broadcast.sent', null, null, null, { message: message.trim() });
+  } catch (err) {
+    req.log.error({ err }, 'broadcast failed');
+    return res.status(500).json({ error: 'Server error' });
+  }
+  // Respond before the web-push fan-out: it used to run first, one push at a
+  // time, so a big crew (or one slow push service) held the admin's request
+  // open for as long as the whole fan-out took. The inbox items above are the
+  // durable copy; pushes are best-effort.
   res.json({ sent: true });
+  Promise.resolve()
+    .then(() => sendPushToAllWorkers(companyId, { title, body: message.trim(), url: '/timeclock' }))
+    .catch(err => logger.error({ err, companyId }, 'broadcast push fan-out failed'));
 });
 
 // GET /admin/certified-payroll/weeks — valid week-ending dates for the picker, so a
@@ -4821,7 +4828,12 @@ router.post('/support', requireAdmin, async (req, res) => {
     '<p><strong>Company:</strong> ' + escapeHtml(companyName) + '</p>' +
     '<p><strong>Subject:</strong> ' + escapeHtml(subjectLine) + '</p><hr/>' +
     '<p>' + escapeHtml(message.trim()).replace(/\n/g, '<br/>') + '</p>';
-  await sendEmail('support@opsfloa.com', '[OpsFloa Support] ' + subjectLine + ' — ' + companyName, body);
+  try {
+    await sendEmail('support@opsfloa.com', '[OpsFloa Support] ' + subjectLine + ' — ' + companyName, body);
+  } catch (err) {
+    req.log.error({ err }, 'support email failed');
+    return res.status(502).json({ error: 'Could not send your message. Please try again.' });
+  }
   res.json({ ok: true });
 });
 

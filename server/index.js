@@ -23,6 +23,12 @@ if (process.env.SENTRY_DSN) {
 }
 
 const express = require('express');
+// Express 4 does not route a rejected promise from an async handler to the
+// error middleware — the request just hangs until the client times out (e.g.
+// `await pool.connect()` outside a try when the pool is exhausted). This patch
+// wraps every Layer handler so rejections call next(err) and reach the 500
+// handler at the bottom of this file. Must load before any router is created.
+require('express-async-errors');
 const cors = require('cors');
 const helmet = require('helmet');
 const pinoHttp = require('pino-http');
@@ -31,6 +37,9 @@ const v8 = require('v8');
 const { requireAuth, requirePlan, requireProAddon, requirePlanToolsAddon } = require('./middleware/auth');
 const pool = require('./db');
 const logger = require('./logger');
+// Scrubs tokenized public path segments AND token/ticket query params on any
+// path (e.g. the live-session SSE stream's ?ticket= / legacy ?token=<JWT>).
+const { redactTokenInUrl } = require('./utils/redactUrl');
 
 const app = express();
 app.set('trust proxy', 1); // trust first proxy (Render) so req.ip is the real client IP
@@ -54,11 +63,11 @@ app.use(pinoHttp({
     return 'info';
   },
   serializers: {
-    // Redact tokens embedded in public path segments before they hit the
-    // log stream. Any `/api/public/<scope>/<verb>/<token>` URL becomes
-    // `/api/public/<scope>/<verb>/[redacted]`. Without this, anyone with
-    // log access could take over by re-using the URL — for booking
-    // manage, estimate accept, change-order accept, lien-waiver sign.
+    // Redact tokens before they hit the log stream: tokenized public path
+    // segments (`/api/public/<scope>/<verb>/<token>` → `.../[redacted]`) and
+    // token/ticket query params on any path. Without this, anyone with log
+    // access could take over by re-using the URL — booking manage, estimate
+    // accept, change-order accept, lien-waiver sign, live-session streams.
     req: req => ({
       method: req.method,
       url: redactTokenInUrl(req.url),
@@ -67,34 +76,6 @@ app.use(pinoHttp({
     res: res => ({ statusCode: res.statusCode }),
   },
 }));
-
-// Path patterns that end in a tokenized last segment. The redaction is
-// conservative — only the patterns we know carry tokens get scrubbed,
-// so e.g. `/admin/workers/42` keeps the id.
-const TOKENIZED_URL_PATTERNS = [
-  /^(\/api)?\/public\/book\/manage\/([^/?]+)/,
-  /^(\/api)?\/public\/estimates\/(view|accept|decline)\/([^/?]+)/,
-  /^(\/api)?\/public\/invoices\/view\/([^/?]+)/,
-  /^(\/api)?\/public\/change-orders\/(view|accept|decline)\/([^/?]+)/,
-  /^(\/api)?\/public\/lien-waivers\/sign\/([^/?]+)/,
-  /^\/e\/([^/?]+)/,
-  /^\/i\/([^/?]+)/,
-  /^\/co\/([^/?]+)/,
-  /^\/lien-waiver-sign\/([^/?]+)/,
-  /^\/book\/manage\/([^/?]+)/,
-];
-function redactTokenInUrl(url) {
-  if (!url) return url;
-  for (const re of TOKENIZED_URL_PATTERNS) {
-    const m = url.match(re);
-    if (m) {
-      // Replace the last capture group (the token) with [redacted].
-      const tokenIndex = m.length - 1;
-      return url.replace(m[tokenIndex], '[redacted]');
-    }
-  }
-  return url;
-}
 
 const ALLOWED_ORIGINS = [
   'https://opsfloa.com',
@@ -421,7 +402,7 @@ process.on('unhandledRejection', reason => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info({ port: PORT }, 'server listening');
 
   // Background jobs poll the database on a schedule (the transcription sweep every
@@ -462,3 +443,41 @@ app.listen(PORT, () => {
     startCron();
   }
 });
+
+// Graceful shutdown. Render sends SIGTERM on every deploy/restart and hard-kills
+// ~30s later; without this, in-flight requests were cut mid-write, live-session
+// edits inside the snapshot debounce were lost, and pooled connections dropped.
+// Order: stop accepting → flush live-session rooms to the DB and end their SSE
+// streams (they'd otherwise hold server.close() open until the deadline; clients
+// auto-reconnect to the new instance) → wait for in-flight requests → drain the
+// pool. A hard deadline keeps us inside Render's window.
+const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 25000;
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, 'shutdown: draining');
+
+  const deadline = setTimeout(() => {
+    logger.warn('shutdown: deadline reached, forcing exit');
+    try { server.closeAllConnections(); } catch (_) { /* node < 18.2 */ }
+    setTimeout(() => process.exit(1), 200);
+  }, SHUTDOWN_TIMEOUT_MS);
+  deadline.unref();
+
+  const flushed = Promise.resolve()
+    .then(() => (typeof liveSessions.flushAll === 'function' ? liveSessions.flushAll({ closeStreams: true }) : 0))
+    .then(n => { if (n) logger.info({ rooms: n }, 'shutdown: live sessions flushed'); })
+    .catch(err => logger.warn({ err }, 'shutdown: live session flush failed'));
+
+  server.close(async () => {
+    await flushed; // its snapshot writes need the pool
+    try { await pool.end(); } catch (err) { logger.warn({ err }, 'shutdown: pool.end failed'); }
+    logger.info('shutdown: complete');
+    clearTimeout(deadline);
+    setTimeout(() => process.exit(0), 100); // let pino flush
+  });
+  try { server.closeIdleConnections(); } catch (_) { /* node < 18.2 */ }
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
