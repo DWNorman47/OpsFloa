@@ -4,6 +4,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { sendPushToCompanyAdmins } = require('../push');
 const { logAudit } = require('../auditLog');
+const { readIdempotencyKey } = require('../utils/idempotencyKey');
 const {
   INCIDENT_TYPES: VALID_INCIDENT_TYPES,
   INCIDENT_STATUSES: VALID_INCIDENT_STATUSES,
@@ -91,20 +92,41 @@ router.post('/', requireAuth, async (req, res) => {
   if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
     return res.status(400).json({ error: 'Invalid project' });
   }
+  // Offline-replay idempotency (service worker Idempotency-Key header, migration 0201): a replay
+  // of a POST whose original was saved returns the existing report instead of a duplicate
+  // (and doesn't re-push admins).
+  const clientRequestId = readIdempotencyKey(req, { bodyField: 'client_request_id' });
+  const findDup = async () => (await pool.query(
+    'SELECT id FROM incident_reports WHERE company_id = $1 AND client_request_id = $2',
+    [companyId, clientRequestId]
+  )).rows[0];
+  const loadFull = async (id) => (await pool.query(`${BASE_QUERY} WHERE i.id = $1`, [id])).rows[0];
   try {
+    if (clientRequestId) {
+      const dup = await findDup();
+      if (dup) return res.status(200).json(await loadFull(dup.id));
+    }
     const result = await pool.query(
       `INSERT INTO incident_reports
          (company_id, user_id, project_id, incident_date, incident_time, type,
-          injured_name, body_part, treatment, work_stopped, description, witnesses, corrective_action)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+          injured_name, body_part, treatment, work_stopped, description, witnesses, corrective_action,
+          client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+       RETURNING *`,
       [
         companyId, req.user.id, project_id || null,
         incident_date, incident_time || null, type,
         injured_name, body_part, treatment || null,
         work_stopped || false, description,
-        witnesses, corrective_action,
+        witnesses, corrective_action, clientRequestId,
       ]
     );
+    if (result.rowCount === 0) {
+      const dup = await findDup();
+      if (dup) return res.status(200).json(await loadFull(dup.id));
+      return res.status(409).json({ error: 'Duplicate incident report' });
+    }
     const report = result.rows[0];
 
     const full = await pool.query(

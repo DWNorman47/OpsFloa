@@ -12,6 +12,7 @@ const { SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { entryInstants } = require('../utils/timeFormat');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { projectFrozen } = require('../utils/projectCost');
+const { readIdempotencyKey } = require('../utils/idempotencyKey');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
@@ -76,7 +77,7 @@ router.get('/', requireAuth, async (req, res) => {
 router.post('/', requireAuth, entryWriteLimiter,
   coerceBody({ int: ['project_id', 'break_minutes'], float: ['mileage'] }),
   async (req, res) => {
-  const { project_id, work_date, start_time, end_time, break_minutes, mileage, timezone, client_id } = req.body;
+  const { project_id, work_date, start_time, end_time, break_minutes, mileage, timezone } = req.body;
   const notesTrimmed = req.body.notes?.trim() || null;
   if (!project_id || !work_date || !start_time || !end_time) {
     logFailure(req, 'time_entries.create', 'missing_required_fields',
@@ -88,7 +89,18 @@ router.post('/', requireAuth, entryWriteLimiter,
     return res.status(400).json({ error: 'Notes must be 500 characters or fewer' });
   }
   const companyId = req.user.company_id;
+  // Idempotency key: the body's client_id (sent by the app's forms) or, failing that, the
+  // service worker's Idempotency-Key header. A replay of an offline-queued POST whose original
+  // was saved (response lost) returns the existing entry instead of inserting a duplicate.
+  const cid = readIdempotencyKey(req, { bodyField: 'client_id', maxLen: 36 });
   try {
+    if (cid) {
+      const dup = await pool.query(
+        'SELECT * FROM time_entries WHERE user_id = $1 AND client_id = $2',
+        [req.user.id, cid]
+      );
+      if (dup.rowCount > 0) return res.status(200).json(dup.rows[0]);
+    }
     // Free tier: block submissions dated > 90 days ago. Matches the GET
     // visibility clause at the top of this file so workers can't silently
     // submit back-dated entries they'd never be able to see or edit.
@@ -126,7 +138,6 @@ router.post('/', requireAuth, entryWriteLimiter,
       return res.status(400).json({ error: 'break_minutes must be non-negative' });
     }
     const mileageVal = (mileage != null && mileage >= 0) ? mileage : null;
-    const cid = (typeof client_id === 'string' && client_id.length <= 36) ? client_id : null;
     // Phase 2 dual-write: derive matching UTC instants from wall-clock + tz.
     const { start_ts, end_ts } = entryInstants(work_date, start_time, end_time, timezone);
     const result = await pool.query(
@@ -138,6 +149,12 @@ router.post('/', requireAuth, entryWriteLimiter,
        bm, mileageVal, timezone || null, cid, 'log_entry']
     );
     if (result.rowCount === 0) {
+      // Lost the race to a concurrent replay with the same key — return the row that won.
+      const dup = await pool.query(
+        'SELECT * FROM time_entries WHERE user_id = $1 AND client_id = $2',
+        [req.user.id, cid]
+      );
+      if (dup.rowCount > 0) return res.status(200).json(dup.rows[0]);
       logFailure(req, 'time_entries.create', 'duplicate_entry', { client_id: cid });
       return res.status(409).json({ error: 'Duplicate entry' });
     }

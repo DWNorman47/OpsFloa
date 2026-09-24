@@ -7,6 +7,7 @@ const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { readIdempotencyKey } = require('../utils/idempotencyKey');
 const { FIELD_REPORT_MEDIA_TYPES, FIELD_REPORT_MEDIA_TYPE_DEFAULT } = require('../constants/fieldReportEnums');
 const mediaType = v => (FIELD_REPORT_MEDIA_TYPES.includes(v) ? v : FIELD_REPORT_MEDIA_TYPE_DEFAULT);
 
@@ -98,8 +99,8 @@ router.post('/', requireAuth, async (req, res) => {
   // Idempotency: a stable per-submission id so an offline-queued POST replayed on reconnect
   // returns the already-created report instead of inserting a duplicate (and re-uploading photos
   // + double-counting storage). See migration 0192.
-  const clientRequestId = typeof req.body.client_request_id === 'string' && req.body.client_request_id.length <= 64
-    ? req.body.client_request_id : null;
+  // Falls back to the service worker's Idempotency-Key header for callers that don't send one.
+  const clientRequestId = readIdempotencyKey(req, { bodyField: 'client_request_id', maxLen: 64 });
   try {
     if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
       return res.status(404).json({ error: 'Project not found' });

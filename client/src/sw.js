@@ -1,5 +1,15 @@
 import { precacheAndRoute, cleanupOutdatedCaches, matchPrecache } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
+import {
+  IDEMPOTENCY_HEADER,
+  classifyReplayStatus,
+  isBackingOff,
+  isStuck,
+  newIdempotencyKey,
+  parseQueueableBody,
+  timeoutSignal,
+  withFailedAttempt,
+} from './offlineQueuePolicy';
 
 // Injected by vite-plugin-pwa at build time
 precacheAndRoute(self.__WB_MANIFEST);
@@ -122,6 +132,16 @@ async function getAllQueued() {
   });
 }
 
+async function updateQueued(item) {
+  const db = await openQueueDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(QUEUE_STORE, 'readwrite');
+    tx.objectStore(QUEUE_STORE).put(item);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 async function dequeue(id) {
   const db = await openQueueDB();
   return new Promise((resolve, reject) => {
@@ -151,19 +171,41 @@ async function broadcastQueueCount() {
 // ── Offline request handler (clock, time entries, field modules) ───────────────
 
 async function handleOfflineableRequest(event, type) {
+  const request = event.request;
+  // Idempotency key minted BEFORE the first network attempt, so if the server saves the record
+  // but the response is lost (timeout / dropped connection), the queued replay carries the SAME
+  // key and the server returns the existing row instead of inserting a duplicate. A key the app
+  // already set is kept.
+  const idempotencyKey = request.headers.get(IDEMPOTENCY_HEADER) || newIdempotencyKey();
+  const bodyText = await request.clone().text().catch(() => '');
+  const headers = new Headers(request.headers);
+  headers.set(IDEMPOTENCY_HEADER, idempotencyKey);
   try {
-    const response = await fetch(event.request.clone());
-    return response;
+    // Timeout: a hung connection never rejects, so without it the request would never fall
+    // back to the queue.
+    return await fetch(request.url, {
+      method: request.method,
+      headers,
+      body: bodyText === '' ? undefined : bodyText,
+      credentials: request.credentials,
+      mode: request.mode === 'navigate' ? 'same-origin' : request.mode,
+      signal: timeoutSignal(),
+    });
   } catch {
-    const body = await event.request.clone().json().catch(() => ({}));
-    const auth = event.request.headers.get('Authorization') || '';
+    const { ok, body } = parseQueueableBody(bodyText);
+    // A non-JSON body (multipart / binary) can't be replayed faithfully from the queue — queueing
+    // `{}` in its place used to "sync" a blank record. Surface the network error instead.
+    if (!ok) return Response.error();
+    const auth = request.headers.get('Authorization') || '';
     await enqueue({
       type,
-      method: event.request.method,
-      url: event.request.url,
+      method: request.method,
+      url: request.url,
       body,
       auth,
       scope: authScope(auth),
+      idempotency_key: idempotencyKey,
+      attempts: 0,
       queued_at: new Date().toISOString(),
     });
     await broadcastQueueCount();
@@ -204,23 +246,54 @@ async function getFreshAuth(scope) {
 // for a clock-in, could re-create a shift after it was clocked out. Coalesce concurrent
 // replays into a single in-flight pass.
 let replayInFlight = null;
-function replayQueue() {
+function replayQueue(opts = {}) {
   if (replayInFlight) return replayInFlight;
-  replayInFlight = doReplayQueue().finally(() => { replayInFlight = null; });
+  replayInFlight = doReplayQueue(opts).finally(() => { replayInFlight = null; });
   return replayInFlight;
 }
 
-async function doReplayQueue() {
-  const items = await getAllQueued();
+async function errorCode(res) {
+  try { return (await res.clone().json())?.code || null; } catch { return null; }
+}
+
+// One replay pass. Outcome per item (see offlineQueuePolicy.classifyReplayStatus):
+//   done  → dequeue, count as synced
+//   drop  → dequeue + report (REPLAY_PARTIAL_FAILURE): a permanent 4xx that can never succeed
+//   retry → KEEP, record the attempt + backoff (5xx cold start / deploy, 429, 408, network error)
+//   auth  → KEEP, pause that user's replay until they log in again (OfflineContext re-triggers
+//           a replay when a user signs in)
+// Items replay in queue order per user: once one of a user's items is kept (retry / auth /
+// backing off / stuck), that user's later items wait too — a queued clock-out must never land
+// before the clock-in it follows. `manual` (the Retry buttons) ignores backoff and retries stuck
+// items; automatic passes skip them.
+async function doReplayQueue({ manual = false } = {}) {
+  const items = (await getAllQueued()).sort((a, b) => a.id - b.id);
+  const now = Date.now();
   let replayed = 0;
   let authFailed = false;
   let partialFailure = false;
+  let retryPending = false;
+  let newlyStuck = 0;
+  let skippedStuck = 0;
 
   const freshAuthByScope = new Map();
+  const blockedScopes = new Set();
 
   for (const item of items) {
+    const scope = item.scope || authScope(item.auth);
+    const scopeKey = scope || '';
+    if (blockedScopes.has(scopeKey)) continue;
+    if (!manual && isStuck(item, now)) {
+      skippedStuck++;
+      blockedScopes.add(scopeKey);
+      continue;
+    }
+    if (!manual && isBackingOff(item, now)) {
+      retryPending = true;
+      blockedScopes.add(scopeKey);
+      continue;
+    }
     try {
-      const scope = item.scope || authScope(item.auth);
       if (scope && !freshAuthByScope.has(scope)) {
         freshAuthByScope.set(scope, await getFreshAuth(scope));
       }
@@ -228,34 +301,58 @@ async function doReplayQueue() {
       const auth = freshAuth || item.auth;
       if (scope && authScope(auth) !== scope) {
         authFailed = true;
+        blockedScopes.add(scopeKey);
         continue;
       }
-      const res = await fetch(item.url, {
-        method: item.method || 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(auth ? { Authorization: auth } : {}),
-        },
-        body: JSON.stringify(item.body),
-      });
-      if (res.status === 401) {
-        // Even the fresh token (or fallback) was rejected. Drop the request
-        // rather than retrying forever — at this point the user needs to
-        // re-authenticate, and the request body is probably stale anyway.
-        await dequeue(item.id);
-        authFailed = true;
+      // Items queued by an older worker have no key — mint one and persist it BEFORE sending,
+      // so every later retry of this item shares it.
+      let current = item;
+      if (!current.idempotency_key) {
+        current = { ...current, idempotency_key: newIdempotencyKey() };
+        await updateQueued(current);
+      }
+      let res;
+      try {
+        res = await fetch(current.url, {
+          method: current.method || 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            [IDEMPOTENCY_HEADER]: current.idempotency_key,
+            ...(auth ? { Authorization: auth } : {}),
+          },
+          body: JSON.stringify(current.body),
+          signal: timeoutSignal(),
+        });
+      } catch {
+        // Still offline / timed out — keep it. Not counted toward the poison cap.
+        await updateQueued(withFailedAttempt(current, { now, countAttempt: false }));
+        retryPending = true;
+        blockedScopes.add(scopeKey);
         continue;
       }
-      if (res.ok || res.status === 409) {
-        await dequeue(item.id);
+      const outcome = classifyReplayStatus(res.status, res.status === 409 ? await errorCode(res) : null);
+      if (outcome === 'done') {
+        await dequeue(current.id);
         replayed++;
-      } else {
-        // 400/403 — bad request, remove from queue to avoid loop
-        await dequeue(item.id);
+      } else if (outcome === 'drop') {
+        await dequeue(current.id);
         partialFailure = true;
+      } else if (outcome === 'auth') {
+        // Even the fresh token was rejected. KEEP the request (dropping it lost clock-outs) and
+        // stop this user's pass until they re-authenticate.
+        authFailed = true;
+        blockedScopes.add(scopeKey);
+      } else {
+        const next = withFailedAttempt(current, { status: res.status, now });
+        await updateQueued(next);
+        if (isStuck(next, now)) newlyStuck++;
+        else retryPending = true;
+        blockedScopes.add(scopeKey);
       }
     } catch {
-      // Still offline — leave in queue
+      // IndexedDB / auth-handshake hiccup — leave the item as it is.
+      retryPending = true;
+      blockedScopes.add(scopeKey);
     }
   }
   await broadcastQueueCount();
@@ -266,9 +363,16 @@ async function doReplayQueue() {
   if (partialFailure) {
     clients.forEach(c => c.postMessage({ type: 'REPLAY_PARTIAL_FAILURE' }));
   }
+  // Stuck (poison-capped) items are KEPT, never deleted. Report when an item hits the cap (or
+  // fails again on a manual retry) — automatic passes just skip already-stuck items, so the
+  // toast doesn't repeat every minute.
+  if (newlyStuck > 0) {
+    clients.forEach(c => c.postMessage({ type: 'REPLAY_STUCK', count: newlyStuck }));
+  }
   // Always emit QUEUE_REPLAYED so listeners (e.g. ClockInOut) refresh
   // /clock/status, even when nothing succeeded.
   clients.forEach(c => c.postMessage({ type: 'QUEUE_REPLAYED', count: replayed }));
+  return { replayed, retryPending, skippedStuck };
 }
 
 // ── Service worker lifecycle ───────────────────────────────────────────────────
@@ -373,7 +477,9 @@ self.addEventListener('message', event => {
     event.waitUntil(self.skipWaiting());
   }
   if (event.data?.type === 'REPLAY_QUEUE') {
-    event.waitUntil(replayQueue());
+    // `auto: true` comes from OfflineContext's own triggers (reconnect, login, periodic retry)
+    // and honors backoff; anything else (the Retry buttons) is a manual retry.
+    event.waitUntil(replayQueue({ manual: !event.data.auto }));
   }
   if (event.data?.type === 'GET_QUEUE_COUNT') {
     event.waitUntil(broadcastQueueCount());
@@ -398,6 +504,10 @@ self.addEventListener('message', event => {
 
 self.addEventListener('sync', event => {
   if (event.tag === 'clock-queue-replay' || event.tag === 'field-queue-replay') {
-    event.waitUntil(replayQueue());
+    // Rejecting while retryable items remain asks the browser to re-fire the sync later with
+    // its own backoff (e.g. the server was cold-starting / mid-deploy).
+    event.waitUntil(replayQueue({ manual: false }).then(result => {
+      if (result?.retryPending) throw new Error('offline queue: items pending retry');
+    }));
   }
 });

@@ -617,6 +617,8 @@ const translations = {
     aqLogEntry: 'Log entry',
     aqLongShift: 'Long shift',
     aqLongShiftTitle: 'This shift spans more than a day, so the hours shown are truncated. Verify the real duration (likely a forgotten clock-out) before approving.',
+    aqLateClockIn: 'Late clock-in',
+    aqLateClockInTitle: 'The clock-in time on this shift is earlier than when the server received it by this much. That is normal for a phone that was offline, but it can also mean the start time was set after the fact. Verify the start time before approving.',
     aqHideMap: 'Hide Map',
     aqViewLocation: 'View Location',
     aqExpandRow: 'Show details',
@@ -2363,6 +2365,11 @@ const translations = {
     offlineEntries: 'entries',
     offlinePendingSync: 'pending sync',
     offlineNoQueue: "You're offline — entries will be saved when you reconnect",
+    offlineSyncedOne: '1 offline entry synced',
+    offlineSyncedMany: '{n} offline entries synced',
+    offlineReplayAuthFailed: 'Session expired — log in again. Your offline entries are saved and will sync after you log in.',
+    offlineReplayPartialFailure: 'Some offline entries were rejected by the server and could not be synced. If you clocked out, please verify and clock out again if needed.',
+    offlineReplayStuck: "Some offline entries still haven't synced after several tries. They're kept on this device — tap Retry, or contact your admin if it keeps failing.",
 
     // ── Welcome Modal ─────────────────────────────────────────────────────────
     welcome: 'Welcome',
@@ -5477,6 +5484,8 @@ const translations = {
     aqLogEntry: 'Entrada manual',
     aqLongShift: 'Turno largo',
     aqLongShiftTitle: 'Este turno abarca más de un día, así que las horas mostradas están truncadas. Verifique la duración real (probablemente una salida olvidada) antes de aprobar.',
+    aqLateClockIn: 'Entrada tardía',
+    aqLateClockInTitle: 'La hora de entrada de este turno es anterior, por este tiempo, a cuando el servidor la recibió. Es normal si el teléfono estaba sin conexión, pero también puede significar que la hora de inicio se fijó después. Verifique la hora de inicio antes de aprobar.',
     aqHideMap: 'Ocultar Mapa',
     aqViewLocation: 'Ver Ubicación',
     aqExpandRow: 'Ver detalles',
@@ -7213,6 +7222,11 @@ const translations = {
     offlineEntries: 'entradas',
     offlinePendingSync: 'pendiente de sincronización',
     offlineNoQueue: 'Sin conexión — las entradas se guardarán cuando te reconectes',
+    offlineSyncedOne: '1 entrada sin conexión sincronizada',
+    offlineSyncedMany: '{n} entradas sin conexión sincronizadas',
+    offlineReplayAuthFailed: 'La sesión expiró — inicia sesión de nuevo. Tus entradas sin conexión están guardadas y se sincronizarán al iniciar sesión.',
+    offlineReplayPartialFailure: 'El servidor rechazó algunas entradas sin conexión y no se pudieron sincronizar. Si marcaste la salida, verifica y vuelve a marcarla si es necesario.',
+    offlineReplayStuck: 'Algunas entradas sin conexión aún no se han sincronizado tras varios intentos. Se guardan en este dispositivo — toca Reintentar o contacta a tu administrador si sigue fallando.',
 
     // ── Welcome Modal ─────────────────────────────────────────────────────────
     welcome: 'Bienvenido',

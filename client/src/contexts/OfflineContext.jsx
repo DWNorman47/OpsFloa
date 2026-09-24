@@ -1,14 +1,28 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useToast } from './ToastContext';
+import { useAuth } from './AuthContext';
+import { useT } from '../hooks/useT';
 
 import { safeSession, safeLocal } from '../utils/safeStorage';
 export const OfflineContext = createContext(null);
+
+// While entries are queued and we're online, nudge the SW to retry this often. The SW honors
+// each item's backoff on these automatic passes, so this is cheap; it's what gets a queue
+// synced after a Render cold start / deploy (5xx) without the user tapping Retry, including on
+// iOS where Background Sync doesn't exist.
+const AUTO_RETRY_MS = 60 * 1000;
 
 export function OfflineProvider({ children }) {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [queueCount, setQueueCount] = useState(0);
   const addToast = useToast();
+  const t = useT();
+  const tRef = useRef(t);
+  const { user } = useAuth() || {};
+  const userScope = user?.id != null && user?.company_id != null ? `${user.company_id}:${user.id}` : null;
   const listenersRef = useRef([]);
+
+  useEffect(() => { tRef.current = t; }, [t]);
 
   const sendToSW = useCallback((msg) => {
     if (navigator.serviceWorker?.controller) {
@@ -34,9 +48,9 @@ export function OfflineProvider({ children }) {
       if ('serviceWorker' in navigator && 'sync' in ServiceWorkerRegistration.prototype) {
         navigator.serviceWorker.ready
           .then(reg => reg.sync.register('clock-queue-replay'))
-          .catch(() => sendToSW({ type: 'REPLAY_QUEUE' }));
+          .catch(() => sendToSW({ type: 'REPLAY_QUEUE', auto: true }));
       } else {
-        sendToSW({ type: 'REPLAY_QUEUE' });
+        sendToSW({ type: 'REPLAY_QUEUE', auto: true });
       }
     };
     const handleOffline = () => setIsOffline(true);
@@ -49,9 +63,26 @@ export function OfflineProvider({ children }) {
     };
   }, [sendToSW]);
 
+  // Replay whenever a user is signed in: on app start (a queue left over from a previous
+  // session) and right after a (re-)login. A 401 during replay KEEPS the queued items and
+  // pauses them until the user re-authenticates — this is what resumes them.
+  useEffect(() => {
+    if (!userScope || !navigator.onLine) return;
+    sendToSW({ type: 'REPLAY_QUEUE', auto: true });
+  }, [userScope, sendToSW]);
+
+  useEffect(() => {
+    if (!userScope || queueCount <= 0) return undefined;
+    const id = setInterval(() => {
+      if (navigator.onLine) sendToSW({ type: 'REPLAY_QUEUE', auto: true });
+    }, AUTO_RETRY_MS);
+    return () => clearInterval(id);
+  }, [userScope, queueCount, sendToSW]);
+
   useEffect(() => {
     const handleMessage = (event) => {
       const { type, count } = event.data || {};
+      const tr = tRef.current;
       // SW asks for the user's current auth header before replaying queued
       // requests. Reply via the MessagePort the SW sent so the response
       // reaches the right replay attempt. Reading from sessionStorage first
@@ -65,21 +96,25 @@ export function OfflineProvider({ children }) {
         setQueueCount(count ?? 0);
       }
       if (type === 'QUEUE_REPLAYED') {
-        setQueueCount(prev => Math.max(0, prev - (count ?? 0)));
+        // The SW broadcasts the authoritative QUEUE_COUNT just before this, so don't
+        // subtract again here (that undercounted whenever only part of the queue synced).
         if (count > 0) {
-          addToast(`${count} offline entr${count === 1 ? 'y' : 'ies'} synced`, 'success');
+          addToast(count === 1 ? tr.offlineSyncedOne : tr.offlineSyncedMany.replace('{n}', count), 'success');
         }
         listenersRef.current.forEach(fn => fn(count ?? 0));
       }
       if (type === 'REPLAY_AUTH_FAILED') {
-        addToast('Session expired — log in again. If you clocked out offline, check your status and clock out again if needed.', 'error');
+        addToast(tr.offlineReplayAuthFailed, 'error');
         // Fire sync listeners so views (e.g. ClockInOut) can refresh from
         // the server and reveal any active_clock that didn't get cleared.
         listenersRef.current.forEach(fn => fn(0));
       }
       if (type === 'REPLAY_PARTIAL_FAILURE') {
-        addToast('Some offline entries could not be synced. If you clocked out, please verify and clock out again if needed.', 'warning');
+        addToast(tr.offlineReplayPartialFailure, 'warning');
         listenersRef.current.forEach(fn => fn(0));
+      }
+      if (type === 'REPLAY_STUCK') {
+        addToast(tr.offlineReplayStuck, 'warning');
       }
     };
 

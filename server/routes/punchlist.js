@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { requirePerm } = require('../permissions');
 const { sendPushToUser } = require('../push');
 const { projectBelongsToCompany, userBelongsToCompany } = require('../utils/tenantRefs');
+const { readIdempotencyKey } = require('../utils/idempotencyKey');
 const {
   PUNCHLIST_STATUSES: VALID_STATUSES,
   PUNCHLIST_PRIORITIES: VALID_PRIORITIES,
@@ -66,8 +67,29 @@ router.post('/', requireAuth, async (req, res) => {
   if (location && location.length > 255) return res.status(400).json({ error: 'location too long (max 255 characters)' });
   if (priority !== undefined && !VALID_PRIORITIES.includes(priority)) return res.status(400).json({ error: 'Invalid priority value' });
   const companyId = req.user.company_id;
+  // Offline-replay idempotency (service worker Idempotency-Key header, migration 0201): a replay
+  // of a POST whose original was saved returns the existing item instead of a duplicate.
+  const clientRequestId = readIdempotencyKey(req, { bodyField: 'client_request_id' });
+  const loadItem = async (id) => (await pool.query(
+    `SELECT pi.*, p.name as project_name, creator.full_name as created_by_name,
+            assignee.full_name as assigned_to_name
+     FROM punchlist_items pi
+     LEFT JOIN projects p ON pi.project_id = p.id
+     LEFT JOIN users creator ON pi.created_by = creator.id
+     LEFT JOIN users assignee ON pi.assigned_to = assignee.id
+     WHERE pi.id = $1`,
+    [id]
+  )).rows[0];
+  const findDup = async () => (await pool.query(
+    'SELECT id FROM punchlist_items WHERE company_id = $1 AND client_request_id = $2',
+    [companyId, clientRequestId]
+  )).rows[0];
 
   try {
+    if (clientRequestId) {
+      const dup = await findDup();
+      if (dup) return res.status(200).json(await loadItem(dup.id));
+    }
     if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -76,24 +98,21 @@ router.post('/', requireAuth, async (req, res) => {
     }
     const result = await pool.query(
       `INSERT INTO punchlist_items
-         (company_id, project_id, title, description, location, priority, assigned_to, created_by, phase)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         (company_id, project_id, title, description, location, priority, assigned_to, created_by, phase, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
        RETURNING id`,
       [companyId, project_id || null, title, description, location,
-       priority || 'normal', assigned_to || null, req.user.id, phase || null]
+       priority || 'normal', assigned_to || null, req.user.id, phase || null, clientRequestId]
     );
+    if (result.rowCount === 0) {
+      // A concurrent replay with the same key won the insert — return its row.
+      const dup = await findDup();
+      if (dup) return res.status(200).json(await loadItem(dup.id));
+      return res.status(409).json({ error: 'conflict' });
+    }
     const id = result.rows[0].id;
-    const full = await pool.query(
-      `SELECT pi.*, p.name as project_name, creator.full_name as created_by_name,
-              assignee.full_name as assigned_to_name
-       FROM punchlist_items pi
-       LEFT JOIN projects p ON pi.project_id = p.id
-       LEFT JOIN users creator ON pi.created_by = creator.id
-       LEFT JOIN users assignee ON pi.assigned_to = assignee.id
-       WHERE pi.id = $1`,
-      [id]
-    );
-    const item = full.rows[0];
+    const item = await loadItem(id);
     if (assigned_to) {
       sendPushToUser(assigned_to, {
         title: 'Punchlist item assigned',

@@ -52,3 +52,23 @@ test('replayed client_request_id returns the existing report, no second INSERT',
   // The INSERT branch throws if reached — reaching here proves it didn't run.
   expect(pool.query.mock.calls.some(c => /INSERT INTO field_reports/.test(c[0]))).toBe(false);
 });
+
+test('the service worker Idempotency-Key header dedups when the body carries no client_request_id', async () => {
+  pool.query.mockImplementation(async (sql, params) => {
+    if (/SELECT 1 FROM projects/.test(sql)) return { rowCount: 1, rows: [{ '?column?': 1 }] };
+    if (/SELECT id FROM field_reports WHERE company_id = \$1 AND client_request_id/.test(sql)) {
+      return params[1] === 'sw-key-1' ? { rowCount: 1, rows: [{ id: 43 }] } : { rowCount: 0, rows: [] };
+    }
+    if (/FROM field_reports r\s+JOIN users u/.test(sql)) return { rows: [{ id: 43, company_id: 'co-1', photos: [] }] };
+    if (/INSERT INTO field_reports/.test(sql)) throw new Error('should not INSERT on a dedup replay');
+    return { rows: [] };
+  });
+
+  const res = await request(makeApp())
+    .post('/api/field-reports')
+    .set('Idempotency-Key', 'sw-key-1')
+    .send({ project_id: 7, notes: 'Framing', report_date: '2026-08-20' });
+
+  expect(res.status).toBe(200);
+  expect(res.body.id).toBe(43);
+});
