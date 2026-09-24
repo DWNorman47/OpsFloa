@@ -167,3 +167,14 @@ describe('POST /api/submittals/:id/documents', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /api/submittals/:id/documents — url scheme', () => {
+  test.each(['javascript:alert(document.cookie)', 'data:text/html,<script>x</script>', 'ftp://x/y.pdf', 'not a url'])(
+    '400 on non-http(s) url %s (never stored)', async (url) => {
+      const res = await request(makeApp())
+        .post('/api/submittals/7/documents')
+        .send({ kind: 'spec', name: 'spec.pdf', url });
+      expect(res.status).toBe(400);
+      expect(pool.query.mock.calls.some(c => /INSERT INTO submittal_documents/.test(c[0]))).toBe(false);
+    });
+});

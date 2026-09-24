@@ -413,11 +413,21 @@ router.get('/submittals/:id/documents/upload-url', requireAdmin, async (req, res
   }
 });
 
+// A stored document url is rendered as a link — only http(s) (never javascript:/data:).
+function isHttpUrl(u) {
+  if (typeof u !== 'string' || u.length > 2048) return false;
+  try {
+    const p = new URL(u);
+    return p.protocol === 'https:' || p.protocol === 'http:';
+  } catch { return false; }
+}
+
 router.post('/submittals/:id/documents', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const { kind, name, url, size_bytes } = req.body;
   if (!SUBMITTAL_DOC_KINDS.includes(kind)) return res.status(400).json({ error: 'invalid kind' });
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+  if (!isHttpUrl(url)) return res.status(400).json({ error: 'url must be an http(s) link' });
   try {
     const s = await assertSubmittalInCompany(companyId, req.params.id);
     if (!s) return res.status(404).json({ error: 'Submittal not found' });

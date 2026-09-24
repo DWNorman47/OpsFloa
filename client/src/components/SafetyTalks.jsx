@@ -426,7 +426,9 @@ function TalkCard({ talk: initialTalk, isAdmin, onDeleted, workerLabelPlural = '
                     <button style={{ ...styles.attachBtn, ...(uploading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => fileInputRef.current?.click()} disabled={uploading}>
                       {uploading ? t.uploading : `+ ${t.attachFile}`}
                     </button>
-                    <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={handleAttachmentUpload} />
+                    <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={handleAttachmentUpload}
+                      // Mirrors ATTACHMENT_TYPES in server/routes/safetyTalks.js — the server refuses anything else.
+                      accept="application/pdf,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/webm,text/plain,text/csv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.heic,.m4a" />
                   </>
                 )}
               </div>

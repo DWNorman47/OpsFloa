@@ -20,4 +20,18 @@ function readIdempotencyKey(req, { bodyField, maxLen = 64 } = {}) {
   return validKey(req.get?.('Idempotency-Key'), maxLen);
 }
 
-module.exports = { readIdempotencyKey };
+// Id of the row an earlier request with this key already created in `table` (keyed on
+// company_id + client_request_id, the partial unique index from migrations 0201/0205), or null.
+// `table` is always a hard-coded identifier at the call site — never user input.
+const TABLE_RE = /^[a-z_]+$/;
+async function findIdByRequestKey(db, table, companyId, key) {
+  if (!key) return null;
+  if (!TABLE_RE.test(table)) throw new Error(`bad table identifier: ${table}`);
+  const r = await db.query(
+    `SELECT id FROM ${table} WHERE company_id = $1 AND client_request_id = $2`,
+    [companyId, key]
+  );
+  return r.rows[0]?.id ?? null;
+}
+
+module.exports = { readIdempotencyKey, findIdByRequestKey };

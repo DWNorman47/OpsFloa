@@ -26,6 +26,8 @@ jest.mock('../r2', () => ({
   getPresignedUploadUrl: jest.fn(),
   deleteByUrl: jest.fn(() => Promise.resolve()),
   getObjectMetadataByUrl: jest.fn(),
+  safeKeyFromPublicUrl: jest.requireActual('../r2').safeKeyFromPublicUrl,
+  keyBelongsTo: jest.requireActual('../r2').keyBelongsTo,
 }));
 
 const express = require('express');

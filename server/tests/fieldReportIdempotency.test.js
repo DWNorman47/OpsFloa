@@ -13,7 +13,11 @@ jest.mock('../db', () => ({ query: jest.fn() }));
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
 jest.mock('../push', () => ({ sendPushToCompanyAdmins: jest.fn() }));
 jest.mock('../storage', () => ({ checkStorageLimit: jest.fn(), incrementStorage: jest.fn(), decrementStorage: jest.fn() }));
-jest.mock('../r2', () => ({ uploadBase64: jest.fn(), getPresignedUploadUrl: jest.fn(), deleteByUrl: jest.fn(), getObjectMetadataByUrl: jest.fn() }));
+jest.mock('../r2', () => ({
+  uploadBase64: jest.fn(), getPresignedUploadUrl: jest.fn(), deleteByUrl: jest.fn(), getObjectMetadataByUrl: jest.fn(),
+  safeKeyFromPublicUrl: jest.requireActual('../r2').safeKeyFromPublicUrl,
+  keyBelongsTo: jest.requireActual('../r2').keyBelongsTo,
+}));
 
 const express = require('express');
 const request = require('supertest');

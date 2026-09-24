@@ -1,6 +1,15 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { readIdempotencyKey, findIdByRequestKey } = require('../utils/idempotencyKey');
+
+// Offline-replay idempotency (Idempotency-Key header, migration 0205): the row an earlier
+// request with this key created, or null.
+async function findReplayRow(table, companyId, key) {
+  const id = await findIdByRequestKey(pool, table, companyId, key);
+  if (!id) return null;
+  return (await pool.query(`SELECT * FROM ${table} WHERE id = $1 AND company_id = $2`, [id, companyId])).rows[0] || null;
+}
 
 function uuidOrNull(value) {
   if (!value) return null;
@@ -26,12 +35,24 @@ router.get('/templates', requireAuth, async (req, res) => {
 router.post('/templates', requireAdmin, async (req, res) => {
   const { name, description, items } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+  const companyId = req.user.company_id;
+  const clientRequestId = readIdempotencyKey(req);
   try {
+    if (clientRequestId) {
+      const dup = await findReplayRow('inspection_templates', companyId, clientRequestId);
+      if (dup) return res.status(200).json(dup);
+    }
     const result = await pool.query(
-      `INSERT INTO inspection_templates (company_id, name, description, items, created_by)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.user.company_id, name.trim(), description || null, JSON.stringify(items || []), req.user.id]
+      `INSERT INTO inspection_templates (company_id, name, description, items, created_by, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+       RETURNING *`,
+      [companyId, name.trim(), description || null, JSON.stringify(items || []), req.user.id, clientRequestId]
     );
+    if (result.rowCount === 0) {
+      const dup = await findReplayRow('inspection_templates', companyId, clientRequestId);
+      return dup ? res.status(200).json(dup) : res.status(409).json({ error: 'conflict' });
+    }
     res.status(201).json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -120,7 +141,12 @@ router.post('/', requireAdmin, async (req, res) => {
   if (location && location.length > 255) return res.status(400).json({ error: 'location too long (max 255 characters)' });
   if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (status && !VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'status must be pass, fail, or pending' });
+  const clientRequestId = readIdempotencyKey(req);
   try {
+    if (clientRequestId) {
+      const dup = await findReplayRow('inspections', req.user.company_id, clientRequestId);
+      if (dup) return res.status(200).json(dup);
+    }
     // template_id is a live FK to the company's inspection_templates — verify ownership so
     // a foreign template id can't be attached (and its structure rendered) on this inspection.
     if (template_id != null) {
@@ -129,12 +155,18 @@ router.post('/', requireAdmin, async (req, res) => {
     }
     const result = await pool.query(
       `INSERT INTO inspections (company_id, template_id, project_id, name, inspector, location,
-         notes, results, status, inspected_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+         notes, results, status, inspected_at, created_by, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+       RETURNING *`,
       [req.user.company_id, template_id || null, uuidOrNull(project_id), name,
        inspector, location, notes,
-       JSON.stringify(results || {}), status || 'pass', inspected_at, uuidOrNull(req.user.id)]
+       JSON.stringify(results || {}), status || 'pass', inspected_at, uuidOrNull(req.user.id), clientRequestId]
     );
+    if (result.rowCount === 0) {
+      const dup = await findReplayRow('inspections', req.user.company_id, clientRequestId);
+      return dup ? res.status(200).json(dup) : res.status(409).json({ error: 'conflict' });
+    }
     res.status(201).json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });

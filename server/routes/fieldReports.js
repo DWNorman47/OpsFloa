@@ -3,7 +3,8 @@ const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { sendPushToCompanyAdmins } = require('../push');
-const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl, getObjectStreamByUrl } = require('../r2');
+const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl, getObjectStreamByUrl,
+  safeKeyFromPublicUrl, keyBelongsTo } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
@@ -17,10 +18,35 @@ const mediaType = v => (FIELD_REPORT_MEDIA_TYPES.includes(v) ? v : FIELD_REPORT_
 // then delete it via the photo-delete route (deleteByUrl derives the key from the URL
 // with no ownership check). Restricting to photos/ + videos/ keeps a field-report
 // delete from ever reaching another subsystem's (or tenant's document) objects.
-function isOwnFieldReportMediaUrl(u) {
-  const base = process.env.R2_PUBLIC_URL;
-  if (!base || typeof u !== 'string') return false;
-  return u.startsWith(`${base}/photos/`) || u.startsWith(`${base}/videos/`);
+//
+// Keys are parsed strictly (safeKeyFromPublicUrl rejects '..', '.', empty and
+// percent-encoded segments, so `photos/../subs/...` or `photos/%2e%2e/...` can't
+// escape the folder). New uploads live under `photos/<companyId>/` / `videos/<companyId>/`
+// and must match the caller's company; legacy flat keys (`photos/<uuid>.<ext>`) predate
+// the company segment and stay readable.
+function isOwnFieldReportMediaUrl(u, companyId) {
+  const key = safeKeyFromPublicUrl(u);
+  if (!key) return false;
+  const parts = key.split('/');
+  if (parts[0] !== 'photos' && parts[0] !== 'videos') return false;
+  if (parts.length === 2) return true; // legacy flat key
+  return companyId != null && keyBelongsTo(u, `${parts[0]}/${companyId}`) && parts.length === 3;
+}
+
+// Direct-to-R2 video uploads: only real video types (the object is served from the public
+// R2 origin with this Content-Type, so e.g. text/html would be a hosted phishing page).
+const VIDEO_UPLOAD_TYPES = {
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+  'video/3gpp': '3gp', 'video/3gpp2': '3g2', 'video/x-m4v': 'm4v', 'video/mpeg': 'mpeg',
+};
+// Inline base64 photo/video payloads go through the same rule.
+const INLINE_MEDIA_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif',
+  ...Object.keys(VIDEO_UPLOAD_TYPES),
+]);
+function dataUrlMime(u) {
+  const m = /^data:([^;,]+)[;,]/.exec(u);
+  return m ? m[1].toLowerCase() : null;
 }
 
 // One report with its photos, worker + project names — the create response shape.
@@ -109,6 +135,10 @@ router.post('/', requireAuth, async (req, res) => {
       const dup = await pool.query('SELECT id FROM field_reports WHERE company_id = $1 AND client_request_id = $2', [companyId, clientRequestId]);
       if (dup.rowCount > 0) return res.status(200).json(await loadFullReport(dup.rows[0].id));
     }
+    if (!Array.isArray(photos)) return res.status(400).json({ error: 'photos must be an array' });
+    if (photos.some(p => typeof p?.url === 'string' && p.url.startsWith('data:') && !INLINE_MEDIA_TYPES.has(dataUrlMime(p.url)))) {
+      return res.status(400).json({ error: 'Unsupported media type' });
+    }
     // Estimate total upload size from base64 payloads for limit check
     const estimatedBytes = photos.reduce((sum, p) => {
       if (p.url?.startsWith('data:')) {
@@ -153,14 +183,14 @@ router.post('/', requireAuth, async (req, res) => {
           photos.map(p => {
             const caption = p.caption?.trim()?.slice(0, 500) || null;
             if (p.url?.startsWith('data:')) {
-              return uploadBase64(p.url).then(({ url, sizeBytes }) => ({
+              return uploadBase64(p.url, `photos/${companyId}`).then(({ url, sizeBytes }) => ({
                 url,
                 sizeBytes,
                 caption,
                 media_type: mediaType(p.media_type),
               }));
             }
-            if (!isOwnFieldReportMediaUrl(p.url)) throw new Error('invalid media url');
+            if (!isOwnFieldReportMediaUrl(p.url, companyId)) throw new Error('invalid media url');
             // Already uploaded to R2 (a presigned video). Count its REAL object size so
             // storage is accurate and refundable on delete — the old code stored 0, so
             // the video's bytes were never freed and the reservation-time count drifted.
@@ -303,7 +333,7 @@ router.delete('/photos/:photoId', requireAuth, async (req, res) => {
     // suspenders with the store-time allowlist: if two rows ever point at one object
     // (e.g. a resubmitted URL), deleting one row must not orphan the other's media.
     const stillReferenced = await pool.query('SELECT 1 FROM field_report_photos WHERE url = $1 LIMIT 1', [photo.url]);
-    if (stillReferenced.rowCount === 0) deleteByUrl(photo.url).catch(() => {});
+    if (stillReferenced.rowCount === 0 && isOwnFieldReportMediaUrl(photo.url, companyId)) deleteByUrl(photo.url).catch(() => {});
     const sizeBytes = parseInt(photo.size_bytes || 0);
     if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
 
@@ -334,7 +364,7 @@ router.get('/photos/:photoId/download', requireAuth, async (req, res) => {
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Image not found' });
     const { url } = existing.rows[0];
     // Same allow-list as upload/zip: never let a stray row aim this fetch off our bucket.
-    if (!isOwnFieldReportMediaUrl(url)) return res.status(400).json({ error: 'Invalid media url' });
+    if (!isOwnFieldReportMediaUrl(url, companyId)) return res.status(400).json({ error: 'Invalid media url' });
 
     const obj = await getObjectStreamByUrl(url);
     if (!obj || !obj.body) return res.status(404).json({ error: 'Image not found' });
@@ -402,6 +432,9 @@ router.get('/upload-url', requireAuth, async (req, res) => {
   const { contentType = 'video/mp4', size } = req.query;
   const companyId = req.user.company_id;
   const sizeBytes = parseInt(size) || 0;
+  const normalizedType = String(contentType).toLowerCase().split(';')[0].trim();
+  const ext = VIDEO_UPLOAD_TYPES[normalizedType];
+  if (!ext) return res.status(400).json({ error: 'File type not allowed' });
   try {
     if (sizeBytes > 0) {
       const { allowed, used, limit } = await checkStorageLimit(companyId, sizeBytes);
@@ -416,8 +449,8 @@ router.get('/upload-url', requireAuth, async (req, res) => {
     // `size` is unverified and the upload may never complete. Storage is counted when the
     // report is submitted, from the video's REAL R2 object size (HEAD-verified below), so
     // an abandoned upload isn't billed and a `size=0` request can't dodge the count.
-    const ext = contentType.split('/')[1]?.split(';')[0] || 'mp4';
-    const { uploadUrl, publicUrl } = await getPresignedUploadUrl('videos', ext, contentType);
+    // Company segment in the key so the media-url ownership check can tie it to the tenant.
+    const { uploadUrl, publicUrl } = await getPresignedUploadUrl(`videos/${companyId}`, ext, normalizedType);
     res.json({ uploadUrl, publicUrl });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to generate upload URL' }); }
 });

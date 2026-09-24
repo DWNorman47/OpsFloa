@@ -218,6 +218,15 @@ router.post('/subcontractors/:id/archive', requireAdmin, async (req, res) => {
 
 // ── Sub documents ────────────────────────────────────────────────────────────
 
+// A stored document url is rendered as a link — only http(s) (never javascript:/data:).
+function isHttpUrl(u) {
+  if (typeof u !== 'string' || u.length > 2048) return false;
+  try {
+    const p = new URL(u);
+    return p.protocol === 'https:' || p.protocol === 'http:';
+  } catch { return false; }
+}
+
 router.post('/subcontractors/:id/documents', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const { doc_type, name, url, size_bytes, expires_on } = req.body;
@@ -225,6 +234,7 @@ router.post('/subcontractors/:id/documents', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'invalid doc_type' });
   }
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+  if (!isHttpUrl(url)) return res.status(400).json({ error: 'url must be an http(s) link' });
   try {
     const sub = await assertSubInCompany(companyId, req.params.id);
     if (!sub) return res.status(404).json({ error: 'Subcontractor not found' });

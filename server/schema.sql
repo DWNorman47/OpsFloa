@@ -342,8 +342,11 @@ CREATE TABLE IF NOT EXISTS safety_talks (
   given_by   VARCHAR(255),
   talk_date  DATE         NOT NULL,
   created_by INTEGER      NOT NULL REFERENCES users(id),
+  client_request_id TEXT, -- offline-replay idempotency key (see 0205)
   created_at TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_safety_talks_client_request
+  ON safety_talks (company_id, client_request_id) WHERE client_request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS safety_talk_signoffs (
   id          SERIAL PRIMARY KEY,

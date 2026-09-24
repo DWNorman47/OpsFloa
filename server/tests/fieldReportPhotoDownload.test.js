@@ -17,6 +17,9 @@ jest.mock('../storage', () => ({ checkStorageLimit: jest.fn(), incrementStorage:
 jest.mock('../r2', () => ({
   uploadBase64: jest.fn(), getPresignedUploadUrl: jest.fn(), deleteByUrl: jest.fn(),
   getObjectMetadataByUrl: jest.fn(), getObjectStreamByUrl: jest.fn(),
+  // Real strict key parsing — the ownership check under test depends on it.
+  safeKeyFromPublicUrl: jest.requireActual('../r2').safeKeyFromPublicUrl,
+  keyBelongsTo: jest.requireActual('../r2').keyBelongsTo,
 }));
 
 const { Readable } = require('stream');

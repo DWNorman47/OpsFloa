@@ -69,14 +69,33 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 // GET /daily-reports/suggest — auto-fill manpower from time entries for a project+date
+// Admins see every co-worker's hours. Any worker may write a daily report, so a worker still
+// gets the crew's hours — but only for a project they themselves logged time on that day (they
+// were on that crew). A worker asking without a project, or for a job they weren't on, only
+// gets their own hours back — never a company-wide who-worked-how-long listing.
 router.get('/suggest', requireAuth, async (req, res) => {
   const { project_id, report_date } = req.query;
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(report_date) || isNaN(Date.parse(report_date))) {
+    return res.status(400).json({ error: 'report_date must be a valid date (YYYY-MM-DD)' });
+  }
   const companyId = req.user.company_id;
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
   try {
     const conditions = ['te.company_id = $1', 'te.work_date = $2'];
     const params = [companyId, report_date];
     if (project_id) { params.push(project_id); conditions.push(`te.project_id = $${params.length}`); }
+    if (!isAdmin) {
+      let onCrew = false;
+      if (project_id) {
+        const mine = await pool.query(
+          'SELECT 1 FROM time_entries WHERE company_id = $1 AND user_id = $2 AND project_id = $3 AND work_date = $4 LIMIT 1',
+          [companyId, req.user.id, project_id, report_date]
+        );
+        onCrew = mine.rowCount > 0;
+      }
+      if (!onCrew) { params.push(req.user.id); conditions.push(`te.user_id = $${params.length}`); }
+    }
 
     const result = await pool.query(
       `SELECT u.full_name, p.name as project_name,

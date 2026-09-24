@@ -231,3 +231,23 @@ describe('POST /api/subcontract-pos/:id/payments', () => {
     expect(res.status).toBe(409);
   });
 });
+
+describe('POST /api/subcontractors/:id/documents — url scheme', () => {
+  test('400 on a javascript: url (never stored)', async () => {
+    const res = await request(makeApp())
+      .post('/api/subcontractors/5/documents')
+      .send({ doc_type: 'coi', name: 'coi.pdf', url: 'javascript:alert(1)' });
+    expect(res.status).toBe(400);
+    expect(pool.query.mock.calls.some(c => /INSERT INTO subcontractor_documents/.test(c[0]))).toBe(false);
+  });
+
+  test('201 on an https url', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5, name: 'Acme' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, name: 'coi.pdf' }] });
+    const res = await request(makeApp())
+      .post('/api/subcontractors/5/documents')
+      .send({ doc_type: 'coi', name: 'coi.pdf', url: 'https://r2.test/subs/co-1/5/abc.pdf' });
+    expect(res.status).toBe(201);
+  });
+});

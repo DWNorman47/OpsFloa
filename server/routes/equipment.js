@@ -7,6 +7,7 @@ const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { uploadBase64 } = require('../r2');
 const { projectBelongsToCompany, userBelongsToCompany } = require('../utils/tenantRefs');
 const { projectFrozen } = require('../utils/projectCost');
+const { readIdempotencyKey, findIdByRequestKey } = require('../utils/idempotencyKey');
 
 // Upload an optional base64 condition photo (data URL) to R2, returning its URL
 // (or null). Done before opening a transaction so the DB connection isn't held
@@ -120,19 +121,44 @@ router.post('/', requireAdmin, async (req, res) => {
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const v = parsed.v;
   const companyId = req.user.company_id;
+  // Offline-replay idempotency (Idempotency-Key header, migration 0205).
+  const clientRequestId = readIdempotencyKey(req);
+  const replay = async () => {
+    const id = await findIdByRequestKey(pool, 'equipment_items', companyId, clientRequestId);
+    if (!id) return null;
+    const r = await pool.query(
+      `SELECT e.*,
+              COALESCE((SELECT SUM(h.hours) FROM equipment_hours h WHERE h.equipment_id = e.id), 0) AS total_hours,
+              (SELECT COUNT(*) FROM equipment_hours h WHERE h.equipment_id = e.id) AS log_count,
+              (SELECT MAX(h.log_date) FROM equipment_hours h WHERE h.equipment_id = e.id) AS last_logged
+       FROM equipment_items e WHERE e.id = $1 AND e.company_id = $2`,
+      [id, companyId]
+    );
+    return r.rows[0] || null;
+  };
   try {
+    if (clientRequestId) {
+      const dup = await replay();
+      if (dup) return res.status(200).json(dup);
+    }
     const result = await pool.query(
       `INSERT INTO equipment_items
          (company_id, name, type, unit_number, maintenance_interval_hours, notes,
           kind, serial_number, purchase_date, purchase_cost, photo_url,
           is_rental, rental_vendor, rental_rate, rental_rate_unit, rental_return_due,
-          rent_out_rate, rent_out_unit, mobilization_cost, operating_rate, operating_unit)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
+          rent_out_rate, rent_out_unit, mobilization_cost, operating_rate, operating_unit, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+       RETURNING *`,
       [companyId, v.name, v.type, v.unit_number, v.maintenance_interval_hours, v.notes,
        v.kind, v.serial_number, v.purchase_date, v.purchase_cost, v.photo_url,
        v.is_rental, v.rental_vendor, v.rental_rate, v.rental_rate_unit, v.rental_return_due,
-       v.rent_out_rate, v.rent_out_unit, v.mobilization_cost, v.operating_rate, v.operating_unit]
+       v.rent_out_rate, v.rent_out_unit, v.mobilization_cost, v.operating_rate, v.operating_unit, clientRequestId]
     );
+    if (result.rowCount === 0) {
+      const dup = await replay();
+      return dup ? res.status(200).json(dup) : res.status(409).json({ error: 'conflict' });
+    }
     logAudit(companyId, req.user.id, req.user.full_name, 'equipment.created', 'equipment', result.rows[0].id, v.name,
       { type: v.type, unit_number: v.unit_number });
     res.status(201).json({ ...result.rows[0], total_hours: 0, log_count: 0, last_logged: null });
@@ -264,8 +290,23 @@ router.post('/:id/hours', requireAuth, async (req, res) => {
   if (operator_name && operator_name.length > 255) return res.status(400).json({ error: 'operator_name too long (max 255 characters)' });
   if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   const companyId = req.user.company_id;
+  // Offline-replay idempotency (Idempotency-Key header, migration 0205): field crews log hours
+  // from the yard with patchy signal — a replay must not double the hours (a project cost).
+  const clientRequestId = readIdempotencyKey(req);
+  const loadHours = async (id) => (await pool.query(
+    `SELECT h.*, p.name AS project_name, u.full_name AS logged_by_name
+     FROM equipment_hours h
+     LEFT JOIN projects p ON h.project_id = p.id
+     LEFT JOIN users u ON h.created_by = u.id
+     WHERE h.id = $1 AND h.company_id = $2`,
+    [id, companyId]
+  )).rows[0];
   // Verify item belongs to this company
   try {
+    if (clientRequestId) {
+      const dupId = await findIdByRequestKey(pool, 'equipment_hours', companyId, clientRequestId);
+      if (dupId) return res.status(200).json(await loadHours(dupId));
+    }
     const item = await pool.query(
       'SELECT id FROM equipment_items WHERE id = $1 AND company_id = $2 AND active = true',
       [req.params.id, companyId]
@@ -282,16 +323,23 @@ router.post('/:id/hours', requireAuth, async (req, res) => {
 
     const full = await pool.query(
       `WITH inserted AS (
-         INSERT INTO equipment_hours (equipment_id, company_id, project_id, log_date, hours, operator_name, notes, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+         INSERT INTO equipment_hours (equipment_id, company_id, project_id, log_date, hours, operator_name, notes, created_by, client_request_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+         RETURNING *
        )
        SELECT h.*, p.name AS project_name, u.full_name AS logged_by_name
        FROM inserted h
        LEFT JOIN projects p ON h.project_id = p.id
        LEFT JOIN users u ON h.created_by = u.id`,
       [req.params.id, companyId, project_id || null, log_date, hrs,
-       operator_name, notes, req.user.id]
+       operator_name, notes, req.user.id, clientRequestId]
     );
+    if (full.rowCount === 0) {
+      // A concurrent replay with the same key won the insert — return its row.
+      const dupId = await findIdByRequestKey(pool, 'equipment_hours', companyId, clientRequestId);
+      return dupId ? res.status(200).json(await loadHours(dupId)) : res.status(409).json({ error: 'conflict' });
+    }
     logAudit(companyId, req.user.id, req.user.full_name, 'equipment.hours_logged', 'equipment', req.params.id, null,
       { log_date, hours: hrs, project_id: project_id || null });
     res.status(201).json(full.rows[0]);
@@ -364,7 +412,20 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
   const { user_id, project_id, due_at } = req.body;
   const notes = req.body.notes?.trim() || null;
   const companyId = req.user.company_id;
+  // Offline-replay idempotency (Idempotency-Key header, migration 0205): a replay of a checkout
+  // that already went through returns that checkout (200) instead of a spurious 409 "Not
+  // available" that the service worker would report as a failed sync.
+  const clientRequestId = readIdempotencyKey(req);
+  const findDupCheckout = async () => {
+    const id = await findIdByRequestKey(pool, 'equipment_checkouts', companyId, clientRequestId);
+    if (!id) return null;
+    return (await pool.query('SELECT * FROM equipment_checkouts WHERE id = $1 AND company_id = $2', [id, companyId])).rows[0] || null;
+  };
   try {
+    if (clientRequestId) {
+      const dup = await findDupCheckout();
+      if (dup) return res.status(200).json(dup);
+    }
     if (!(await userBelongsToCompany(pool, user_id, companyId))) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -389,9 +450,9 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
     if (asset.rows[0].status !== 'available') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Not available' }); }
     const co = await client.query(
       `INSERT INTO equipment_checkouts
-         (asset_id, company_id, user_id, project_id, checked_out_by, due_at, checkout_photo_url, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [req.params.id, companyId, user_id || null, project_id || null, req.user.id, due_at || null, checkout_photo_url, notes]
+         (asset_id, company_id, user_id, project_id, checked_out_by, due_at, checkout_photo_url, notes, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [req.params.id, companyId, user_id || null, project_id || null, req.user.id, due_at || null, checkout_photo_url, notes, clientRequestId]
     );
     await client.query("UPDATE equipment_items SET status='checked_out', updated_at=NOW() WHERE id=$1 AND company_id=$2",
       [req.params.id, companyId]);
@@ -401,7 +462,14 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
     res.status(201).json(co.rows[0]);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    if (err.code === '23505') return res.status(409).json({ error: 'already checked out' });
+    if (err.code === '23505') {
+      // Either the one-open-checkout index or a concurrent replay with the same key.
+      if (clientRequestId) {
+        const dup = await findDupCheckout().catch(() => null);
+        if (dup) return res.status(200).json(dup);
+      }
+      return res.status(409).json({ error: 'already checked out' });
+    }
     req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
   } finally { client.release(); }
 });
@@ -461,18 +529,35 @@ router.post('/:id/maintenance', requireAdmin, async (req, res) => {
   if (performed_by && performed_by.length > 255) return res.status(400).json({ error: 'performed_by too long (max 255 characters)' });
   if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   const companyId = req.user.company_id;
+  // Offline-replay idempotency (Idempotency-Key header, migration 0205).
+  const clientRequestId = readIdempotencyKey(req);
+  const loadLog = async (id) => (await pool.query(
+    `SELECT m.*, u.full_name AS logged_by_name FROM equipment_maintenance_logs m
+     LEFT JOIN users u ON u.id = m.created_by WHERE m.id = $1 AND m.company_id = $2`,
+    [id, companyId]
+  )).rows[0];
   try {
+    if (clientRequestId) {
+      const dupId = await findIdByRequestKey(pool, 'equipment_maintenance_logs', companyId, clientRequestId);
+      if (dupId) return res.status(200).json(await loadLog(dupId));
+    }
     const item = await pool.query('SELECT id FROM equipment_items WHERE id=$1 AND company_id=$2 AND active=true', [req.params.id, companyId]);
     if (item.rowCount === 0) return res.status(404).json({ error: 'Equipment not found' });
     const full = await pool.query(
       `WITH inserted AS (
-         INSERT INTO equipment_maintenance_logs (asset_id, company_id, log_date, kind, notes, cost, performed_by, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+         INSERT INTO equipment_maintenance_logs (asset_id, company_id, log_date, kind, notes, cost, performed_by, created_by, client_request_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+         RETURNING *
        )
        SELECT m.*, u.full_name AS logged_by_name FROM inserted m LEFT JOIN users u ON u.id = m.created_by`,
       [req.params.id, companyId, log_date, kind || 'service', notes,
-       cost != null && cost !== '' ? parseFloat(cost) : null, performed_by, req.user.id]
+       cost != null && cost !== '' ? parseFloat(cost) : null, performed_by, req.user.id, clientRequestId]
     );
+    if (full.rowCount === 0) {
+      const dupId = await findIdByRequestKey(pool, 'equipment_maintenance_logs', companyId, clientRequestId);
+      return dupId ? res.status(200).json(await loadLog(dupId)) : res.status(409).json({ error: 'conflict' });
+    }
     logAudit(companyId, req.user.id, req.user.full_name, 'equipment.maintenance_logged', 'equipment', req.params.id, null,
       { log_date, kind: kind || 'service' });
     res.status(201).json(full.rows[0]);

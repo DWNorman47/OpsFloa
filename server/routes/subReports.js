@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { readIdempotencyKey, findIdByRequestKey } = require('../utils/idempotencyKey');
 
 // GET /sub-reports
 router.get('/', requireAdmin, async (req, res) => {
@@ -59,24 +60,36 @@ router.post('/', requireAdmin, async (req, res) => {
   if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
     return res.status(400).json({ error: 'Invalid project' });
   }
+  // Offline-replay idempotency (Idempotency-Key header, migration 0205).
+  const clientRequestId = readIdempotencyKey(req);
+  const loadReport = async (id) => (await pool.query(
+    `SELECT s.*, p.name as project_name, u.full_name as created_by_name
+     FROM sub_reports s
+     LEFT JOIN projects p ON s.project_id = p.id
+     LEFT JOIN users u ON s.created_by = u.id
+     WHERE s.id = $1 AND s.company_id = $2`,
+    [id, companyId]
+  )).rows[0];
   try {
+    if (clientRequestId) {
+      const dupId = await findIdByRequestKey(pool, 'sub_reports', companyId, clientRequestId);
+      if (dupId) return res.status(200).json(await loadReport(dupId));
+    }
     const result = await pool.query(
       `INSERT INTO sub_reports
-         (company_id, project_id, report_date, sub_company, foreman_name, headcount, work_performed, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+         (company_id, project_id, report_date, sub_company, foreman_name, headcount, work_performed, notes, created_by, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+       RETURNING *`,
       [companyId, project_id || null, report_date, sub_company,
        foreman_name || null, headcountVal,
-       work_performed || null, notes || null, req.user.id]
+       work_performed || null, notes || null, req.user.id, clientRequestId]
     );
-    const full = await pool.query(
-      `SELECT s.*, p.name as project_name, u.full_name as created_by_name
-       FROM sub_reports s
-       LEFT JOIN projects p ON s.project_id = p.id
-       LEFT JOIN users u ON s.created_by = u.id
-       WHERE s.id = $1`,
-      [result.rows[0].id]
-    );
-    res.status(201).json(full.rows[0]);
+    if (result.rowCount === 0) {
+      const dupId = await findIdByRequestKey(pool, 'sub_reports', companyId, clientRequestId);
+      return dupId ? res.status(200).json(await loadReport(dupId)) : res.status(409).json({ error: 'conflict' });
+    }
+    res.status(201).json(await loadReport(result.rows[0].id));
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

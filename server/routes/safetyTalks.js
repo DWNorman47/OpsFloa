@@ -3,19 +3,45 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { sendPushToAllWorkers } = require('../push');
-const { getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
+const { getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl, safeKeyFromPublicUrl, keyBelongsTo } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
+const { readIdempotencyKey, findIdByRequestKey } = require('../utils/idempotencyKey');
 
 // Only URLs under this app's own safety-talk-attachments folder may be stored as
 // attachments (and later purged via deleteByUrl, which derives the key from the URL
 // with no ownership check). Without this an admin could POST an arbitrary R2 URL —
 // another tenant's document/COI/takeoff — as an "attachment", then delete it here.
-function isOwnSafetyAttachmentUrl(u) {
-  const base = process.env.R2_PUBLIC_URL;
-  if (!base || typeof u !== 'string') return false;
-  return u.startsWith(`${base}/safety-talk-attachments/`);
+//
+// The key is parsed strictly (safeKeyFromPublicUrl rejects '..'/'.'/empty/percent-encoded
+// segments). New uploads live under `safety-talk-attachments/<companyId>/` and must match the
+// caller's company; legacy flat keys (`safety-talk-attachments/<uuid>.<ext>`) stay valid.
+const ATTACHMENT_FOLDER = 'safety-talk-attachments';
+function isOwnSafetyAttachmentUrl(u, companyId) {
+  const key = safeKeyFromPublicUrl(u);
+  if (!key) return false;
+  const parts = key.split('/');
+  if (parts[0] !== ATTACHMENT_FOLDER) return false;
+  if (parts.length === 2) return true; // legacy flat key
+  return parts.length === 3 && companyId != null && keyBelongsTo(u, `${ATTACHMENT_FOLDER}/${companyId}`);
 }
+
+// Attachment types an admin may upload. The object is served from the public R2 origin with
+// this Content-Type, so anything renderable as active content (text/html, image/svg+xml,
+// application/xhtml+xml, JS…) is refused.
+const ATTACHMENT_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif',
+  'video/mp4', 'video/quicktime', 'video/webm',
+  'audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/webm',
+  'text/plain', 'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
 
 // GET /safety-talks
 router.get('/', requireAuth, async (req, res) => {
@@ -58,7 +84,10 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 // GET /safety-talks/:id — full with signoffs and questions
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', requireAuth, async (req, res, next) => {
+  // Non-numeric ids fall through to the literal GET routes declared further down
+  // (/attachment-upload-url) — this param route used to shadow them.
+  if (!/^\d+$/.test(req.params.id)) return next('route');
   const companyId = req.user.company_id;
   const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
   try {
@@ -121,16 +150,50 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid project' });
   }
 
+  // Offline-replay idempotency (service worker Idempotency-Key header, migration 0205): a replay
+  // of a POST whose original was saved returns the existing talk (200) — no duplicate talk and
+  // no second push blast to every worker.
+  const clientRequestId = readIdempotencyKey(req);
+  const replayResponse = async (talkId) => {
+    const [full, qs] = await Promise.all([
+      pool.query(
+        `SELECT st.*, p.name as project_name, u.full_name as created_by_name,
+                (SELECT COUNT(*) FROM safety_talk_signoffs WHERE talk_id = st.id) as signoff_count,
+                (SELECT COUNT(*) FROM safety_talk_questions WHERE talk_id = st.id) as question_count
+         FROM safety_talks st
+         LEFT JOIN projects p ON st.project_id = p.id
+         LEFT JOIN users u ON st.created_by = u.id
+         WHERE st.id = $1 AND st.company_id = $2`,
+        [talkId, companyId]
+      ),
+      pool.query('SELECT id, question, options, correct_index, order_index FROM safety_talk_questions WHERE talk_id = $1 ORDER BY order_index', [talkId]),
+    ]);
+    return { ...full.rows[0], signoffs: [], questions: qs.rows };
+  };
+  try {
+    const dupId = await findIdByRequestKey(pool, 'safety_talks', companyId, clientRequestId);
+    if (dupId) return res.status(200).json(await replayResponse(dupId));
+  } catch (err) { req.log.error({ err }, 'route error'); return res.status(500).json({ error: 'Server error' }); }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const result = await client.query(
-      `INSERT INTO safety_talks (company_id, project_id, title, content, given_by, talk_date, created_by, pass_threshold)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      `INSERT INTO safety_talks (company_id, project_id, title, content, given_by, talk_date, created_by, pass_threshold, client_request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
+       RETURNING id`,
       [companyId, project_id || null, title, content || null, given_by || null, talk_date, req.user.id,
-       pass_threshold != null ? parseInt(pass_threshold) : null]
+       pass_threshold != null ? parseInt(pass_threshold) : null, clientRequestId]
     );
+    if (result.rowCount === 0) {
+      // A concurrent replay with the same key won the insert — return its talk.
+      await client.query('ROLLBACK');
+      const dupId = await findIdByRequestKey(pool, 'safety_talks', companyId, clientRequestId);
+      if (dupId) return res.status(200).json(await replayResponse(dupId));
+      return res.status(409).json({ error: 'conflict' });
+    }
     const id = result.rows[0].id;
 
     // Insert questions
@@ -316,7 +379,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const purged = new Set();
     for (const a of atts.rows) {
       freed += parseInt(a.size_bytes || 0) || 0; // per-row refund (storage is counted per row)
-      if (!isOwnSafetyAttachmentUrl(a.url) || purged.has(a.url)) continue;
+      if (!isOwnSafetyAttachmentUrl(a.url, companyId) || purged.has(a.url)) continue;
       purged.add(a.url);
       // Purge R2 only when no OTHER talk still points at this URL (the deleted talk's own
       // rows are already gone via cascade) — mirrors the single-attachment + retention paths.
@@ -335,6 +398,9 @@ router.get('/attachment-upload-url', requireAuth, async (req, res) => {
   if (!isAdmin) return res.status(403).json({ error: 'Admins only' });
   const { ext, type, size } = req.query;
   if (!ext || !type) return res.status(400).json({ error: 'ext and type required' });
+  const contentType = String(type).toLowerCase().split(';')[0].trim();
+  if (!ATTACHMENT_TYPES.has(contentType)) return res.status(400).json({ error: 'File type not allowed' });
+  const safeExt = String(ext).replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase() || 'bin';
   try {
     const sizeBytes = parseInt(size) || 0;
     if (sizeBytes > 0) {
@@ -346,7 +412,8 @@ router.get('/attachment-upload-url', requireAuth, async (req, res) => {
         });
       }
     }
-    const result = await getPresignedUploadUrl('safety-talk-attachments', ext, type);
+    // Company segment in the key so isOwnSafetyAttachmentUrl can tie it to the tenant.
+    const result = await getPresignedUploadUrl(`${ATTACHMENT_FOLDER}/${req.user.company_id}`, safeExt, contentType);
     res.json(result);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -358,7 +425,7 @@ router.post('/:id/attachments', requireAuth, async (req, res) => {
   if (!isAdmin) return res.status(403).json({ error: 'Admins only' });
   const { name, url, content_type } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
-  if (!isOwnSafetyAttachmentUrl(url)) return res.status(400).json({ error: 'invalid attachment url' });
+  if (!isOwnSafetyAttachmentUrl(url, companyId)) return res.status(400).json({ error: 'invalid attachment url' });
   try {
     const talk = await pool.query('SELECT id FROM safety_talks WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
     if (talk.rowCount === 0) return res.status(404).json({ error: 'Not found' });
@@ -396,7 +463,7 @@ router.delete('/:id/attachments/:attId', requireAuth, async (req, res) => {
     const { url, size_bytes: bytes } = result.rows[0];
     // Purge the R2 object (was never happening — the file leaked on every delete), but
     // only when no other attachment row still points at the same URL.
-    if (isOwnSafetyAttachmentUrl(url)) {
+    if (isOwnSafetyAttachmentUrl(url, companyId)) {
       const stillRef = await pool.query('SELECT 1 FROM safety_talk_attachments WHERE url=$1 LIMIT 1', [url]);
       if (stillRef.rowCount === 0) deleteByUrl(url).catch(() => {});
     }

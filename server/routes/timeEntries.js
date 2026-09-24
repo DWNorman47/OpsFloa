@@ -35,10 +35,17 @@ const entryWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Default look-back for GET /time-entries when the caller sends no from/to (and no ?all=1).
+const DEFAULT_ENTRY_WINDOW_DAYS = 90;
+
 // Get current user's entries
 router.get('/', requireAuth, async (req, res) => {
   const { from, to } = req.query;
   const hasRange = from != null || to != null;
+  // No range given → default to the last 90 days rather than the worker's whole history.
+  // Callers that genuinely need everything (the personal dashboard's "All time" summary /
+  // full entry list) opt in with ?all=1.
+  const wantAll = !hasRange && (req.query.all === '1' || req.query.all === 'true');
   if (hasRange && (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to)) {
     return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
   }
@@ -55,7 +62,9 @@ router.get('/', requireAuth, async (req, res) => {
     const trialActive = subscription_status === 'trial' && (!trial_ends_at || new Date(trial_ends_at) >= new Date());
     const isFree = plan === 'free' && !trialActive;
     const freeDateClause = isFree ? `AND te.work_date >= CURRENT_DATE - INTERVAL '90 days'` : '';
-    const rangeClause = hasRange ? 'AND te.work_date BETWEEN $2 AND $3' : '';
+    const rangeClause = hasRange
+      ? 'AND te.work_date BETWEEN $2 AND $3'
+      : (wantAll ? '' : `AND te.work_date >= CURRENT_DATE - INTERVAL '${DEFAULT_ENTRY_WINDOW_DAYS} days'`);
     const values = hasRange ? [req.user.id, from, to] : [req.user.id];
 
     const result = await pool.query(
@@ -330,9 +339,19 @@ router.get('/messages/unread-count', requireAuth, async (req, res) => {
 
 // Delete an entry (own entries only)
 router.delete('/:id', requireAuth, async (req, res) => {
+  // Same self-service guards as PATCH (company edit toggle + 7-day window) — deleting is at
+  // least as destructive as editing. Admins deleting their own entries are unaffected.
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
   try {
+    if (!isAdmin && !(await workerEditAllowed(req.user.company_id))) {
+      return res.status(403).json({ error: 'Editing your own time is disabled by your administrator. Ask an admin to make the change.' });
+    }
     const existing = await pool.query('SELECT work_date, locked, project_id FROM time_entries WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    if (!isAdmin) {
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
+      if (new Date(existing.rows[0].work_date) < cutoff) return res.status(403).json({ error: 'Entries older than 7 days cannot be deleted' });
+    }
     if (existing.rows[0].locked) return res.status(403).json({ error: 'Approved entries cannot be deleted' });
     if (await projectFrozen(existing.rows[0].project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to change its labor.', code: 'project_frozen' });
     const locked = await pool.query(
@@ -592,6 +611,27 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
     const toISO = d => new Date(d).toLocaleDateString('en-CA');
     const existingDates = new Set(existing.rows.map(r => r.work_date && toISO(r.work_date)));
 
+    // Same integrity checks as a normal create (POST /: project in company + not frozen) plus
+    // the locked-pay-period check PATCH/DELETE enforce — never copy onto a closed-out job or
+    // into a locked pay period. Offending days are skipped (counted in `skipped`).
+    const lockedPeriods = await pool.query(
+      'SELECT period_start, period_end FROM pay_periods WHERE company_id = $1 AND period_end >= $2 AND period_start <= $3',
+      [companyId, thisWk.from, thisWk.to]
+    );
+    const inLockedPeriod = (dateStr) =>
+      lockedPeriods.rows.some(p => toISO(p.period_start) <= dateStr && dateStr <= toISO(p.period_end));
+    const projectChecks = new Map(); // project_id → { ok, wage_type }
+    const checkProject = async (pid) => {
+      if (projectChecks.has(pid)) return projectChecks.get(pid);
+      let v = { ok: false };
+      if (pid) {
+        const pr = await pool.query('SELECT wage_type FROM projects WHERE id = $1 AND company_id = $2', [pid, companyId]);
+        if (pr.rowCount > 0 && !(await projectFrozen(pid))) v = { ok: true, wage_type: pr.rows[0].wage_type };
+      }
+      projectChecks.set(pid, v);
+      return v;
+    };
+
     const created = [];
     for (const e of lastWeek.rows) {
       const lastDate = new Date(toISO(e.work_date) + 'T00:00:00');
@@ -599,14 +639,19 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
       thisDate.setDate(lastDate.getDate() + 7);
       const thisDateStr = toISO(thisDate);
       if (existingDates.has(thisDateStr)) continue;
+      if (inLockedPeriod(thisDateStr)) continue;
+      const proj = await checkProject(e.project_id);
+      if (!proj.ok) continue;
       // Phase 2 dual-write: copy the source row's timezone for the new
       // wall-clock + derive matching instants.
       const { start_ts, end_ts } = entryInstants(thisDateStr, e.start_time, e.end_time, e.timezone);
       const result = await pool.query(
-        `INSERT INTO time_entries (user_id, company_id, work_date, start_time, end_time, start_ts, end_ts, break_minutes, project_id, notes, wage_type, status, timezone)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'submitted',$12) RETURNING *`,
+        // clock_source 'log_entry' = manual entry (same as POST /), so admins see it as one.
+        // status 'pending' — the CHECK only allows pending/approved/rejected ('submitted' 500'd).
+        `INSERT INTO time_entries (user_id, company_id, work_date, start_time, end_time, start_ts, end_ts, break_minutes, project_id, notes, wage_type, status, timezone, clock_source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,'log_entry') RETURNING *`,
         [req.user.id, companyId, thisDateStr, e.start_time, e.end_time, start_ts, end_ts,
-         Math.max(0, e.break_minutes || 0), e.project_id || null, e.notes || null, e.wage_type || 'regular', e.timezone || null]
+         Math.max(0, e.break_minutes || 0), e.project_id, e.notes || null, proj.wage_type || e.wage_type || 'regular', e.timezone || null]
       );
       created.push(result.rows[0]);
       existingDates.add(thisDateStr);

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { readIdempotencyKey, findIdByRequestKey } = require('../utils/idempotencyKey');
 
 const FULL_SELECT = `
   SELECT r.*, p.name AS project_name, u.full_name AS created_by_name
@@ -57,18 +58,34 @@ router.post('/', requireAdmin, async (req, res) => {
   if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
     return res.status(400).json({ error: 'Invalid project' });
   }
+  // Offline-replay idempotency (Idempotency-Key header, migration 0205): a replay returns the
+  // RFI the original created instead of burning a second rfi_number on a duplicate.
+  const clientRequestId = readIdempotencyKey(req);
+  const replay = async () => {
+    const id = await findIdByRequestKey(pool, 'rfis', companyId, clientRequestId);
+    return id ? (await pool.query(`${FULL_SELECT} WHERE r.id = $1 AND r.company_id = $2`, [id, companyId])).rows[0] : null;
+  };
   try {
+    if (clientRequestId) {
+      const dup = await replay();
+      if (dup) return res.status(200).json(dup);
+    }
     // Auto-number atomically: subquery inside INSERT so concurrent requests can't
     // both read the same MAX and produce duplicate rfi_number values.
     const result = await pool.query(
       `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to,
-         submitted_by, date_submitted, date_due, created_by)
-       VALUES ($1,$2,(SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1),$3,$4,$5,$6,$7,$8,$9)
+         submitted_by, date_submitted, date_due, created_by, client_request_id)
+       VALUES ($1,$2,(SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1),$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (company_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
        RETURNING *`,
       [companyId, project_id || null, subject, description,
        directed_to, submitted_by, date_submitted,
-       date_due || null, req.user.id]
+       date_due || null, req.user.id, clientRequestId]
     );
+    if (result.rowCount === 0) {
+      const dup = await replay();
+      return dup ? res.status(200).json(dup) : res.status(409).json({ error: 'conflict' });
+    }
     const full = await pool.query(`${FULL_SELECT} WHERE r.id = $1`, [result.rows[0].id]);
     res.status(201).json(full.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
