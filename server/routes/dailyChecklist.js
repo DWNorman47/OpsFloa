@@ -96,7 +96,6 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
   const client = await pool.connect();
   try {
     if (!(await projectBelongsToCompany(client, projectId, companyId))) {
-      client.release();
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');
@@ -502,7 +501,6 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
   const client = await pool.connect();
   try {
     if (!(await projectBelongsToCompany(client, projectId, companyId))) {
-      client.release();
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');
@@ -886,7 +884,6 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
   const client = await pool.connect();
   try {
     if (!(await projectBelongsToCompany(client, projectId, companyId))) {
-      client.release();
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');
@@ -965,8 +962,8 @@ router.put('/days/:dayId/plan-items', requirePerm('daily_checklist_schedule_days
   const client = await pool.connect();
   try {
     const day = await loadDay(client, req.params.dayId, req.user.company_id);
-    if (!day) { client.release(); return res.status(404).json({ error: 'Day not found' }); }
-    if (!isPlannable(day)) { client.release(); return res.status(409).json({ error: 'Only a pending or paused day can be edited' }); }
+    if (!day) { return res.status(404).json({ error: 'Day not found' }); }
+    if (!isPlannable(day)) { return res.status(409).json({ error: 'Only a pending or paused day can be edited' }); }
     await client.query('BEGIN');
     await replaceRecurring(client, req.user.company_id, day.project_id, recurring, req.user.id);
     await client.query('DELETE FROM daily_checklist_items WHERE daily_checklist_id = $1', [day.id]);
@@ -991,7 +988,6 @@ router.post('/projects/:projectId/queue/reorder', requirePerm('daily_checklist_s
   const client = await pool.connect();
   try {
     if (!(await projectBelongsToCompany(client, req.params.projectId, req.user.company_id))) {
-      client.release();
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');

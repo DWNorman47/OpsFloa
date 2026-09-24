@@ -308,45 +308,6 @@ app.use('/api/resend-events', require('./routes/resendEvents'));
 // Deprecated — superseded by /api/resend-events. See routes/sendgridEvents.js.
 app.use('/api/sendgrid-events', require('./routes/sendgridEvents'));
 
-// Per-project budget category CRUD — feeds the spend rollup + budget bar.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectBudget'));
-
-// Per-project spend rollup (Phase 3) + project_expenses CRUD.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectSpend'));
-
-// Subcontractors directory + sub POs + payments. Spend rollup picks
-// the subs bucket up automatically once these tables exist.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/subcontractors'));
-
-// Material catalog (estimate-line picker) + reusable item search.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/catalog'));
-
-// P&L dashboard + WIP report — read-only aggregations on top of
-// estimates / budgets / spend / invoices.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectReports'));
-
-// Change orders — mid-project scope adjustments that bump budget categories
-// on accept. Public token-keyed view/accept/decline mirrors estimates.
-app.use('/api', requireAuth, requirePlan('business'), changeOrderRoutes);
-
-// Submittals — architect/owner approval workflow for materials and
-// equipment specs before installation.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/submittals'));
-
-// Project closeout — checklist orchestrating punchlist + lien waivers
-// + invoices into a single screen. Auto-status items read live from
-// the source modules.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/closeout'));
-
-// Lien waivers — compliance tracking; conditional/unconditional waivers
-// in either direction. Public token-keyed signing surface for the
-// counterparty.
-app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
-
-// Booking module — appointment scheduling. Admin config + admin book
-// endpoint behind auth; public booking surface (token-keyed) at
-// /api/public/book/:companySlug.
-app.use('/api', requireAuth, requirePlan('business'), bookingRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 
 // Read-only company settings — available to all authenticated users
@@ -403,6 +364,36 @@ app.get('/api/company-info', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Business-plan feature routers that mount at the bare /api prefix (their
+// paths are spread across /projects/:id/..., /subcontractors, /catalog, ...).
+// ONE mount so requireAuth + requirePlan run once per request, not once per
+// router. Anything a lower plan must reach (/api/settings, /api/company-info,
+// /api/availability, ...) MUST be registered ABOVE this line: a bare-/api
+// mount runs its middleware for every /api/* request that reaches it, so a
+// route registered below it answers 403 plan_required on starter/free plans.
+//   projectBudget  — per-project budget categories (feeds spend rollup)
+//   projectSpend   — spend rollup + project_expenses CRUD
+//   subcontractors — directory, sub POs, payments
+//   catalog        — material catalog / estimate-line picker
+//   projectReports — P&L dashboard + WIP report
+//   changeOrders   — mid-project scope changes (public view/accept above)
+//   submittals     — architect/owner approval workflow
+//   closeout       — closeout checklist
+//   lienWaivers    — lien waiver tracking (public signing above)
+//   booking        — appointment admin (public booking above)
+app.use('/api', requireAuth, requirePlan('business'), [
+  require('./routes/projectBudget'),
+  require('./routes/projectSpend'),
+  require('./routes/subcontractors'),
+  require('./routes/catalog'),
+  require('./routes/projectReports'),
+  changeOrderRoutes,
+  require('./routes/submittals'),
+  require('./routes/closeout'),
+  lienWaiverRoutes,
+  bookingRoutes,
+]);
 
 // Express error handler — bubble unhandled errors to Sentry and log them.
 // Must come after all routes. Returning a generic 500 so we don't leak internals.
