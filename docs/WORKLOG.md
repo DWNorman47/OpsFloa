@@ -6688,3 +6688,37 @@ Resolver + batched loader: `server/utils/rateHistory.js`. Writes: `utils/rateHis
   company default history IS reconstructable; worker.updated / project.updated logged no
   details, so worker and project rate history is NOT. Nothing reconstructed automatically.
 Tests: rateHistory, payStatementRateHistory, rateHistoryRoute (server); RateHistory.test.jsx.
+
+## 2026-09-24 — Rate-history money bugs (follow-up to 0209)
+- **Weighted-average OT × daily days:** week-context / other-type-run rows on a DAILY-rate day
+  entered the FLSA blend at the day rate as if hourly ($200/day → $200/h). They now enter at
+  day pay ÷ that day's regular hours (payStatement `workedPay`, rate-aware path). Daily $200
+  Mon–Wed 10h + hourly $25 Thu–Fri 10h, weekly 40: OT $900 → $360.
+- **Job cost, daily worker across projects:** `laborCostCents` priced each project's rows alone,
+  so a 4h/4h day cost a full day on each project ($400 for a $200 day). New `opts.dayContext`
+  (`loadLaborDayContext` / `loadLaborCostOpts` in paidHours) keeps only the project's hours share
+  of the day, like QBO billLabor. Wired into invoices T&M, project spend, WIP/P&L (single +
+  batch). Hourly workers unaffected; no extra query unless a daily-rate day is involved.
+  NOT wired: admin `GET /projects/:id/entries` (calls buildPayStatement directly; outside this
+  change's edit scope) — still costs a shared daily day in full.
+- **Locked-period reach:** span widened to whole pay weeks (weekly OT / weighted average price a
+  locked period with its week's later days), and starts at 1900-01-01 when the row is or becomes
+  the earliest (earliest-row rule re-prices every date before it). `checkLocked` with no history
+  assumes the 1900 baseline addChange will create.
+- **Company prevailing fallback dated:** migration 0210 `company_prevailing_rate_history`
+  (backfilled from the setting at 1900-01-01). Engine prices each prevailing entry without a
+  project rate at the fallback in effect on its date ($360 → $480 bug on a setting change).
+  Settings PATCH writes history (`prevailing_rate_effective_date`, locked confirm, 0 allowed);
+  API `/admin/company/prevailing-rate-history`; cache job refreshes the setting; ManageRates
+  shows the history + effective date. New companies get history on the first change (baseline
+  snapshot) — no signup change needed.
+- **Leave:** sick and vacation priced separately (computeLeaveHours `sickByDate` /
+  `vacationByDate`); $20 sick day 100% + $30 vacation day 50% = $280 (was $300).
+- **worker-hours export:** now from `companyStatements` (full-week loading, OT overrides, rate-aware
+  OT). The old query also never selected `wage_type`, so in production every row computed as 0h.
+- **companyToday:** empty `company_timezone` → most common `users.timezone` → America/Phoenix
+  (never UTC). The daily cache job uses the same resolution.
+- Left for later: certified payroll (admin.js `/certified-payroll`) still uses the CURRENT company
+  prevailing fallback (`companyPrevRate`) — should use `companyPrevailingRateOn(cpRateBook, day)`.
+Tests: payMoneyFixes0210 (new), rateHistoryRoute, rateHistory, payStatementRateHistory,
+adminWorkerHoursExport, projectSpendRoute.

@@ -39,6 +39,26 @@ router.get('/units', requireAuth, requireInventoryView, async (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Purchase-order lifecycle (docs/db-enums.md `purchase_orders.status`). `partial` and the
+// normal `received` are set only by the receive route; PATCH may move a PO along these
+// manual edges. Once anything has been received a PO can never go back to `draft` (its
+// lines would become editable below qty_received, and a draft can be hard-deleted).
+const PO_STATUSES = ['draft', 'submitted', 'partial', 'received', 'cancelled'];
+const PO_MANUAL_TRANSITIONS = {
+  draft:     ['submitted', 'cancelled'],
+  submitted: ['draft', 'cancelled'],
+  partial:   ['received', 'cancelled'], // received = close short
+  received:  [],
+  cancelled: ['draft'],                 // reopen — only if nothing was received
+};
+function poTransitionError(from, to, hasReceipts) {
+  if (!(PO_MANUAL_TRANSITIONS[from] || []).includes(to)) {
+    return `Cannot change a ${from} PO to ${to}`;
+  }
+  if (to === 'draft' && hasReceipts) return 'This PO has received stock and cannot return to draft';
+  return null;
+}
+
 function isAdmin(req) {
   return req.user.role === 'admin' || req.user.role === 'super_admin';
 }
@@ -193,30 +213,33 @@ async function setStockAbsolute(client, companyId, itemId, locationId, targetQty
 //      converts to 9 × (1/30) = 0.3 box and subtracts from the box row.
 // Must be called inside a BEGIN/COMMIT block.
 async function autoConvertIssueUom(client, companyId, itemId, locationId, requestedUomId, qty) {
-  if (!requestedUomId) return { uomId: null, qty }; // base unit — no conversion needed
+  // null = the item's primary/base unit (factor 1, the unitless stock row). It is converted
+  // like any other UOM: issuing 30 in the default unit when stock sits only on a box row
+  // must draw 1 box, not open a new unitless row at −30 and leave the box row untouched.
+  const reqId = requestedUomId ? parseInt(requestedUomId) : null;
 
   // Check if stock already exists for the requested UOM at this location
   const ownRow = await client.query(
     `SELECT quantity FROM inventory_stock
-     WHERE item_id=$1 AND location_id=$2 AND company_id=$3 AND uom_id=$4`,
-    [itemId, locationId, companyId, requestedUomId]
+     WHERE item_id=$1 AND location_id=$2 AND company_id=$3 AND COALESCE(uom_id,0)=COALESCE($4::int,0)`,
+    [itemId, locationId, companyId, reqId]
   );
-  if (ownRow.rowCount > 0) return { uomId: requestedUomId, qty }; // has its own row, use it directly
+  if (ownRow.rowCount > 0) return { uomId: reqId, qty }; // has its own row, use it directly
 
-  // No row for requested UOM — find the UOM that actually has stock here
+  // No row for requested UOM — find the UOM that actually has stock here (unitless rows
+  // included). Both factors COALESCE to 1 so the base unit converts symmetrically.
   const other = await client.query(
     `SELECT s.uom_id,
             COALESCE(su.factor, 1) AS stock_factor,
-            ru.factor              AS req_factor
+            COALESCE((SELECT ru.factor FROM inventory_item_uoms ru WHERE ru.id = $4::int), 1) AS req_factor
      FROM inventory_stock s
      LEFT JOIN inventory_item_uoms su ON s.uom_id = su.id
-     JOIN  inventory_item_uoms ru ON ru.id = $4
      WHERE s.item_id=$1 AND s.location_id=$2 AND s.company_id=$3
-       AND s.uom_id IS NOT NULL
+       AND COALESCE(s.uom_id,0) <> COALESCE($4::int,0)
      ORDER BY s.quantity DESC LIMIT 1`,
-    [itemId, locationId, companyId, requestedUomId]
+    [itemId, locationId, companyId, reqId]
   );
-  if (other.rowCount === 0) return { uomId: requestedUomId, qty }; // can't resolve, leave as-is
+  if (other.rowCount === 0) return { uomId: reqId, qty }; // can't resolve, leave as-is
 
   const { uom_id, stock_factor, req_factor } = other.rows[0];
   // qty_in_stock_uom = qty_in_requested_uom × (req_factor / stock_factor)
@@ -229,9 +252,11 @@ async function autoConvertIssueUom(client, companyId, itemId, locationId, reques
 async function maybeSendLowStockAlert(companyId, itemId) {
   try {
     const r = await pool.query(
-      `SELECT i.name, i.reorder_point, COALESCE(SUM(s.quantity), 0) AS total_qty
+      // On-hand in BASE units (row quantity × its UOM factor) — reorder_point is per base unit.
+      `SELECT i.name, i.reorder_point, COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0) AS total_qty
        FROM inventory_items i
        LEFT JOIN inventory_stock s ON i.id = s.item_id AND s.company_id = i.company_id
+       LEFT JOIN inventory_item_uoms u ON s.uom_id = u.id
        WHERE i.id = $1 AND i.company_id = $2 AND i.active = true
        GROUP BY i.id`,
       [itemId, companyId]
@@ -505,11 +530,13 @@ router.patch('/items/:id', requireAuth, requirePerm('manage_inventory'), async (
 router.delete('/items/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
+    // EXISTS(quantity <> 0), not SUM > 0: a +10 row and a −10 row (different UOMs/locations)
+    // sum to zero but are still real, non-zero stock that archiving would orphan.
     const stock = await pool.query(
-      'SELECT COALESCE(SUM(quantity),0) as total FROM inventory_stock WHERE item_id=$1 AND company_id=$2',
+      'SELECT EXISTS(SELECT 1 FROM inventory_stock WHERE item_id=$1 AND company_id=$2 AND quantity <> 0) AS has_stock',
       [req.params.id, companyId]
     );
-    if (parseFloat(stock.rows[0].total) > 0) {
+    if (stock.rows[0]?.has_stock) {
       return res.status(409).json({ error: 'Item has stock on hand. Transfer or adjust to zero before archiving.' });
     }
     const result = await pool.query(
@@ -749,10 +776,10 @@ router.delete('/locations/:id', requireAuth, requirePerm('manage_inventory'), as
   const companyId = req.user.company_id;
   try {
     const stock = await pool.query(
-      'SELECT COALESCE(SUM(quantity),0) as total FROM inventory_stock WHERE location_id=$1 AND company_id=$2',
+      'SELECT EXISTS(SELECT 1 FROM inventory_stock WHERE location_id=$1 AND company_id=$2 AND quantity <> 0) AS has_stock',
       [req.params.id, companyId]
     );
-    if (parseFloat(stock.rows[0].total) > 0) {
+    if (stock.rows[0]?.has_stock) {
       return res.status(409).json({ error: 'Location has stock on hand. Transfer all items out before archiving.' });
     }
     const result = await pool.query(
@@ -880,16 +907,19 @@ router.get('/stock/low', requireAuth, requirePerm('manage_inventory'), async (re
     const result = await pool.query(
       `SELECT i.id as item_id, i.name as item_name, i.sku, i.unit, i.unit_cost,
               i.reorder_point, i.reorder_qty,
-              COALESCE(SUM(s.quantity), 0) as total_qty,
+              -- Base units: each stock row is in its own UOM (a box row of 10 = 300 each),
+              -- and reorder_point / unit_cost are per base unit.
+              COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0) as total_qty,
               json_agg(json_build_object(
-                'location_id', l.id, 'location_name', l.name, 'quantity', s.quantity
+                'location_id', l.id, 'location_name', l.name, 'quantity', s.quantity * COALESCE(u.factor, 1)
               ) ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL) as locations
        FROM inventory_items i
        LEFT JOIN inventory_stock s ON i.id = s.item_id
+       LEFT JOIN inventory_item_uoms u ON s.uom_id = u.id
        LEFT JOIN inventory_locations l ON s.location_id = l.id AND l.active = true
        WHERE i.company_id = $1 AND i.active = true AND i.reorder_point > 0
        GROUP BY i.id
-       HAVING COALESCE(SUM(s.quantity), 0) <= i.reorder_point
+       HAVING COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0) <= i.reorder_point
        ORDER BY i.name`,
       [companyId]
     );
@@ -919,14 +949,12 @@ router.post('/transactions', requireAuth, requireInventoryView, TXN_COERCE, asyn
   if (type === 'receive' && !to_location_id) return res.status(400).json({ error: 'to_location_id required for receive' });
   if (type === 'issue' && !from_location_id) return res.status(400).json({ error: 'from_location_id required for issue' });
   if (type === 'transfer' && !to_location_id) return res.status(400).json({ error: 'to_location_id required for transfer' });
-  if (
-    type === 'transfer' &&
-    from_location_id &&
-    from_location_id === to_location_id &&
-    !req.body.area_id && !req.body.rack_id && !req.body.bay_id && !req.body.compartment_id
-  ) {
-    // Same location is allowed when moving between bins (area/rack/bay/compartment).
-    // Reject only when no bin is supplied — that's genuinely a no-op.
+  // Same-location transfer = a bin move. A stock row is keyed by (item, location, UOM) and
+  // the bin is only a label on it, so a PARTIAL move ("3 of 10 to bin B") can't be
+  // represented: it netted to zero on the same row and then relabelled ALL 10 as bin B.
+  // Only a whole-row move (re-bin everything) is allowed; partial moves are refused in the TX.
+  const sameLocationMove = type === 'transfer' && from_location_id && from_location_id === to_location_id;
+  if (sameLocationMove && !req.body.area_id && !req.body.rack_id && !req.body.bay_id && !req.body.compartment_id) {
     return res.status(400).json({ error: 'from and to must differ — pick a different location or bin' });
   }
   if (type === 'adjust' && !to_location_id) return res.status(400).json({ error: 'to_location_id required for adjust' });
@@ -986,6 +1014,23 @@ router.post('/transactions', requireAuth, requireInventoryView, TXN_COERCE, asyn
 
     const toQty = to_quantity ? parseFloat(to_quantity) : null;
 
+    if (sameLocationMove) {
+      const row = await client.query(
+        `SELECT quantity FROM inventory_stock
+          WHERE item_id=$1 AND location_id=$2 AND company_id=$3 AND COALESCE(uom_id,0)=COALESCE($4::int,0)
+          FOR UPDATE`,
+        [item_id, from_location_id, companyId, resolvedUomId]
+      );
+      const onRow = row.rowCount ? parseFloat(row.rows[0].quantity) : 0;
+      if (!row.rowCount || Math.abs(onRow - absQty) > 1e-9) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Moving part of a stock row to another bin at the same location isn't supported — each item keeps one bin per location. Move the whole quantity (${onRow}) or transfer to a different location.`,
+          code: 'partial_bin_move',
+        });
+      }
+    }
+
     // Validate supplier belongs to company if provided
     const resolvedSupplierId = supplier_id ? parseInt(supplier_id) : null;
     if (resolvedSupplierId) {
@@ -1018,7 +1063,17 @@ router.post('/transactions', requireAuth, requireInventoryView, TXN_COERCE, asyn
       );
       await applyStockDelta(client, companyId, item_id, from_location_id, -issueQty, bin, issueUomId);
     }
-    if (type === 'transfer') {
+    if (type === 'transfer' && sameLocationMove) {
+      // Whole-row re-bin (verified above): quantity is unchanged, only the bin label moves.
+      await client.query(
+        `UPDATE inventory_stock
+            SET area_id=$5, rack_id=$6, bay_id=$7, compartment_id=$8, updated_at=NOW()
+          WHERE item_id=$1 AND location_id=$2 AND company_id=$3 AND COALESCE(uom_id,0)=COALESCE($4::int,0)`,
+        [item_id, from_location_id, companyId, resolvedUomId,
+         area_id ? parseInt(area_id) : null, rack_id ? parseInt(rack_id) : null,
+         bay_id ? parseInt(bay_id) : null, compartment_id ? parseInt(compartment_id) : null]
+      );
+    } else if (type === 'transfer') {
       // from_location is optional — skipping the debit when unknown lets users
       // record an inbound move without having to guess where stock was before.
       if (from_location_id) {
@@ -1840,7 +1895,7 @@ router.post('/cycle-counts/:id/submit', requireAuth, requireInventoryView, async
   const qty = parseFloat(counted_qty);
   if (isNaN(qty) || qty < 0) return res.status(400).json({ error: 'counted_qty must be a non-negative number' });
   const notesTrimmed = notes?.trim()?.slice(0, 500) || null;
-  const resolvedCountedUomId = counted_uom_id != null ? parseInt(counted_uom_id) : null;
+  let resolvedCountedUomId = counted_uom_id != null ? parseInt(counted_uom_id) : null;
   if (resolvedCountedUomId != null && (!Number.isInteger(resolvedCountedUomId) || resolvedCountedUomId <= 0)) {
     return res.status(400).json({ error: 'counted_uom_id must be a valid integer' });
   }
@@ -1882,7 +1937,7 @@ router.post('/cycle-counts/:id/submit', requireAuth, requireInventoryView, async
       return res.status(409).json({ error: 'Line is already in a final state and cannot be re-submitted' });
     }
 
-    let countedFactor = 1;
+    let countedFactor = null;
     if (resolvedCountedUomId != null) {
       const countedUom = await client.query(
         `SELECT factor FROM inventory_item_uoms
@@ -1905,6 +1960,14 @@ router.post('/cycle-counts/:id/submit', requireAuth, requireInventoryView, async
       );
       if (stockUom.rowCount === 0) throw new Error('Cycle count line has an invalid stock UOM');
       stockFactor = parseFloat(stockUom.rows[0].factor);
+    }
+    // No counted_uom_id ⇒ the count is in the line's STOCK UOM — that's the unit the worker
+    // was shown (MyCount labels the input with it), and what the admin line edit and the
+    // override route assume. Treating it as the base unit turned "10" boxes-of-30 into
+    // 0.33 box and wiped on-hand on completion.
+    if (countedFactor == null) {
+      countedFactor = stockFactor;
+      resolvedCountedUomId = line.stock_uom_id != null ? parseInt(line.stock_uom_id) : null;
     }
     if (!Number.isFinite(countedFactor) || !Number.isFinite(stockFactor) || stockFactor === 0) {
       throw new Error('Cycle count line has an invalid UOM conversion factor');
@@ -2578,7 +2641,9 @@ router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'
   if (reference_no !== undefined && reference_no && reference_no.trim().length > 100) return res.status(400).json({ error: 'reference_no too long (max 100 characters)' });
   try {
     const existing = await pool.query(
-      'SELECT id, status FROM purchase_orders WHERE id=$1 AND company_id=$2',
+      `SELECT po.id, po.status,
+              EXISTS(SELECT 1 FROM purchase_order_lines pol WHERE pol.po_id = po.id AND pol.qty_received > 0) AS has_receipts
+         FROM purchase_orders po WHERE po.id=$1 AND po.company_id=$2`,
       [req.params.id, companyId]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'PO not found' });
@@ -2597,8 +2662,14 @@ router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'
       if (!location.rowCount) return res.status(400).json({ error: 'Location not found' });
     }
     const cur = existing.rows[0];
-    if (['received', 'cancelled'].includes(cur.status) && status === undefined) {
+    const statusChanging = status !== undefined && status !== cur.status;
+    if (status !== undefined && !PO_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    if (['received', 'cancelled'].includes(cur.status) && !statusChanging) {
       return res.status(400).json({ error: `Cannot edit a ${cur.status} PO` });
+    }
+    if (statusChanging) {
+      const blocked = poTransitionError(cur.status, status, !!cur.has_receipts);
+      if (blocked) return res.status(409).json({ error: blocked, code: 'invalid_po_transition' });
     }
     const sets = [], vals = [req.params.id, companyId]; let idx = 3;
     if (supplier_id  !== undefined) { sets.push(`supplier_id=$${idx++}`);    vals.push(supplier_id  || null); }
@@ -2615,9 +2686,7 @@ router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'
     }
     if (notes        !== undefined) { sets.push(`notes=$${idx++}`);          vals.push(notes?.trim() || null); }
     if (reference_no !== undefined) { sets.push(`reference_no=$${idx++}`);   vals.push(reference_no?.trim() || null); }
-    if (status       !== undefined) {
-      const VALID = ['draft','submitted','partial','received','cancelled'];
-      if (!VALID.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    if (statusChanging) {
       sets.push(`status=$${idx++}`); vals.push(status);
       if (status === 'submitted')  { sets.push(`submitted_at=NOW()`); }
       if (status === 'received')   { sets.push(`received_at=NOW()`); }
@@ -2636,12 +2705,20 @@ router.delete('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory
   const companyId = req.user.company_id;
   try {
     const existing = await pool.query(
-      'SELECT id, status FROM purchase_orders WHERE id=$1 AND company_id=$2',
+      `SELECT po.id, po.status,
+              EXISTS(SELECT 1 FROM purchase_order_lines pol WHERE pol.po_id = po.id AND pol.qty_received > 0) AS has_receipts
+         FROM purchase_orders po WHERE po.id=$1 AND po.company_id=$2`,
       [req.params.id, companyId]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'PO not found' });
-    const { status } = existing.rows[0];
+    const { status, has_receipts } = existing.rows[0];
     if (status === 'received') return res.status(409).json({ error: 'Cannot delete a received PO' });
+    // Never hard-delete a PO that has posted receipts — it would erase the receiving record
+    // behind stock that's already on the shelf (and the received-basis job cost).
+    if (status === 'draft' && has_receipts) {
+      return res.status(409).json({ error: 'This PO has received stock and cannot be deleted' });
+    }
+    if (status === 'cancelled') return res.json({ success: true });
     if (status === 'draft') {
       await pool.query('DELETE FROM purchase_orders WHERE id=$1', [req.params.id]);
     } else {
@@ -2830,19 +2907,23 @@ router.post('/purchase-orders/:id/receive', requireAuth, requirePerm('manage_inv
       receivedItemIds.add(line.item_id);
     }
 
-    // Update PO status based on received amounts
-    const totals = await client.query(
-      `SELECT COALESCE(SUM(qty_ordered),0) AS ordered, COALESCE(SUM(qty_received),0) AS received
-       FROM purchase_order_lines WHERE po_id=$1`,
-      [req.params.id]
-    );
-    const { ordered, received } = totals.rows[0];
-    let newStatus = 'partial';
-    if (parseFloat(received) >= parseFloat(ordered)) newStatus = 'received';
-    await client.query(
-      `UPDATE purchase_orders SET status=$1${newStatus === 'received' ? ', received_at=NOW()' : ''} WHERE id=$2`,
-      [newStatus, req.params.id]
-    );
+    // Update PO status based on received amounts — only if this call actually received
+    // something. A request where every line was skipped (bad id, zero qty, already full)
+    // must not flip a submitted PO to 'partial'.
+    if (receivedItemIds.size > 0) {
+      const totals = await client.query(
+        `SELECT COALESCE(SUM(qty_ordered),0) AS ordered, COALESCE(SUM(qty_received),0) AS received
+         FROM purchase_order_lines WHERE po_id=$1`,
+        [req.params.id]
+      );
+      const { ordered, received } = totals.rows[0];
+      let newStatus = 'partial';
+      if (parseFloat(received) >= parseFloat(ordered)) newStatus = 'received';
+      await client.query(
+        `UPDATE purchase_orders SET status=$1${newStatus === 'received' ? ', received_at=NOW()' : ''} WHERE id=$2`,
+        [newStatus, req.params.id]
+      );
+    }
 
     await client.query('COMMIT');
     // Return updated PO with lines
@@ -2914,7 +2995,16 @@ router.post('/purchase-orders/:id/email', requireAuth, requirePerm('manage_inven
 
     const currency = await companyCurrency(req.user.company_id);
     const fmt = n => n != null ? formatCurrency(n, currency) : '—';
-    const fmtDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    // order_date / expected_date are DATE columns: node-pg returns them as JS Date
+    // objects (local midnight), not 'YYYY-MM-DD' strings, so `d + 'T00:00:00'`
+    // produced "Invalid Date" in the supplier email. Accept either form.
+    const fmtDate = d => {
+      if (!d) return '—';
+      const day = d instanceof Date
+        ? new Date(d.getFullYear(), d.getMonth(), d.getDate())
+        : new Date(`${String(d).slice(0, 10)}T00:00:00`);
+      return isNaN(day) ? '—' : day.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
 
     const lineTotal = lines.reduce((s, l) => s + (l.unit_cost != null ? parseFloat(l.unit_cost) * parseFloat(l.qty_ordered) : 0), 0);
     const hasAnyPricing = lines.some(l => l.unit_cost != null);
@@ -2983,7 +3073,7 @@ router.post('/purchase-orders/:id/email', requireAuth, requirePerm('manage_inven
 
         <p style="margin-top:24px;font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px">
           Please confirm receipt of this purchase order by replying to this email.
-          This order was generated by ${po.company_name} via OpsFloa.
+          This order was generated by ${escapeHtml(po.company_name)} via OpsFloa.
         </p>
       </div>`
     );
@@ -3019,9 +3109,9 @@ router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (re
       sku: 'i.sku',
       category: 'i.category',
       unit: 'i.unit',
-      on_hand: 'COALESCE(SUM(s.quantity), 0)',
+      on_hand: 'COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0)',
       unit_cost: 'i.unit_cost',
-      total_value: '(COALESCE(SUM(s.quantity), 0) * COALESCE(i.unit_cost, 0))',
+      total_value: '(COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0) * COALESCE(i.unit_cost, 0))',
     };
     const sortCol = sortCols[sort] || sortCols.name;
     const sortDir = String(dir).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
@@ -3029,10 +3119,13 @@ router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (re
 
     // Grand total via dedicated aggregation — avoids shipping all rows to Node just to sum
     const totalResult = await pool.query(
-      `SELECT COALESCE(SUM(s.quantity * COALESCE(i.unit_cost, 0)), 0) AS grand_total,
+      // Quantities are converted to BASE units (row qty × UOM factor): unit_cost is per
+      // base unit, so a box row of 10 (factor 30) is worth 300 × unit_cost, not 10 ×.
+      `SELECT COALESCE(SUM(s.quantity * COALESCE(u.factor, 1) * COALESCE(i.unit_cost, 0)), 0) AS grand_total,
               COUNT(DISTINCT i.id) AS total_items
        FROM inventory_items i
        LEFT JOIN inventory_stock s ON i.id = s.item_id AND s.company_id = i.company_id
+       LEFT JOIN inventory_item_uoms u ON s.uom_id = u.id
        LEFT JOIN inventory_locations l ON s.location_id = l.id AND l.active = true
        WHERE ${whereClause}`,
       values
@@ -3040,17 +3133,18 @@ router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (re
 
     const result = await pool.query(
       `SELECT i.id, i.name, i.sku, i.category, i.unit, i.unit_cost,
-              COALESCE(SUM(s.quantity), 0) AS total_qty,
-              COALESCE(SUM(s.quantity), 0) * COALESCE(i.unit_cost, 0) AS total_value,
+              COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0) AS total_qty,
+              COALESCE(SUM(s.quantity * COALESCE(u.factor, 1)), 0) * COALESCE(i.unit_cost, 0) AS total_value,
               json_agg(
                 json_build_object(
                   'location_id', l.id,
                   'location_name', l.name,
-                  'quantity', s.quantity
+                  'quantity', s.quantity * COALESCE(u.factor, 1)
                 ) ORDER BY l.name
               ) FILTER (WHERE l.id IS NOT NULL) AS locations
        FROM inventory_items i
        LEFT JOIN inventory_stock s ON i.id = s.item_id AND s.company_id = i.company_id
+       LEFT JOIN inventory_item_uoms u ON s.uom_id = u.id
        LEFT JOIN inventory_locations l ON s.location_id = l.id AND l.active = true
        WHERE ${whereClause}
        GROUP BY i.id
@@ -3069,3 +3163,4 @@ router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (re
 
 module.exports = router;
 module.exports.setStockAbsolute = setStockAbsolute; // exported for unit tests
+module.exports.autoConvertIssueUom = autoConvertIssueUom; // exported for unit tests

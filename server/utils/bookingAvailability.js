@@ -7,6 +7,58 @@
 // module decides who is bookable and picks the round-robin winner.
 
 const { rangesOverlap, APPOINTMENT_BLOCKING_STATUSES } = require('../constants/bookingEnums');
+const { instantFromLocal } = require('./timeFormat');
+
+// ── Time-off → instants ─────────────────────────────────────────────────────
+
+function addDaysIso(isoDate, n) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+function toIsoDate(v) {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+// Approved time off is stored as whole calendar DATES (start_date..end_date inclusive).
+// Those are the worker's local days: an LA worker's Friday off is Fri 00:00 → Sat 00:00
+// America/Los_Angeles, NOT Fri 00:00 UTC (which blocked Thu 5pm → Fri 5pm PT).
+// `timezone` = the worker's zone, falling back to the company zone, then UTC.
+function timeOffRange(startDate, endDate, timezone) {
+  const s = toIsoDate(startDate);
+  const e = toIsoDate(endDate);
+  return {
+    start: instantFromLocal(s, '00:00:00', timezone || 'UTC'),
+    end:   instantFromLocal(addDaysIso(e, 1), '00:00:00', timezone || 'UTC'),
+  };
+}
+
+// The existing-appointment query window. existingAppointmentBlocks() pads the EXISTING
+// appointment by buffer_before on its start and buffer_after on its end, so the slot can
+// collide with an appointment that ends up to buffer_after before the slot (or starts up
+// to buffer_before after it). Padding the query by max(before, after) on both sides (+1
+// minute of slack) guarantees every appointment the pure check could reject is loaded.
+function appointmentQueryPadMs(bufferBeforeMin, bufferAfterMin) {
+  return (Math.max(Number(bufferBeforeMin) || 0, Number(bufferAfterMin) || 0) + 1) * 60_000;
+}
+
+// Human-readable appointment time for emails, in an explicit zone with its abbreviation
+// ("Fri, Sep 25, 2026, 9:00 AM PDT"). A bare toLocaleString() on the (UTC) server printed
+// UTC wall time with no zone. Bad/missing zone → UTC, still labelled.
+function formatAppointmentTime(instant, timezone) {
+  const opts = {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  };
+  const d = new Date(instant);
+  try {
+    return d.toLocaleString('en-US', { ...opts, timeZone: timezone || 'UTC' });
+  } catch {
+    return d.toLocaleString('en-US', { ...opts, timeZone: 'UTC' });
+  }
+}
 
 // ── Slot construction ───────────────────────────────────────────────────────
 
@@ -194,4 +246,7 @@ module.exports = {
   userCanTakeSlot,
   candidatesForSlot,
   pickRoundRobinWinner,
+  timeOffRange,
+  appointmentQueryPadMs,
+  formatAppointmentTime,
 };

@@ -14,14 +14,25 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+const DEFAULT_INACTIVE_DAYS = 3;
+
+// Setting value → positive integer day count. Missing/blank → the default (3);
+// anything else that isn't a positive whole number → null (caller skips that company).
+function parseInactiveDays(raw) {
+  if (raw == null || String(raw).trim() === '') return DEFAULT_INACTIVE_DAYS;
+  const s = String(raw).trim();
+  if (!/^\d+(\.0+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
+
 async function checkInactiveWorkers() {
   // Get all active companies with their inactive_days threshold and alert toggle
   const companies = await pool.query(`
       SELECT c.id, c.name,
-             COALESCE(
-               (SELECT value::int FROM settings WHERE company_id = c.id AND key = 'notification_inactive_days'),
-               3
-             ) as inactive_days,
+             -- Raw text: a bad value ('3.5', '') made the integer cast throw and abort the query
+             -- for EVERY company. Parsed per company below (missing → 3, invalid → skip).
+             (SELECT value FROM settings WHERE company_id = c.id AND key = 'notification_inactive_days') as inactive_days_raw,
              COALESCE(
                (SELECT value FROM settings WHERE company_id = c.id AND key = 'feature_inactive_alerts'),
                '0'
@@ -31,8 +42,13 @@ async function checkInactiveWorkers() {
     `);
 
     for (const company of companies.rows) {
-      const { id: companyId, name: companyName, inactive_days, feature_inactive_alerts } = company;
+      const { id: companyId, name: companyName, inactive_days_raw, feature_inactive_alerts } = company;
       if (feature_inactive_alerts === '0') continue;
+      const inactive_days = parseInactiveDays(inactive_days_raw);
+      if (inactive_days == null) {
+        logger.warn({ companyId, value: inactive_days_raw }, 'inactiveWorkers: invalid notification_inactive_days, skipping company');
+        continue;
+      }
       // Isolate each company: a single company's failure must not abort the batch or throw
       // to runJob, whose whole-job retry would re-alert every company already processed.
       try {
@@ -126,4 +142,4 @@ function startInactiveWorkerJob() {
   cron.schedule('0 8 * * *', () => runJob('inactiveWorkers', checkInactiveWorkers));
 }
 
-module.exports = { startInactiveWorkerJob };
+module.exports = { startInactiveWorkerJob, checkInactiveWorkers, parseInactiveDays };

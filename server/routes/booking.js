@@ -28,7 +28,26 @@ const {
   buildCandidateSlots,
   candidatesForSlot,
   pickRoundRobinWinner,
+  timeOffRange,
+  appointmentQueryPadMs,
+  formatAppointmentTime,
 } = require('../utils/bookingAvailability');
+
+// Approved time off for a candidate pool, as local calendar dates + the zone they're in
+// (worker's own timezone → company_timezone → UTC). timeOffRange() turns them into
+// instants in THAT zone; the ±1-day date filter covers any zone offset from the UTC
+// slot instants passed as $2/$3.
+const TIME_OFF_SQL = `SELECT t.user_id,
+            to_char(t.start_date, 'YYYY-MM-DD') AS start_date,
+            to_char(t.end_date,   'YYYY-MM-DD') AS end_date,
+            COALESCE(NULLIF(u.timezone, ''),
+                     NULLIF((SELECT s.value FROM settings s
+                              WHERE s.company_id = u.company_id AND s.key = 'company_timezone'), ''),
+                     'UTC') AS timezone
+       FROM time_off_requests t
+       JOIN users u ON u.id = t.user_id
+      WHERE t.user_id = ANY($1) AND t.status = 'approved'
+        AND t.end_date >= ($2::date - 1) AND t.start_date <= ($3::date + 1)`;
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -454,8 +473,8 @@ router.get('/appointment-types/:id/availability', requireAuth, async (req, res) 
     // the entire pool over the slot window.
     const horizonEnd = slots[slots.length - 1];
     const horizonStart = slots[0];
-    const horizonStartWithBuffer = new Date(horizonStart.getTime() - (at.buffer_before_min + 60) * 60_000);
-    const horizonEndWithBuffer   = new Date(horizonEnd.getTime() + (at.buffer_after_min + 60) * 60_000);
+    const horizonStartWithBuffer = new Date(horizonStart.getTime() - appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min) - 3_600_000);
+    const horizonEndWithBuffer   = new Date(horizonEnd.getTime() + appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min) + 3_600_000);
 
     const [windowsRes, shiftsRes, timeOffRes, apptsRes] = await Promise.all([
       pool.query(
@@ -474,12 +493,7 @@ router.get('/appointment-types/:id/availability', requireAuth, async (req, res) 
         [userIds, horizonStartWithBuffer, horizonEndWithBuffer]
       ).catch(() => ({ rows: [] })),
       pool.query(
-        `SELECT user_id,
-                (start_date::timestamp AT TIME ZONE 'UTC') AS start,
-                ((end_date::timestamp AT TIME ZONE 'UTC') + INTERVAL '1 day') AS end
-           FROM time_off_requests
-          WHERE user_id = ANY($1) AND status = 'approved'
-            AND end_date >= $2::date AND start_date <= $3::date`,
+        TIME_OFF_SQL,
         [userIds, horizonStart, horizonEnd]
       ).catch(() => ({ rows: [] })),
       pool.query(
@@ -512,9 +526,7 @@ router.get('/appointment-types/:id/availability', requireAuth, async (req, res) 
         start: new Date(sh.start), end: new Date(sh.end), shift_type_id: sh.shift_type_id,
       });
     }
-    for (const t of timeOffRes.rows) {
-      byUser.get(t.user_id)?.time_off.push({ start: new Date(t.start), end: new Date(t.end) });
-    }
+    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push(timeOffRange(t.start_date, t.end_date, t.timezone));
     for (const a of apptsRes.rows) {
       byUser.get(a.user_id)?.appointments.push({
         start: new Date(a.start), end: new Date(a.end), status: a.status,
@@ -644,16 +656,11 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
            FROM shifts
           WHERE user_id = ANY($1)
             AND end_ts > $2 AND start_ts < $3`,
-        [userIds, new Date(slotStart.getTime() - (apt.buffer_before_min + 1) * 60_000),
-                  new Date(slotEnd.getTime()   + (apt.buffer_after_min  + 1) * 60_000)]
+        [userIds, new Date(slotStart.getTime() - appointmentQueryPadMs(apt.buffer_before_min, apt.buffer_after_min)),
+                  new Date(slotEnd.getTime()   + appointmentQueryPadMs(apt.buffer_before_min, apt.buffer_after_min))]
       ).catch(() => ({ rows: [] })),
       client.query(
-        `SELECT user_id,
-                (start_date::timestamp AT TIME ZONE 'UTC') AS start,
-                ((end_date::timestamp AT TIME ZONE 'UTC') + INTERVAL '1 day') AS end
-           FROM time_off_requests
-          WHERE user_id = ANY($1) AND status = 'approved'
-            AND end_date >= $2::date AND start_date <= $3::date`,
+        TIME_OFF_SQL,
         [userIds, slotStart, slotEnd]
       ).catch(() => ({ rows: [] })),
       client.query(
@@ -667,8 +674,8 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
             AND scheduled_at < $4`,
         [
           userIds, [...APPOINTMENT_BLOCKING_STATUSES],
-          new Date(slotStart.getTime() - (apt.buffer_before_min + 1) * 60_000),
-          new Date(slotEnd.getTime()   + (apt.buffer_after_min  + 1) * 60_000),
+          new Date(slotStart.getTime() - appointmentQueryPadMs(apt.buffer_before_min, apt.buffer_after_min)),
+          new Date(slotEnd.getTime()   + appointmentQueryPadMs(apt.buffer_before_min, apt.buffer_after_min)),
         ]
       ),
       client.query(
@@ -691,9 +698,7 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
     for (const sh of shiftsRes.rows) byUser.get(sh.user_id)?.shifts.push({
       start: new Date(sh.start), end: new Date(sh.end), shift_type_id: sh.shift_type_id,
     });
-    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push({
-      start: new Date(t.start), end: new Date(t.end),
-    });
+    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push(timeOffRange(t.start_date, t.end_date, t.timezone));
     for (const a of apptsRes.rows) byUser.get(a.user_id)?.appointments.push({
       start: new Date(a.start), end: new Date(a.end), status: a.status,
     });
@@ -1161,8 +1166,8 @@ publicRouter.get('/:companySlug/:typeSlug/availability', async (req, res) => {
 
     const horizonStart = slots[0];
     const horizonEnd = slots[slots.length - 1];
-    const horizonStartBuf = new Date(horizonStart.getTime() - (at.buffer_before_min + 60) * 60_000);
-    const horizonEndBuf   = new Date(horizonEnd.getTime()   + (at.buffer_after_min  + 60) * 60_000);
+    const horizonStartBuf = new Date(horizonStart.getTime() - appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min) - 3_600_000);
+    const horizonEndBuf   = new Date(horizonEnd.getTime()   + appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min) + 3_600_000);
 
     const [windowsRes, shiftsRes, timeOffRes, apptsRes] = await Promise.all([
       pool.query(
@@ -1179,12 +1184,7 @@ publicRouter.get('/:companySlug/:typeSlug/availability', async (req, res) => {
         [userIds, horizonStartBuf, horizonEndBuf]
       ).catch(() => ({ rows: [] })),
       pool.query(
-        `SELECT user_id,
-                (start_date::timestamp AT TIME ZONE 'UTC') AS start,
-                ((end_date::timestamp AT TIME ZONE 'UTC') + INTERVAL '1 day') AS end
-           FROM time_off_requests
-          WHERE user_id = ANY($1) AND status = 'approved'
-            AND end_date >= $2::date AND start_date <= $3::date`,
+        TIME_OFF_SQL,
         [userIds, horizonStart, horizonEnd]
       ).catch(() => ({ rows: [] })),
       pool.query(
@@ -1207,9 +1207,7 @@ publicRouter.get('/:companySlug/:typeSlug/availability', async (req, res) => {
     for (const sh of shiftsRes.rows) byUser.get(sh.user_id)?.shifts.push({
       start: new Date(sh.start), end: new Date(sh.end), shift_type_id: sh.shift_type_id,
     });
-    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push({
-      start: new Date(t.start), end: new Date(t.end),
-    });
+    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push(timeOffRange(t.start_date, t.end_date, t.timezone));
     for (const a of apptsRes.rows) byUser.get(a.user_id)?.appointments.push({
       start: new Date(a.start), end: new Date(a.end), status: a.status,
     });
@@ -1300,16 +1298,11 @@ publicRouter.post('/:companySlug/:typeSlug', publicBookLimiter, async (req, res)
       client.query(
         `SELECT user_id, start_ts AS start, end_ts AS end, shift_type_id
            FROM shifts WHERE user_id = ANY($1) AND end_ts > $2 AND start_ts < $3`,
-        [userIds, new Date(slotStart.getTime() - (at.buffer_before_min + 1) * 60_000),
-                  new Date(slotEnd.getTime()   + (at.buffer_after_min  + 1) * 60_000)]
+        [userIds, new Date(slotStart.getTime() - appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min)),
+                  new Date(slotEnd.getTime()   + appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min))]
       ).catch(() => ({ rows: [] })),
       client.query(
-        `SELECT user_id,
-                (start_date::timestamp AT TIME ZONE 'UTC') AS start,
-                ((end_date::timestamp AT TIME ZONE 'UTC') + INTERVAL '1 day') AS end
-           FROM time_off_requests
-          WHERE user_id = ANY($1) AND status = 'approved'
-            AND end_date >= $2::date AND start_date <= $3::date`,
+        TIME_OFF_SQL,
         [userIds, slotStart, slotEnd]
       ).catch(() => ({ rows: [] })),
       client.query(
@@ -1321,8 +1314,8 @@ publicRouter.post('/:companySlug/:typeSlug', publicBookLimiter, async (req, res)
             AND scheduled_at + (duration_minutes || ' minutes')::interval > $3
             AND scheduled_at < $4`,
         [userIds, [...APPOINTMENT_BLOCKING_STATUSES],
-         new Date(slotStart.getTime() - (at.buffer_before_min + 1) * 60_000),
-         new Date(slotEnd.getTime()   + (at.buffer_after_min  + 1) * 60_000)]
+         new Date(slotStart.getTime() - appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min)),
+         new Date(slotEnd.getTime()   + appointmentQueryPadMs(at.buffer_before_min, at.buffer_after_min))]
       ),
       client.query(
         `SELECT assigned_user_id AS user_id, MAX(completed_at) AS last_completed_at
@@ -1344,9 +1337,7 @@ publicRouter.post('/:companySlug/:typeSlug', publicBookLimiter, async (req, res)
     for (const sh of shiftsRes.rows) byUser.get(sh.user_id)?.shifts.push({
       start: new Date(sh.start), end: new Date(sh.end), shift_type_id: sh.shift_type_id,
     });
-    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push({
-      start: new Date(t.start), end: new Date(t.end),
-    });
+    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push(timeOffRange(t.start_date, t.end_date, t.timezone));
     for (const a of apptsRes.rows) byUser.get(a.user_id)?.appointments.push({
       start: new Date(a.start), end: new Date(a.end), status: a.status,
     });
@@ -1428,10 +1419,21 @@ async function sendBookingEmails({
   // Look up the company name + assignee email; the public book path
   // doesn't have them on the in-scope objects.
   const companyRow = await pool.query('SELECT name, slug FROM companies WHERE id = $1', [companyId]);
-  const assigneeRow = await pool.query('SELECT email FROM users WHERE id = $1', [assignee.id]);
+  const assigneeRow = await pool.query(
+    `SELECT u.email, u.timezone,
+            (SELECT s.value FROM settings s WHERE s.company_id = $2 AND s.key = 'company_timezone') AS company_timezone
+       FROM users u WHERE u.id = $1`,
+    [assignee.id, companyId]
+  );
   const companyName = companyRow.rows[0]?.name || 'the contractor';
   const assigneeEmail = assigneeRow.rows[0]?.email || null;
-  const when = new Date(slotStart).toLocaleString();
+  // Format in an explicit zone with its abbreviation — a bare toLocaleString() on the UTC
+  // server printed UTC wall time with no zone. The client sees the company's local time;
+  // the assignee sees their own zone (both fall back to each other, then UTC).
+  const companyTz = assigneeRow.rows[0]?.company_timezone || null;
+  const assigneeTz = assigneeRow.rows[0]?.timezone || assignee.timezone || null;
+  const when = formatAppointmentTime(slotStart, companyTz || assigneeTz);
+  const assigneeWhen = formatAppointmentTime(slotStart, assigneeTz || companyTz);
   const manageUrl = `${process.env.PUBLIC_APP_URL || 'https://opsfloa.com'}/book/manage/${manageToken}`;
   const slotEndDate = new Date(new Date(slotStart).getTime() + durationMinutes * 60_000);
 
@@ -1473,7 +1475,7 @@ async function sendBookingEmails({
       assigneeEmail,
       `New booking: ${apt.name} with ${clientName}`,
       `<p>Hi ${escapeHtml(assignee.full_name)},</p>
-       <p>You've been assigned a <strong>${escapeHtml(apt.name)}</strong> with <strong>${escapeHtml(clientName)}</strong> on <strong>${escapeHtml(when)}</strong> (${durationMinutes} minutes).</p>
+       <p>You've been assigned a <strong>${escapeHtml(apt.name)}</strong> with <strong>${escapeHtml(clientName)}</strong> on <strong>${escapeHtml(assigneeWhen)}</strong> (${durationMinutes} minutes).</p>
        <p>
          <strong>Client email:</strong> ${escapeHtml(clientEmail)}<br/>
          ${clientPhone ? `<strong>Client phone:</strong> ${escapeHtml(clientPhone)}<br/>` : ''}
@@ -1487,4 +1489,5 @@ async function sendBookingEmails({
 }
 
 router.publicRouter = publicRouter;
+router.sendBookingEmails = sendBookingEmails; // exported for unit tests
 module.exports = router;

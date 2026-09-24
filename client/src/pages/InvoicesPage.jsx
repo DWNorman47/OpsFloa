@@ -869,9 +869,16 @@ export function InvoicesPanel() {
             <>
               <span style={{ fontWeight: 600 }}>{est.estimate_number}</span>
               <span style={{ color: '#6b7280' }}> · {est.project_name} · {est.client_name_snapshot}</span>
+              {est.live_invoice_id && (
+                <span style={{ color: '#b45309', fontWeight: 600 }}> · {t.invAlreadyInvoiced.replace('{number}', est.live_invoice_number || '')}</span>
+              )}
             </>
           )}
-          onPick={est => createFrom(`/invoices/from-estimate/${est.id}`)}
+          // An estimate that already has a live invoice opens that invoice rather
+          // than billing it twice (the server 409s a second from-estimate too).
+          onPick={est => (est.live_invoice_id
+            ? setView({ kind: 'detail', id: est.live_invoice_id })
+            : createFrom(`/invoices/from-estimate/${est.id}`))}
           onCancel={backToList}
         />
       )}

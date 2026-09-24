@@ -159,7 +159,47 @@ function computeInvoiceTotals({ lines = [], tax_pct = 0, retainage_pct = 0 }) {
   return { subtotal, tax, total, retainage_held };
 }
 
+// Invoice lines for an invoice drawn from an estimate, so the invoice bills
+// exactly the estimate's total. Only the lines that count toward the bid
+// (ESTIMATE_LINE_TYPES_IN_TOTAL — alternates/optionals are excluded, same as the
+// estimate total), then overhead / margin / contingency as their own lines, with
+// amounts taken from computeEstimateTotals so they can't drift from the estimate.
+// Tax is NOT a line — the invoice applies the estimate's tax_pct to the subtotal,
+// and since invoice subtotal == estimate preTax, the tax cent-matches too.
+// Input lines are estimate_lines rows (numeric columns may arrive as strings).
+function invoiceLinesFromEstimate({ lines = [], overhead_pct = 0, margin_pct = 0, contingency_pct = 0 }) {
+  const num = v => (typeof v === 'number' ? v : parseFloat(v));
+  const inTotal = lines.filter(l => !l.line_type || ESTIMATE_LINE_TYPES_IN_TOTAL.includes(l.line_type));
+  const out = inTotal.map((l, i) => {
+    const total = Math.max(0, Math.round(num(l.total_cents) || 0));
+    return {
+      category: l.category, sort_order: i, description: l.description,
+      qty: num(l.qty) || 0, unit: l.unit || null,
+      unit_cost_cents: Math.round(num(l.unit_cost_cents) || 0),
+      total_cents: total, notes: l.notes || null,
+    };
+  });
+  const t = computeEstimateTotals({
+    lines: inTotal.map(l => ({ total_cents: num(l.total_cents), line_type: l.line_type })),
+    overhead_pct: num(overhead_pct) || 0,
+    margin_pct: num(margin_pct) || 0,
+    contingency_pct: num(contingency_pct) || 0,
+  });
+  // 'margin' has no money category of its own — it bills under 'other'.
+  const markups = [
+    { category: 'overhead',    description: 'Overhead',    cents: t.overhead },
+    { category: 'other',       description: 'Margin',      cents: t.margin },
+    { category: 'contingency', description: 'Contingency', cents: t.contingency },
+  ];
+  for (const m of markups) {
+    if (m.cents <= 0) continue;
+    out.push({ category: m.category, sort_order: out.length, description: m.description, qty: 1, unit: null, unit_cost_cents: m.cents, total_cents: m.cents, notes: null });
+  }
+  return out;
+}
+
 module.exports = {
+  invoiceLinesFromEstimate,
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
   MONEY_CATEGORIES,

@@ -390,10 +390,17 @@ router.post('/change-orders/:id/withdraw', requireAuth, requireCommercialAccess,
     if (!['draft', 'sent'].includes(co.status)) {
       return res.status(409).json({ error: `Cannot withdraw from '${co.status}'` });
     }
-    await pool.query(
-      `UPDATE change_orders SET status='withdrawn', responded_at=NOW() WHERE id=$1`,
-      [req.params.id]
+    // Guard the write on status + company, not just the (unlocked) read above: a
+    // client accept committing in between would otherwise be overwritten to
+    // 'withdrawn' while its budget bump stays applied (budget up, revenue gone).
+    const upd = await pool.query(
+      `UPDATE change_orders SET status='withdrawn', responded_at=NOW()
+        WHERE id=$1 AND company_id=$2 AND status IN ('draft', 'sent')`,
+      [req.params.id, companyId]
     );
+    if (upd.rowCount === 0) {
+      return res.status(409).json({ error: 'Change order is no longer withdrawable (the client may have just responded)' });
+    }
     await logAudit(companyId, req.user.id, req.user.full_name,
       'change_order.withdrawn', 'change_order', req.params.id, co.co_number, null);
     res.json({ success: true });

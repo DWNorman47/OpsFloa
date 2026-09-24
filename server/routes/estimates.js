@@ -10,6 +10,7 @@ const { clientBelongsToCompany } = require('../utils/tenantRefs');
 const { loadSettings } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
 const { escapeHtml } = require('../utils/htmlEscape');
+const { wallDateInTZ } = require('../utils/timeFormat');
 
 // App base for the client-facing acceptance link (/e/<token>). Trailing slash trimmed.
 const APP_URL = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
@@ -44,6 +45,37 @@ const {
 } = require('../constants/projectMoneyEnums');
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
+
+// ── valid_until expiry ────────────────────────────────────────────────────────
+// valid_until is a DATE, and node-pg hands DATEs back as JS Date objects (no
+// global type parser — deliberate, see utils/payStatement.js). Never build a
+// timestamp by string-concatenating it (`${d}T23:59:59Z` is Invalid Date, and
+// every comparison against NaN is false → an expired estimate stays acceptable
+// forever). Selects that need the check add EXPIRY_COLUMNS, which returns the
+// date as text plus the company's time zone.
+const EXPIRY_COLUMNS = `to_char(e.valid_until, 'YYYY-MM-DD') AS valid_until_ymd,
+       (SELECT s.value FROM settings s WHERE s.company_id = e.company_id AND s.key = 'company_timezone') AS company_timezone`;
+
+// 'YYYY-MM-DD' for a DATE value (Date from node-pg, or a string). node-pg parses
+// a DATE as local midnight of that calendar day, so read it with local getters.
+function dateOnlyYmd(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    const pad = n => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+  }
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v));
+  return m ? m[1] : null;
+}
+
+// An estimate is valid THROUGH valid_until (inclusive) in the company's local
+// calendar; it's expired once the company's today is past that date.
+function isPastValidUntil(row, now = new Date()) {
+  const ymd = row.valid_until_ymd || dateOnlyYmd(row.valid_until);
+  if (!ymd) return false;
+  return ymd < wallDateInTZ(now, row.company_timezone || 'UTC');
+}
 
 // Validation helpers — keep route handlers narrow.
 
@@ -222,7 +254,15 @@ router.get('/', requireAuth, requireCommercialAccess, async (req, res) => {
       pool.query(`SELECT COUNT(*) FROM estimates WHERE ${where}`, params),
       pool.query(
         `SELECT id, estimate_number, project_name, client_name_snapshot, status,
-                subtotal_cents, total_cents, valid_until, bid_due_at, sent_at, responded_at, created_at
+                subtotal_cents, total_cents, valid_until, bid_due_at, sent_at, responded_at, created_at,
+                -- The live (non-void) invoice drawn from this estimate, if any — the
+                -- invoice "from estimate" picker labels these instead of re-invoicing.
+                (SELECT i.id FROM invoices i
+                  WHERE i.source_estimate_id = estimates.id AND i.company_id = estimates.company_id AND i.status <> 'void'
+                  ORDER BY i.id LIMIT 1) AS live_invoice_id,
+                (SELECT i.invoice_number FROM invoices i
+                  WHERE i.source_estimate_id = estimates.id AND i.company_id = estimates.company_id AND i.status <> 'void'
+                  ORDER BY i.id LIMIT 1) AS live_invoice_number
            FROM estimates WHERE ${where}
           ORDER BY created_at DESC
           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -680,10 +720,16 @@ router.post('/:id/withdraw', requireAuth, requireCommercialAccess, async (req, r
     if (!['draft', 'sent'].includes(headRes.rows[0].status)) {
       return res.status(409).json({ error: `Cannot withdraw from status '${headRes.rows[0].status}'` });
     }
-    await pool.query(
-      `UPDATE estimates SET status='withdrawn', responded_at=NOW() WHERE id=$1`,
-      [req.params.id]
+    // Guard the write on status + company: a public accept/decline committing
+    // between the read above and this write must not be overwritten.
+    const upd = await pool.query(
+      `UPDATE estimates SET status='withdrawn', responded_at=NOW()
+        WHERE id=$1 AND company_id=$2 AND status IN ('draft', 'sent')`,
+      [req.params.id, companyId]
     );
+    if (upd.rowCount === 0) {
+      return res.status(409).json({ error: 'Estimate is no longer withdrawable (the client may have just responded)' });
+    }
     await recordAudit({
       estimateId: req.params.id, action: 'withdrawn', actorKind: 'admin',
       actorUserId: req.user.id, actorIp: req.ip,
@@ -715,12 +761,16 @@ router.post('/:id/accept', requireAuth, requireCommercialAccess, async (req, res
     if (!['draft', 'sent'].includes(headRes.rows[0].status)) {
       return res.status(409).json({ error: `Cannot accept from status '${headRes.rows[0].status}'` });
     }
-    await pool.query(
+    // Status-guarded write (see withdraw) — a concurrent public decline wins.
+    const upd = await pool.query(
       `UPDATE estimates SET status='accepted', responded_at=NOW(),
          accepted_signer_name=COALESCE($2, accepted_signer_name)
-        WHERE id=$1`,
-      [req.params.id, acceptedBy]
+        WHERE id=$1 AND company_id=$3 AND status IN ('draft', 'sent')`,
+      [req.params.id, acceptedBy, companyId]
     );
+    if (upd.rowCount === 0) {
+      return res.status(409).json({ error: 'Estimate is no longer acceptable (the client may have just responded)' });
+    }
     await recordAudit({
       estimateId: req.params.id, action: 'accepted', actorKind: 'admin',
       actorUserId: req.user.id, actorIp: req.ip,
@@ -746,7 +796,8 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
   try {
     await client.query('BEGIN');
     const headRes = await client.query(
-      'SELECT * FROM estimates WHERE id = $1 AND company_id = $2 FOR UPDATE',
+      `SELECT e.*, ${EXPIRY_COLUMNS}
+         FROM estimates e WHERE e.id = $1 AND e.company_id = $2 FOR UPDATE OF e`,
       [req.params.id, companyId]
     );
     if (headRes.rowCount === 0) {
@@ -765,12 +816,9 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
     // Honour valid_until on convert too. Public accept enforces this,
     // but if the convert is fired late (admin clicked convert after
     // the validity window closed) the price commitment is stale.
-    if (est.valid_until) {
-      const exp = new Date(`${est.valid_until}T23:59:59Z`);
-      if (Date.now() > exp.getTime()) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'Estimate has expired since acceptance — duplicate to revise' });
-      }
+    if (isPastValidUntil(est)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Estimate has expired since acceptance — duplicate to revise' });
     }
     // Seed budget categories from COST (what the job costs you), not price.
     // cost_cents where set, else the line price — so the budget is a real cost
@@ -900,8 +948,8 @@ publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
     // both pass the status guard — matches the CO + lien-waiver flows.
     await client.query('BEGIN');
     const r = await client.query(
-      `SELECT id, company_id, status, estimate_number, valid_until
-         FROM estimates WHERE response_token_hash = $1 FOR UPDATE`,
+      `SELECT e.id, e.company_id, e.status, e.estimate_number, e.valid_until, ${EXPIRY_COLUMNS}
+         FROM estimates e WHERE e.response_token_hash = $1 FOR UPDATE OF e`,
       [tokenHash]
     );
     if (r.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
@@ -910,13 +958,10 @@ publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `Cannot accept from status '${est.status}'` });
     }
-    if (est.valid_until) {
-      const exp = new Date(`${est.valid_until}T23:59:59Z`);
-      if (Date.now() > exp.getTime()) {
-        await client.query(`UPDATE estimates SET status='expired' WHERE id=$1 AND status='sent'`, [est.id]);
-        await client.query('COMMIT');
-        return res.status(409).json({ error: 'Estimate has expired' });
-      }
+    if (isPastValidUntil(est)) {
+      await client.query(`UPDATE estimates SET status='expired' WHERE id=$1 AND status='sent'`, [est.id]);
+      await client.query('COMMIT');
+      return res.status(409).json({ error: 'Estimate has expired' });
     }
     const upd = await client.query(
       `UPDATE estimates SET

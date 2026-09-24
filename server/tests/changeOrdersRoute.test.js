@@ -182,3 +182,26 @@ describe('POST /api/public/change-orders/decline/:token', () => {
     expect(upd[0]).toMatch(/AND status='sent'/);
   });
 });
+
+// ── Withdraw must not clobber a concurrent client acceptance ──────────────────
+describe('POST /api/change-orders/:id/withdraw (race guard)', () => {
+  test('the UPDATE is guarded on company + draft/sent status', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 5, status: 'sent', co_number: 'CO-1' }] }) // assertCoInCompany
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });                               // guarded UPDATE
+    const res = await request(makeApp()).post('/api/change-orders/5/withdraw');
+    expect(res.status).toBe(200);
+    const upd = pool.query.mock.calls.find(c => /UPDATE change_orders SET status='withdrawn'/.test(c[0]));
+    expect(upd[0]).toMatch(/company_id\s*=\s*\$2/);
+    expect(upd[0]).toMatch(/status IN \('draft',\s*'sent'\)/);
+    expect(upd[1]).toEqual(['5', 'co-1']);
+  });
+
+  test('409 when the client accepted between the read and the write (0 rows updated)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 5, status: 'sent', co_number: 'CO-1' }] }) // stale read: still sent
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                               // guard rejects
+    const res = await request(makeApp()).post('/api/change-orders/5/withdraw');
+    expect(res.status).toBe(409);
+  });
+});

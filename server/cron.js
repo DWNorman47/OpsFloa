@@ -36,60 +36,78 @@ function getDayOfWeekInTimezone(timezone) {
 }
 
 // Send push notifications to workers with shifts tomorrow.
-// Runs once per hour; the reminder_sent flag prevents duplicate sends.
-// Each company can configure their preferred send hour via shift_reminder_hour setting.
+// Runs once per hour; each company can configure its send hour via shift_reminder_hour.
+// "Tomorrow" is the COMPANY-LOCAL tomorrow (company_timezone), not UTC CURRENT_DATE + 1 —
+// an LA company's 7 PM send runs at 02:00 UTC the next day, when UTC tomorrow is two
+// local days out. Rows are CLAIMED (reminder_sent=true … RETURNING) before any push goes
+// out, so a restart mid-batch or an overlapping run can't re-send the batch.
 async function sendShiftReminders() {
   try {
-    // Find distinct companies that have unremminded shifts tomorrow
+    // Candidate companies: any unreminded shift within ±1 day of UTC tomorrow covers every
+    // zone's local tomorrow. The exact local date is applied per company below.
     const companiesResult = await pool.query(
       `SELECT DISTINCT company_id FROM shifts
-       WHERE shift_date = CURRENT_DATE + 1 AND reminder_sent = false AND cant_make_it = false`
+       WHERE shift_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 2
+         AND reminder_sent = false AND cant_make_it = false`
     );
 
     for (const { company_id } of companiesResult.rows) {
-      // Get this company's timezone and shift_reminder_hour
-      const settingsResult = await pool.query(
-        `SELECT key, value FROM settings WHERE company_id = $1 AND key IN ('company_timezone', 'shift_reminder_hour')`,
-        [company_id]
-      );
-      const settingsMap = Object.fromEntries(settingsResult.rows.map(r => [r.key, r.value]));
-      const timezone = settingsMap.company_timezone || 'UTC';
-      const reminderHour = parseInt(settingsMap.shift_reminder_hour ?? '7');
+      try {
+        // Get this company's timezone and shift_reminder_hour
+        const settingsResult = await pool.query(
+          `SELECT key, value FROM settings WHERE company_id = $1 AND key IN ('company_timezone', 'shift_reminder_hour')`,
+          [company_id]
+        );
+        const settingsMap = Object.fromEntries(settingsResult.rows.map(r => [r.key, r.value]));
+        const timezone = settingsMap.company_timezone || 'UTC';
+        const reminderHour = parseInt(settingsMap.shift_reminder_hour ?? '7');
 
-      // Only send if the current hour in the company's timezone matches
-      const nowHour = getHourInTimezone(timezone);
-      if (nowHour !== reminderHour) continue;
+        // Only send if the current hour in the company's timezone matches
+        const nowHour = getHourInTimezone(timezone);
+        if (nowHour !== reminderHour) continue;
 
-      const result = await pool.query(
-        `SELECT s.id, s.user_id, s.start_time, s.end_time, p.name as project_name
-         FROM shifts s
-         LEFT JOIN projects p ON s.project_id = p.id
-         WHERE s.shift_date = CURRENT_DATE + 1
-           AND s.company_id = $1
-           AND s.reminder_sent = false
-           AND s.cant_make_it = false`,
-        [company_id]
-      );
+        const localTomorrow = addDaysIso(getDateInTimezone(timezone), 1);
+        // Claim first, then send: a lost push (process dies after the claim) beats
+        // re-pushing the whole batch to every worker after a restart.
+        const result = await pool.query(
+          `UPDATE shifts s SET reminder_sent = true
+            WHERE s.shift_date = $2::date
+              AND s.company_id = $1
+              AND s.reminder_sent = false
+              AND s.cant_make_it = false
+          RETURNING s.id, s.user_id, s.start_time, s.end_time,
+                    (SELECT p.name FROM projects p WHERE p.id = s.project_id) AS project_name`,
+          [company_id, localTomorrow]
+        );
 
-      if (result.rows.length === 0) continue;
+        if (result.rows.length === 0) continue;
 
-      for (const shift of result.rows) {
-        const timeStr = shift.start_time?.substring(0, 5) || '';
-        const body = `${timeStr}${shift.project_name ? ' · ' + shift.project_name : ''}`;
-        await sendPushToUser(shift.user_id, {
-          title: 'Shift reminder — tomorrow',
-          body,
-          url: '/timeclock#schedule',
-        });
+        for (const shift of result.rows) {
+          const timeStr = shift.start_time?.substring(0, 5) || '';
+          const body = `${timeStr}${shift.project_name ? ' · ' + shift.project_name : ''}`;
+          try {
+            await sendPushToUser(shift.user_id, {
+              title: 'Shift reminder — tomorrow',
+              body,
+              url: '/timeclock#schedule',
+            });
+          } catch (pushErr) {
+            console.error('[cron] shift reminder push failed:', pushErr);
+          }
+        }
+        console.log(`[cron] Sent shift reminders for ${result.rows.length} shift(s) for company ${company_id}`);
+      } catch (companyErr) {
+        console.error(`[cron] sendShiftReminders company ${company_id} error:`, companyErr);
       }
-
-      const ids = result.rows.map(s => s.id);
-      await pool.query(`UPDATE shifts SET reminder_sent = true WHERE id = ANY($1)`, [ids]);
-      console.log(`[cron] Sent shift reminders for ${ids.length} shift(s) for company ${company_id}`);
     }
   } catch (err) {
     console.error('[cron] sendShiftReminders error:', err);
   }
+}
+
+function addDaysIso(isoDate, n) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
 // Company-local calendar date (YYYY-MM-DD) — the once-per-Friday key.
@@ -287,6 +305,7 @@ async function maintainActiveClocks() {
 
 const { sendEmail: cronSendEmail } = require('./email');
 const { escapeHtml: cronEscape } = require('./utils/htmlEscape');
+const { formatAppointmentTime } = require('./utils/bookingAvailability');
 
 async function sendBookingReminders() {
   try {
@@ -335,7 +354,9 @@ async function sendBookingReminders() {
         const r = await pool.query(
           `SELECT a.id, a.client_email, a.client_name, a.scheduled_at, a.duration_minutes,
                   t.name AS type_name, t.location_detail,
-                  u.full_name AS assignee_name, c.name AS company_name
+                  u.full_name AS assignee_name, c.name AS company_name,
+                  (SELECT s.value FROM settings s WHERE s.company_id = a.company_id AND s.key = 'company_timezone') AS company_timezone,
+                  u.timezone AS assignee_timezone
              FROM appointments a
              JOIN appointment_types t ON a.appointment_type_id = t.id
              JOIN users u ON a.assigned_user_id = u.id
@@ -349,7 +370,7 @@ async function sendBookingReminders() {
           a.client_email,
           `Reminder: ${a.type_name} with ${a.company_name} tomorrow`,
           `<p>Hi ${cronEscape(a.client_name)},</p>
-           <p>This is a reminder that you have a <strong>${cronEscape(a.type_name)}</strong> with ${cronEscape(a.assignee_name)} from ${cronEscape(a.company_name)} tomorrow at <strong>${cronEscape(new Date(a.scheduled_at).toLocaleString())}</strong> (${a.duration_minutes} minutes).</p>
+           <p>This is a reminder that you have a <strong>${cronEscape(a.type_name)}</strong> with ${cronEscape(a.assignee_name)} from ${cronEscape(a.company_name)} tomorrow at <strong>${cronEscape(formatAppointmentTime(a.scheduled_at, a.company_timezone || a.assignee_timezone))}</strong> (${a.duration_minutes} minutes).</p>
            ${a.location_detail ? `<p>Location: ${cronEscape(a.location_detail)}</p>` : ''}
            <p>If you need to cancel or reschedule, use the manage link from your booking confirmation.</p>`
         );
@@ -399,7 +420,9 @@ async function sendBookingReminders() {
           `SELECT a.id, a.client_name, a.client_phone, a.client_notes,
                   a.scheduled_at, a.duration_minutes,
                   t.name AS type_name, t.location_detail,
-                  u.email AS assignee_email, u.full_name AS assignee_name
+                  u.email AS assignee_email, u.full_name AS assignee_name,
+                  u.timezone AS assignee_timezone,
+                  (SELECT s.value FROM settings s WHERE s.company_id = a.company_id AND s.key = 'company_timezone') AS company_timezone
              FROM appointments a
              JOIN appointment_types t ON a.appointment_type_id = t.id
              JOIN users u ON a.assigned_user_id = u.id
@@ -412,7 +435,7 @@ async function sendBookingReminders() {
           a.assignee_email,
           `In 1 hour: ${a.type_name} with ${a.client_name}`,
           `<p>Hi ${cronEscape(a.assignee_name)},</p>
-           <p>You have a <strong>${cronEscape(a.type_name)}</strong> with <strong>${cronEscape(a.client_name)}</strong> in about an hour, at ${cronEscape(new Date(a.scheduled_at).toLocaleString())}.</p>
+           <p>You have a <strong>${cronEscape(a.type_name)}</strong> with <strong>${cronEscape(a.client_name)}</strong> in about an hour, at ${cronEscape(formatAppointmentTime(a.scheduled_at, a.assignee_timezone || a.company_timezone))}.</p>
            ${a.client_phone ? `<p>Client phone: ${cronEscape(a.client_phone)}</p>` : ''}
            ${a.client_notes ? `<p>Client notes: ${cronEscape(a.client_notes)}</p>` : ''}
            ${a.location_detail ? `<p>Location: ${cronEscape(a.location_detail)}</p>` : ''}`
@@ -461,4 +484,4 @@ function startCron() {
   console.log(`[cron] Shift / sign-off / trial-expiry / stale-clock crons started${bookingRemindersOn ? ' + booking reminders' : ' (booking reminders OFF)'}`);
 }
 
-module.exports = { startCron, sendSignoffReminders, claimSignoffReminderDay, getDateInTimezone };
+module.exports = { startCron, sendSignoffReminders, claimSignoffReminderDay, getDateInTimezone, sendShiftReminders, sendBookingReminders };

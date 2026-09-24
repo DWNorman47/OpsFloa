@@ -12,9 +12,9 @@ const {
   MONEY_CATEGORIES,
   computeInvoiceTotals,
   computeLineTotal,
+  invoiceLinesFromEstimate,
 } = require('../constants/projectMoneyEnums');
-const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
-const { loadRateBookForLaborRows } = require('../utils/rateHistory');
+const { loadSettings, laborCostCents, loadLaborCostOpts, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { projectBelongsToCompany, clientBelongsToCompany } = require('../utils/tenantRefs');
@@ -280,19 +280,42 @@ router.post('/from-estimate/:estimateId', requireAuth, requireCommercialAccess, 
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+    // Lock the estimate so two concurrent from-estimate requests serialize here —
+    // the second then sees the first's invoice in the duplicate check below.
     const estRes = await client.query(
       `SELECT id, status, client_id, client_name_snapshot, client_email, project_name, project_address,
-              tax_pct, converted_project_id
-         FROM estimates WHERE id = $1 AND company_id = $2`,
+              overhead_pct, margin_pct, contingency_pct, tax_pct, converted_project_id
+         FROM estimates WHERE id = $1 AND company_id = $2 FOR UPDATE`,
       [req.params.estimateId, companyId]
     );
-    if (estRes.rowCount === 0) return res.status(404).json({ error: 'Estimate not found' });
+    if (estRes.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Estimate not found' }); }
     const est = estRes.rows[0];
-    if (est.status !== 'accepted') return res.status(409).json({ error: 'Only an accepted estimate can be invoiced' });
-    const estLines = (await client.query(
-      'SELECT category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
+    if (est.status !== 'accepted') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Only an accepted estimate can be invoiced' }); }
+    // One live invoice per estimate (void it to reissue). Backstopped by the
+    // partial unique index uq_invoices_source_estimate_live (0213).
+    const dup = await client.query(
+      `SELECT id, invoice_number FROM invoices
+        WHERE source_estimate_id = $1 AND company_id = $2 AND status <> 'void' LIMIT 1`,
+      [est.id, companyId]
+    );
+    if (dup.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: `This estimate is already invoiced (${dup.rows[0].invoice_number}) — void that invoice to reissue`,
+        invoice_id: dup.rows[0].id,
+      });
+    }
+    const estLineRows = (await client.query(
+      'SELECT category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes, line_type FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
       [est.id]
-    )).rows.map((l, i) => ({ ...l, sort_order: i }));
+    )).rows;
+    // Bill exactly the estimate's total: base/allowance lines + overhead/margin/
+    // contingency lines (same math as the estimate); tax via tax_pct below.
+    const estLines = invoiceLinesFromEstimate({
+      lines: estLineRows,
+      overhead_pct: est.overhead_pct, margin_pct: est.margin_pct, contingency_pct: est.contingency_pct,
+    });
     const fields = {
       project_id: est.converted_project_id, client_id: est.client_id,
       client_name_snapshot: est.client_name_snapshot, client_email: est.client_email,
@@ -300,7 +323,6 @@ router.post('/from-estimate/:estimateId', requireAuth, requireCommercialAccess, 
       tax_pct: parseFloat(est.tax_pct) || 0, retainage_pct: 0,
       issue_date: null, due_date: null, notes: null, terms: null,
     };
-    await client.query('BEGIN');
     const { invoiceId, number } = await createInvoice(client, companyId, req.user.id, fields, estLines, { source: 'estimate', source_estimate_id: est.id });
     await client.query('COMMIT');
     await recordAudit({ invoiceId, action: 'created', actorKind: 'admin', actorUserId: req.user.id, actorIp: req.ip, details: { from_estimate: est.id, line_count: estLines.length } });
@@ -308,6 +330,9 @@ router.post('/from-estimate/:estimateId', requireAuth, requireCommercialAccess, 
     res.status(201).json(await loadInvoiceFull(companyId, invoiceId));
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (err && err.code === '23505' && err.constraint === 'uq_invoices_source_estimate_live') {
+      return res.status(409).json({ error: 'This estimate is already invoiced — void that invoice to reissue' });
+    }
     req.log.error({ err }, 'invoice from-estimate error');
     res.status(500).json({ error: 'Server error' });
   } finally { client.release(); }
@@ -340,8 +365,9 @@ router.post('/from-project/:projectId', requireAuth, requireCommercialAccess, as
       ),
     ]);
     // Each entry at the rate in effect on its work_date (a later raise must not
-    // re-price already-worked T&M hours).
-    const laborCents = laborCostCents(entriesRes.rows, settings, { rateBook: await loadRateBookForLaborRows(entriesRes.rows) });
+    // re-price already-worked T&M hours); a daily-rate day shared with another
+    // project bills only this project's hours' share of the day.
+    const laborCents = laborCostCents(entriesRes.rows, settings, await loadLaborCostOpts(entriesRes.rows, settings));
     const lines = [];
     let sort = 0;
     if (laborCents > 0) lines.push({ category: 'labor', sort_order: sort++, description: `Labor — ${proj.name}`, qty: 1, unit: null, unit_cost_cents: laborCents, total_cents: laborCents, notes: null });

@@ -655,7 +655,9 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
          Math.max(0, e.break_minutes || 0), e.project_id, e.notes || null, proj.wage_type || e.wage_type || 'regular', e.timezone || null]
       );
       created.push(result.rows[0]);
-      existingDates.add(thisDateStr);
+      // Don't add thisDateStr to existingDates: the skip is for days that had
+      // entries BEFORE the copy — adding it dropped every entry after the first
+      // on a multi-entry day (split shift / two jobs).
     }
     res.json({ created: created.length, skipped: lastWeek.rowCount - created.length, entries: created });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }

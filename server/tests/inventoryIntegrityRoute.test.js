@@ -168,6 +168,8 @@ test('issue transactions validate and decrement the selected source bin', async 
     { rowCount: 1, rows: [{ id: 10 }] },
     { rowCount: 1, rows: [{ location_id: 10 }] },
     { rowCount: 1, rows: [{ id: 77 }] },
+    // autoConvertIssueUom: the unitless (base) row exists here → no conversion
+    { rowCount: 1, rows: [{ quantity: '8' }] },
     undefined,
     undefined,
   ]);

@@ -382,3 +382,128 @@ describe('POST /api/public/estimates/decline/:token', () => {
     expect(sel[0]).toMatch(/FOR UPDATE/);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// valid_until is a DATE — node-pg returns a JS Date (no global type parser), so
+// the expiry check must not string-concat it. Expired = valid_until before the
+// company's local today.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('estimate expiry (valid_until as a pg DATE)', () => {
+  // node-pg parses DATE to local midnight of that calendar day.
+  const pgDate = ymd => { const [y, m, d] = ymd.split('-').map(Number); return new Date(y, m - 1, d); };
+  const ymdDaysFromNow = n => { const d = new Date(); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+  test('public accept of an expired estimate → 409 and status set expired', async () => {
+    const past = '2020-01-15';
+    pool.query
+      .mockResolvedValueOnce({})                        // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{    // SELECT ... FOR UPDATE
+        id: 42, company_id: 'co-1', status: 'sent', estimate_number: 'EST-1',
+        valid_until: pgDate(past), valid_until_ymd: past, company_timezone: 'America/Phoenix',
+      }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });    // expire UPDATE / COMMIT
+    const res = await request(makeApp())
+      .post('/api/public/estimates/accept/sometoken')
+      .send({ typed_name: 'Jane Doe', authorized: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/expired/i);
+    expect(pool.query.mock.calls.some(c => /SET status='expired'/.test(c[0]))).toBe(true);
+    expect(pool.query.mock.calls.some(c => /accepted_signer_name=\$1/.test(c[0]))).toBe(false);
+  });
+
+  test('public accept expiry check works even from the raw Date alone', async () => {
+    pool.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{
+        id: 42, company_id: 'co-1', status: 'sent', estimate_number: 'EST-1', valid_until: pgDate('2020-01-15'),
+      }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });
+    const res = await request(makeApp())
+      .post('/api/public/estimates/accept/sometoken')
+      .send({ typed_name: 'Jane Doe', authorized: true });
+    expect(res.status).toBe(409);
+  });
+
+  test('public accept of a still-valid estimate succeeds', async () => {
+    const future = ymdDaysFromNow(30);
+    pool.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{
+        id: 42, company_id: 'co-1', status: 'sent', estimate_number: 'EST-1',
+        valid_until: pgDate(future), valid_until_ymd: future, company_timezone: '',
+      }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });
+    const res = await request(makeApp())
+      .post('/api/public/estimates/accept/sometoken')
+      .send({ typed_name: 'Jane Doe', authorized: true });
+    expect(res.status).toBe(200);
+  });
+
+  test('convert of an accepted-but-expired estimate → 409', async () => {
+    const past = '2020-01-15';
+    pool.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{
+        id: 42, status: 'accepted', estimate_number: 'EST-1', project_name: 'X',
+        client_id: null, project_address: null, converted_project_id: null,
+        valid_until: pgDate(past), valid_until_ymd: past, company_timezone: 'UTC',
+      }] })
+      .mockResolvedValue({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).post('/api/estimates/42/convert');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/expired/i);
+    expect(pool.query.mock.calls.some(c => /INSERT INTO projects/.test(c[0]))).toBe(false);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Admin withdraw / accept must not clobber a concurrent public accept/decline.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('admin withdraw / accept race guard', () => {
+  test('withdraw UPDATE is guarded on company + draft/sent', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'sent', estimate_number: 'EST-1' }] })
+      .mockResolvedValue({ rowCount: 1, rows: [{ id: 42, status: 'withdrawn' }] });
+    const res = await request(makeApp()).post('/api/estimates/42/withdraw');
+    expect(res.status).toBe(200);
+    const upd = pool.query.mock.calls.find(c => /SET status='withdrawn'/.test(c[0]));
+    expect(upd[0]).toMatch(/company_id\s*=\s*\$2/);
+    expect(upd[0]).toMatch(/status IN \('draft',\s*'sent'\)/);
+  });
+
+  test('withdraw → 409 when the client accepted in between (0 rows)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'sent', estimate_number: 'EST-1' }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).post('/api/estimates/42/withdraw');
+    expect(res.status).toBe(409);
+    expect(pool.query.mock.calls.some(c => /INSERT INTO estimate_audit/.test(c[0]))).toBe(false);
+  });
+
+  test('admin accept → 409 when the client declined in between (0 rows)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'sent', estimate_number: 'EST-1' }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).post('/api/estimates/42/accept').send({});
+    expect(res.status).toBe(409);
+    const upd = pool.query.mock.calls.find(c => /SET status='accepted'/.test(c[0]));
+    expect(upd[0]).toMatch(/company_id\s*=\s*\$3/);
+    expect(upd[0]).toMatch(/status IN \('draft',\s*'sent'\)/);
+  });
+});
+
+describe('GET /api/estimates — already-invoiced marker', () => {
+  test('list rows carry the live (non-void) invoice drawn from each estimate', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    await request(makeApp()).get('/api/estimates').query({ status: 'accepted' });
+    const sel = pool.query.mock.calls[1][0];
+    expect(sel).toMatch(/AS live_invoice_id/);
+    expect(sel).toMatch(/AS live_invoice_number/);
+    expect(sel).toMatch(/source_estimate_id = estimates\.id/);
+    expect(sel).toMatch(/status <> 'void'/);
+  });
+});

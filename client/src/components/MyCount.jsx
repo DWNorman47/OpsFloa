@@ -155,6 +155,9 @@ export default function MyCount() {
       line_id: assignment.line_id,
       role: assignment.role,
       counted_qty: qty,
+      // The input is labelled in the line's stock UOM, so say so explicitly — a missing
+      // counted_uom_id must never be read as the base unit (10 boxes ≠ 10 each).
+      counted_uom_id: assignment.stock_uom_id ?? null,
       notes: state.notes?.trim() || null,
     };
 
@@ -175,6 +178,7 @@ export default function MyCount() {
         line_id: payload.line_id,
         role: payload.role,
         counted_qty: qty,
+        counted_uom_id: payload.counted_uom_id,
         notes: payload.notes,
       });
       setState(assignment.assignment_id, { submitted: true, submitting: false });
