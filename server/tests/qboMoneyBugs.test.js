@@ -23,7 +23,8 @@ jest.mock('../middleware/auth', () => ({
   requirePerm: () => (_req, _res, next) => next(),
 }));
 
-jest.mock('../db', () => ({ query: jest.fn() }));
+// connect(): push-bills records each bill (stamps + ledger + outbox) in one transaction.
+jest.mock('../db', () => { const m = { query: jest.fn() }; m.connect = jest.fn(async () => ({ query: (...a) => m.query(...a), release: () => {} })); return m; });
 
 jest.mock('../services/qbo', () => {
   const actual = jest.requireActual('../services/qbo');
@@ -203,7 +204,8 @@ describe('range-level pay (weekly guarantee) is billed once', () => {
     const first = qbo.createBill.mock.calls[0][1].lines;
     expect(first.find(l => /guaranteed-hours/.test(l.description)).amount).toBe(960); // 32h × $30
     expect(lineTotal(first)).toBe(1200);
-    expect(ledger).toEqual([expect.objectContaining({ kind: 'weekly_guarantee', pay_date: '2026-04-06', amount_cents: 96000 })]);
+    // (the ledger also holds the day's worked pay — kind 'worked', 0214)
+    expect(ledger.filter(l => l.kind === 'weekly_guarantee')).toEqual([expect.objectContaining({ kind: 'weekly_guarantee', pay_date: '2026-04-06', amount_cents: 96000 })]);
 
     installDb({ timeRows: [
       timeRow({ id: 1, work_date: '2026-04-06', guaranteed_weekly_hours: 40, qbo_bill_id: 'B-1' }),
@@ -218,7 +220,7 @@ describe('range-level pay (weekly guarantee) is billed once', () => {
     // $1,440 (old code billed the new day on top of the full top-up).
     expect(second.find(l => /guaranteed-hours/.test(l.description)).amount).toBe(-240);
     expect(lineTotal(second)).toBe(0);
-    expect(ledger[0].amount_cents).toBe(72000);
+    expect(ledger.find(l => l.kind === 'weekly_guarantee').amount_cents).toBe(72000);
   });
 });
 
@@ -303,7 +305,7 @@ describe('payroll journal entries', () => {
     const writes = installDb({ journals });
     const base = pool.query.getMockImplementation();
     pool.query.mockImplementation(async (sql, params) => {
-      if (/FROM users/.test(sql) && /role = 'worker'/.test(sql)) return { rows: [worker] };
+      if (/FROM users/.test(sql)) return { rows: [worker] };
       return base(sql, params);
     });
     return writes;

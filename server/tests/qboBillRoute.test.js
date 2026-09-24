@@ -20,7 +20,8 @@ jest.mock('../middleware/auth', () => {
   };
 });
 
-jest.mock('../db', () => ({ query: jest.fn() }));
+// connect(): push-bills records each bill (stamps + ledger + outbox) in one transaction.
+jest.mock('../db', () => { const m = { query: jest.fn() }; m.connect = jest.fn(async () => ({ query: (...a) => m.query(...a), release: () => {} })); return m; });
 
 jest.mock('../services/qbo', () => ({
   createBill: jest.fn(),
@@ -337,6 +338,7 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings({ expenseAcct: '' }))
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })   // no pending (unconfirmed) bills to reconcile
       .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [reimbRow()] })  // has a reimb → requires expense acct;
@@ -353,6 +355,7 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings({ expenseAcct: '' }))  // no expense acct
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })   // no pending (unconfirmed) bills to reconcile
       .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [] })                        // no reimbs
@@ -386,6 +389,7 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings({ terms: 15 }))
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })   // no pending (unconfirmed) bills to reconcile
       .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [reimbRow()] })
@@ -421,6 +425,7 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings())
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })   // no pending (unconfirmed) bills to reconcile
       .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [] });
@@ -435,9 +440,13 @@ describe('POST /api/qbo/push-bills', () => {
     expect(res.body.pushed).toEqual([]);
     expect(res.body.skipped).toHaveLength(1);
     expect(res.body.skipped[0].reason).toMatch(/Item inactive/);
-    // 8 reads (settings, realm, ot settings, time, reimb, leave requests, leave shifts,
-    // range-pay ledger), 0 updates
-    expect(pool.query).toHaveBeenCalledTimes(8);
+    // 9 reads (settings, realm, pending bills, ot settings, time, reimb, leave requests,
+    // leave shifts, range-pay ledger) + the bill outbox row written before createBill
+    // and deleted when QuickBooks refused it — no stamps, no ledger.
+    expect(pool.query).toHaveBeenCalledTimes(11);
+    const sqls = pool.query.mock.calls.map(c => String(c[0]));
+    expect(sqls.some(x => /UPDATE time_entries|INSERT INTO qbo_bill_range_pay/.test(x))).toBe(false);
+    expect(sqls.filter(x => /qbo_bill_pushes/.test(x)).map(x => x.trim().split(/\s+/)[0])).toEqual(['SELECT', 'INSERT', 'DELETE']);
   });
 
   test('pushes an overtime premium line for OT hours', async () => {
@@ -445,6 +454,7 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings())
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })   // no pending (unconfirmed) bills to reconcile
       .mockResolvedValueOnce(otDaily({ threshold: 8, multiplier: 1.5 }))   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ start_time: '08:00:00', end_time: '18:00:00' })] })
       .mockResolvedValueOnce({ rows: [] })
@@ -471,6 +481,7 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings())
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })   // no pending (unconfirmed) bills to reconcile
       .mockResolvedValueOnce(otNight({ pct: 25, fromHour: 19, toHour: 5 }))
       .mockResolvedValueOnce({ rows: [timeRow({ start_time: '22:00:00', end_time: '06:00:00' })] }) // 8h, 7h in window
       .mockResolvedValueOnce({ rows: [] })

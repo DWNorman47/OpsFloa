@@ -92,3 +92,25 @@ describe('timeActivityHours', () => {
     expect(qbo.timeActivityHours([e], {}, {})[0].hours).toBe(0);
   });
 });
+
+describe('disconnect email escapes the admin name', () => {
+  test('a full_name carrying HTML is escaped in the notification body', async () => {
+    const { sendEmail } = require('../email');
+    sendEmail.mockReset();
+    pool.query.mockImplementation(async (sql) => {
+      if (/qbo_access_token, qbo_token_expires_at/.test(sql)) return { rows: [{ qbo_access_token: 'tok', qbo_token_expires_at: new Date(Date.now() + 3600e3) }] };
+      if (/qbo_realm_id/.test(sql)) return { rows: [{ qbo_realm_id: 'realm-1' }] };
+      if (/notify_qbo_disconnect/.test(sql)) return { rows: [{ value: '1' }] };
+      if (/FROM users/.test(sql)) return { rows: [{ email: 'a@x.test', full_name: '<img src=x onerror=alert(1)>' }] };
+      return { rows: [] };
+    });
+    axios.get.mockRejectedValueOnce(Object.assign(new Error('401'), { response: { status: 401 } }));
+    await expect(qbo.listCustomers('c1')).rejects.toMatchObject({ code: 'qbo_auth_expired' });
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const html = sendEmail.mock.calls[0][2];
+    expect(html).not.toMatch(/<img/);
+    expect(html).toMatch(/&lt;img/);
+  });
+});

@@ -1,4 +1,5 @@
 const pool = require('../db');
+const logger = require('../logger');
 const { wallDateInTZ } = require('./timeFormat');
 const { ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { USER_RATE_TYPES } = require('../constants/userEnums');
@@ -47,28 +48,49 @@ const KINDS = {
 const isCompanyKind = kind => kind === 'company' || kind === 'company_prevailing';
 
 /**
- * Used when a company has no company_timezone AND none of its users has a time
- * zone on file. The app's home zone (the demo / super-admin company default) —
- * never UTC, which hands a US company tomorrow's date every evening.
+ * Last resort when a company has no company_timezone and no user (active or the
+ * owner) has a time zone on file. It used to be a silent 'America/Phoenix' guess —
+ * wrong for most companies and invisible. Now it's UTC, and it's LOGGED (once per
+ * company per process) so the missing setting shows up in the logs.
  */
-const FALLBACK_TIMEZONE = 'America/Phoenix';
+const FALLBACK_TIMEZONE = 'UTC';
+const warnedNoTimezone = new Set();
+
+const firstTz = r => (r && r.rows && r.rows[0] && String(r.rows[0].timezone || '').trim()) || null;
 
 /**
- * The company's IANA time zone: settings.company_timezone (default '' = unset) →
- * the most common users.timezone in the company (seeded from real clock-ins,
- * 0098) → FALLBACK_TIMEZONE.
+ * The company's IANA time zone:
+ *   1. settings.company_timezone (default '' = unset)
+ *   2. the most common users.timezone among ACTIVE users (seeded from real
+ *      clock-ins, 0098)
+ *   3. the company owner's users.timezone (worker_type 'owner', else the
+ *      earliest admin), whether or not they're active
+ *   4. FALLBACK_TIMEZONE (UTC), logged once per company
  */
 async function companyTimezone(companyId, db = pool) {
   const r = await db.query("SELECT value FROM settings WHERE company_id = $1 AND key = 'company_timezone'", [companyId]);
   const own = r && r.rows && r.rows[0] && String(r.rows[0].value || '').trim();
   if (own) return own;
-  const u = await db.query(
+  const common = firstTz(await db.query(
     `SELECT timezone FROM users
-      WHERE company_id = $1 AND timezone IS NOT NULL AND timezone <> ''
+      WHERE company_id = $1 AND active = true AND timezone IS NOT NULL AND timezone <> ''
       GROUP BY timezone ORDER BY COUNT(*) DESC, timezone LIMIT 1`,
     [companyId]
-  );
-  return (u && u.rows && u.rows[0] && u.rows[0].timezone) || FALLBACK_TIMEZONE;
+  ));
+  if (common) return common;
+  const owner = firstTz(await db.query(
+    `SELECT timezone FROM users
+      WHERE company_id = $1 AND timezone IS NOT NULL AND timezone <> ''
+        AND (worker_type = 'owner' OR role IN ('admin', 'super_admin'))
+      ORDER BY (worker_type = 'owner') DESC, created_at ASC, id ASC LIMIT 1`,
+    [companyId]
+  ));
+  if (owner) return owner;
+  if (!warnedNoTimezone.has(companyId)) {
+    warnedNoTimezone.add(companyId);
+    logger.warn({ companyId }, `company has no time zone on file (company_timezone setting, users, owner) — using ${FALLBACK_TIMEZONE} for "today"; set Company Settings → time zone`);
+  }
+  return FALLBACK_TIMEZONE;
 }
 
 /** Today's date ('YYYY-MM-DD') in the company's time zone (see companyTimezone). */

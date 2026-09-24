@@ -15,9 +15,9 @@ const { loadSettings, otRuleFromSettings, otThreshold, leaveRateMultipliers } = 
 const { roundEntriesFromSettings, otConfigFromSettings, sickRulesFromSettings } = require('../utils/hoursRules');
 const { entryDuration, computeLeaveHours, shiftHoursByDate } = require('../utils/payCalculations');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
-const { companyStatements, buildPayStatement } = require('../utils/payStatement');
+const { companyStatements, buildPayStatement, payrollWorkers } = require('../utils/payStatement');
 const { loadRateBookForEntries, workerRateOn } = require('../utils/rateHistory');
-const { startOfWeek, toYMD } = require('../utils/weekBounds');
+const { startOfWeek, toYMD, weekBucketKey } = require('../utils/weekBounds');
 const { isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 
 const { logAudit } = require('../auditLog');
@@ -797,28 +797,44 @@ router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), 
 // OT line of OT hours × rate × (multiplier − 1) that mispriced tiers / rest-day /
 // 7th-day / weighted-average configs.
 //
-// Lines: one straight-time line per entry (paid hours × the rate that entry
-// earns — job-costed to its customer/class), then the OT premium, night
-// differential and rule-generated pay (min-daily floors, weekly guarantee, paid
-// leave) as their own lines. The OT line is the remainder that makes the bill
-// equal the statement to the cent.
+// Lines: one straight-time line per NEW entry (paid hours × the rate that entry
+// earns — job-costed to its customer/class; a daily-rate day's rate is split by
+// hours across every project that day), pay adjustments for already-billed days
+// (per billed entry, job-costed), then the OT premium, night differential and
+// rule-generated pay (min-daily floors, weekly guarantee, paid leave) as their
+// own lines. The OT line is the remainder that makes the bill reconcile.
 //
-// A bill is INCREMENTAL. Worked pay (straight time, OT, night) bills
-//   statement(already-billed + new in-range rows) − statement(already-billed rows)
-// so a late approval gets the OT / day-rate its week and day really earned: a
-// late Saturday after a billed 40h week is all overtime, and a second entry on a
-// daily-rate day that was already billed adds no second day rate. (Before, the
-// already-billed rows were dropped entirely — not even week context.)
+// A bill is INCREMENTAL, against a LEDGER (qbo_bill_range_pay, 0211 + 0214) of
+// what's been billed per worker + kind + date:
+//   - 'worked' per DAY: the day's worked pay (straight, OT, prevailing, night),
+//     each day's share from the engine run chronologically over its week (so a
+//     late Saturday after a billed 40h week is all overtime, and a second entry
+//     on a billed daily-rate day adds no second day rate). A day already on a
+//     bill is re-costed at today's rates: a backdated raise bills the difference
+//     on the next bill (owner decision, 2026-09-24).
+//   - range-level pay — leave and min-daily floors per day, the weekly guarantee
+//     per week (the engine's per-week numbers, on the bill whose range holds the
+//     week's LAST day).
+// Each bill posts current − ledgered and records the new amounts. A forced
+// re-push re-bills the full current amounts.
 //
-// Range-level pay (floors, weekly guarantee, leave) isn't tied to one entry, so
-// it's ledgered in qbo_bill_range_pay (0211) per worker + kind + date (the
-// week's start for the guarantee): each bill posts current − already billed and
-// records the new amount. Leave and floors bill for the days in [from,to]; a
-// week's guarantee bills on the bill whose range holds the week's LAST day
-// (priced over the whole week). Before, this was billed only on the "first bill
-// for a worker+range" heuristic: Sep 1–15 then Sep 1–30 never billed Sep 16–30,
-// and Sep 1–7 then Sep 3–14 billed Sep 3–7 again. A forced re-push re-bills the
-// full current amounts.
+// Cutover: pay billed BEFORE the ledger existed (entries stamped before 0211 was
+// applied — pre_ledger_bill) has no ledger rows. The first bill that meets such a
+// day records the amount computed then as a 'baseline' (already billed) instead
+// of billing it again. Leave / guarantee / floors on a week that held no
+// pre-ledger bill still bill normally.
+//
+// Money never double-bills on a failure: each bill is written to an outbox
+// (qbo_bill_pushes) with its Intuit requestid BEFORE createBill; the entry stamps
+// + ledger rows + outbox 'posted' commit in ONE transaction after it. A push that
+// fails in between stays 'pending' and is replayed with the SAME requestid on the
+// next push (Intuit returns the bill it already has) and then finalized; that
+// worker isn't billed again until it is.
+//
+// A bill that would net NEGATIVE (pay already billed was reduced) bills its
+// positive items and HOLDS the negative adjustments as credits (credit_cents):
+// they net against the worker's next positive bill, or an admin records a manual
+// vendor credit (POST /bill-credits/record).
 
 const toCents = n => Math.round((Number(n) || 0) * 100);
 const RANGE_LEVEL_KINDS = new Set(['weekly_guarantee', 'sick', 'vacation']);
@@ -901,20 +917,135 @@ function leaveBetween(days, a, b) {
   return out;
 }
 
-// What range-level pay is already on a bill: Map('uid|kind|date' → {amountC, hours}).
+// What's already on a bill: Map('uid|kind|date' → { amountC, hours, status, creditC }).
 async function loadRangePayLedger(companyId, userIds, from, to) {
   const out = new Map();
   if (!userIds.length || !from || !to) return out;
   const r = await pool.query(
-    `SELECT user_id, kind, to_char(pay_date, 'YYYY-MM-DD') AS pay_date, amount_cents, hours
+    `SELECT user_id, kind, to_char(pay_date, 'YYYY-MM-DD') AS pay_date, amount_cents, hours, status, credit_cents
        FROM qbo_bill_range_pay
       WHERE company_id = $1 AND user_id = ANY($2::int[]) AND pay_date >= $3::date AND pay_date <= $4::date`,
     [companyId, userIds, from, to]
   );
   for (const row of r.rows || []) {
-    out.set(`${row.user_id}|${row.kind}|${isoDate(row.pay_date)}`, { amountC: Number(row.amount_cents) || 0, hours: parseFloat(row.hours) || 0 });
+    out.set(`${row.user_id}|${row.kind}|${isoDate(row.pay_date)}`, {
+      amountC: Number(row.amount_cents) || 0, hours: parseFloat(row.hours) || 0,
+      status: row.status || 'billed', creditC: Number(row.credit_cents) || 0,
+    });
   }
   return out;
+}
+
+// Upsert ledger rows (billId null for baseline / held-credit rows, which keep
+// the row's last bill id). $2..$6 = user, kind, date, amount, hours.
+async function writeLedger(db, companyId, userId, writes, billId) {
+  const lw = (writes || []).filter(w => QBO_BILL_RANGE_PAY_KINDS.includes(w.kind));
+  if (!lw.length) return;
+  await db.query(
+    `INSERT INTO qbo_bill_range_pay (company_id, user_id, kind, pay_date, amount_cents, hours, qbo_bill_id, status, credit_cents)
+     SELECT $1, t.user_id, t.kind, t.pay_date::date, t.amount_cents, t.hours, t.bill_id, t.status, t.credit_cents
+       FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::numeric[], $7::text[], $8::text[], $9::bigint[])
+            AS t(user_id, kind, pay_date, amount_cents, hours, bill_id, status, credit_cents)
+     ON CONFLICT (company_id, user_id, kind, pay_date)
+     DO UPDATE SET amount_cents = EXCLUDED.amount_cents, hours = EXCLUDED.hours,
+                   qbo_bill_id = COALESCE(EXCLUDED.qbo_bill_id, qbo_bill_range_pay.qbo_bill_id),
+                   status = EXCLUDED.status, credit_cents = EXCLUDED.credit_cents, updated_at = NOW()`,
+    [
+      companyId, lw.map(() => userId), lw.map(w => w.kind), lw.map(w => w.date), lw.map(w => w.amountC),
+      lw.map(w => w.hours || 0), lw.map(w => (w.noBill ? null : billId)), lw.map(w => w.status || 'billed'), lw.map(w => w.creditC || 0),
+    ]
+  );
+}
+
+async function inTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await fn(client);
+    await client.query('COMMIT');
+    return out;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Record a bill QuickBooks holds: stamp its rows, write its ledger rows, mark the
+// outbox row posted — all or nothing.
+function finalizeBill(companyId, p, billId) {
+  return inTransaction(async (db) => {
+    if (p.timeIds.length) {
+      await db.query("UPDATE time_entries SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])", [billId, p.timeIds]);
+    }
+    if (p.reimbIds.length) {
+      await db.query("UPDATE reimbursements SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])", [billId, p.reimbIds]);
+    }
+    await writeLedger(db, companyId, p.userId, p.ledger, billId);
+    await db.query(
+      "UPDATE qbo_bill_pushes SET status = 'posted', qbo_bill_id = $1, updated_at = NOW() WHERE company_id = $2 AND request_id = $3",
+      [billId, companyId, p.requestId]
+    );
+  });
+}
+
+// Did createBill's request possibly create the bill? Only when it may have
+// reached Intuit without a definite answer: a network error / timeout, or a
+// 5xx / 429. A 4xx answer, or a failure before the request went out (expired
+// auth, not connected), means QuickBooks has no bill.
+const qboOutcomeUnknown = err => {
+  const st = err && err.response && err.response.status;
+  if (st) return st >= 500 || st === 429;
+  return !!(err && (err.request || /^E[A-Z]+$/.test(String(err.code || ''))));
+};
+const qboErrorText = err => err?.response?.data?.Fault?.Error?.[0]?.Detail || err?.message || 'QuickBooks error';
+
+// Replay every pending outbox bill with its own requestid, then finalize it.
+// → { reconciled: [...], blocked: Map(userId → reason) }
+async function reconcilePendingBills(companyId) {
+  const reconciled = [];
+  const blocked = new Map();
+  const r = await pool.query(
+    `SELECT user_id, request_id, bill, total_cents, time_entry_ids, reimbursement_ids, ledger
+       FROM qbo_bill_pushes WHERE company_id = $1 AND status = 'pending' ORDER BY id`,
+    [companyId]
+  );
+  for (const row of r.rows || []) {
+    const p = {
+      userId: row.user_id, requestId: row.request_id,
+      timeIds: row.time_entry_ids || [], reimbIds: row.reimbursement_ids || [],
+      ledger: typeof row.ledger === 'string' ? JSON.parse(row.ledger) : (row.ledger || []),
+    };
+    const payload = typeof row.bill === 'string' ? JSON.parse(row.bill) : row.bill;
+    const totalC = Number(row.total_cents) || 0;
+    let bill;
+    try {
+      bill = await qbo.createBill(companyId, { ...payload, requestId: p.requestId });
+    } catch (err) {
+      if (!qboOutcomeUnknown(err)) {
+        // QuickBooks refused it → it never existed. Drop the outbox row; the
+        // content bills fresh below.
+        await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, p.requestId]).catch(() => {});
+        continue;
+      }
+      blocked.set(p.userId, `An earlier bill (request ${p.requestId}) couldn't be confirmed with QuickBooks yet: ${qboErrorText(err)}. It's retried on the next push; this worker isn't billed again until it is.`);
+      continue;
+    }
+    if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
+      blocked.set(p.userId, `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)} for an earlier pending bill of $${(totalC / 100).toFixed(2)} — check QuickBooks; the pending bill was left unconfirmed.`);
+      continue;
+    }
+    const billId = bill?.Id || 'synced';
+    try {
+      await finalizeBill(companyId, p, billId);
+      reconciled.push({ user_id: p.userId, bill_id: billId, total: totalC / 100 });
+    } catch (err) {
+      logger.error({ err, billId, userId: p.userId }, 'push-bills: reconcile finalize failed');
+      blocked.set(p.userId, `Bill ${billId} is in QuickBooks but OpsFloa still couldn't record it — it's retried on the next push. Don't re-create it by hand.`);
+    }
+  }
+  return { reconciled, blocked };
 }
 
 async function gatherBillData(companyId, { from, to, workerIds, force }, settings) {
@@ -925,10 +1056,15 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
       // work_date as 'YYYY-MM-DD' text: the rules engine keys on the string (a
       // Date silently no-ops date-scoped rules). Fetches the full weeks touching
       // the range — out-of-range rows are weekly-OT context only, never billed.
+      // pre_ledger_bill: stamped on a bill before the range-pay ledger existed
+      // (0211 applied) — see "Cutover" above.
       `SELECT te.id, te.user_id, te.project_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date,
               te.start_time, te.end_time, te.notes, te.qbo_bill_id, te.qbo_activity_id, te.wage_type,
               te.break_minutes, te.mileage, te.overtime_hours_override,
               te.start_ts, te.end_ts, te.timezone,
+              (te.qbo_bill_id IS NOT NULL AND (te.qbo_synced_at IS NULL OR te.qbo_synced_at <
+                 COALESCE((SELECT applied_at FROM schema_migrations WHERE filename = '0211_qbo_bill_range_pay.sql'), 'infinity'::timestamp)))
+                AS pre_ledger_bill,
               u.full_name, u.qbo_vendor_id, u.hourly_rate, u.rate_type, u.worker_type, u.overtime_rule,
               u.role_id, u.guaranteed_weekly_hours,
               p.qbo_class_id, p.qbo_customer_id, p.name AS project_name, p.prevailing_wage_rate
@@ -981,7 +1117,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     if (!byUser.has(uid)) {
       byUser.set(uid, {
         userId: uid, fullName: row.full_name, vendorId: row.qbo_vendor_id, worker: null,
-        billable: [], billed: [], context: [], workedDates: new Set(), reimbursements: [],
+        billable: [], billed: [], context: [], workedDates: new Set(), reimbursements: [], legacyWeeks: new Set(),
       });
     }
     return byUser.get(uid);
@@ -996,6 +1132,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
       guaranteed_weekly_hours: te.guaranteed_weekly_hours || 0,
     };
     if (te.wage_type === 'regular') g.workedDates.add(te.work_date);
+    if (te.qbo_bill_id && te.pre_ledger_bill) g.legacyWeeks.add(weekBucketKey(te.work_date, settings.week_start));
     if (!inRange(te.work_date)) { g.context.push(te); continue; }
     if (!minDate || te.work_date < minDate) minDate = te.work_date;
     if (!maxDate || te.work_date > maxDate) maxDate = te.work_date;
@@ -1027,40 +1164,61 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
   ]);
 
   for (const g of byUser.values()) {
-    const L = g.worker ? billLabor(g, { settings, projectRateMap, rateBook, from, to, span, leaveDays, ledger, force }) : null;
-    g.labor = L && (g.billable.length || L.rangeLines.length) ? L : null;
+    const opts = { settings, projectRateMap, rateBook, from, to, span, leaveDays, ledger, force };
+    let L = g.worker ? billLabor(g, opts) : null;
+    // A bill can't go negative: bill the positive items, hold the negative
+    // adjustments as carried-forward credits.
+    const reimbC = g.reimbursements.reduce((s, r) => s + toCents(r.amount), 0);
+    if (L && L.totalC + reimbC < 0) L = billLabor(g, { ...opts, hold: true });
+    g.labor = L && (g.billable.length || L.rangeLines.length || L.trueUpLines.length || L.ledgerWrites.length) ? L : null;
   }
   return Array.from(byUser.values()).filter(g => g.billable.length || g.reimbursements.length || g.labor);
 }
 
+// Split amountC (integer cents) across items by weight, cumulative rounding —
+// the parts always sum to amountC exactly.
+function splitCents(amountC, weights) {
+  const total = weights.reduce((s, w) => s + w, 0);
+  const out = [];
+  let acc = 0, prev = 0;
+  weights.forEach((w, i) => {
+    acc += w;
+    const upTo = i === weights.length - 1 ? amountC : (total > 0 ? Math.round(amountC * acc / total) : Math.round(amountC * (i + 1) / weights.length));
+    out.push(upTo - prev);
+    prev = upTo;
+  });
+  return out;
+}
+
 /**
- * Price one worker's NEW entries (+ unbilled range-level pay) with the pay engine
- * and split the result into bill lines (amounts in integer cents). Worked pay is
- * statement(billed + new) − statement(billed); range-level pay is current −
- * ledgered. Sum of every line === totalC.
+ * Price one worker's NEW entries + the difference on everything already billed
+ * (see the header) and split the result into bill lines (integer cents). Sum of
+ * every line === totalC. `hold`: negative ledger deltas are not billed — they're
+ * written as held credits instead (the bill would otherwise net negative).
  */
-function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, span = null, leaveDays = null, ledger = new Map(), force = false }) {
-  // The weekly guarantee is priced per week below, not over the range.
+function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, span = null, leaveDays = null, ledger = new Map(), force = false, hold = false }) {
+  // The weekly guarantee is priced per week below, not in the worked statements.
   const worker = { ...g.worker, guaranteed_weekly_hours: 0 };
   const otConfig = otConfigFromSettings(settings, worker.role_id ?? null, worker.id);
   const leaveDaysOf = (leaveDays && leaveDays.get(worker.id)) || new Map();
   const fullRange = !!(from && to);
   const rangeLeave = fullRange ? leaveBetween(leaveDaysOf, from, to) : NO_LEAVE;
-  const statement = entries => buildPayStatement({
+  const statementOver = (entries, f, t, leave) => buildPayStatement({
     worker,
     entries,
     weekContextEntries: g.context.map(copyRow),
     reimbursements: [],
-    leave: rangeLeave, // only so no-clock-in floors count leave; leave $ is ledgered below
+    leave, // only so no-clock-in floors count leave; leave $ is ledgered below
     deductions: [], // a bill is gross pay; deductions are the payer's side
     otConfig,
     projectRateMap,
     rateBook,
     settings,
-    from: from || null,
-    to: to || null,
+    from: f,
+    to: t,
     weekWorkedDays: g.workedDates,
   });
+  const statement = entries => statementOver(entries, from || null, to || null, rangeLeave);
   const billedIds = new Set(g.billed.map(e => e.id));
   const stmt = statement([...g.billed, ...g.billable].map(copyRow));
   const prev = g.billed.length ? statement(g.billed.map(copyRow)) : null;
@@ -1095,23 +1253,60 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
       - floorsOf(s).reduce((sum, f) => sum + f.amountC, 0);
   };
 
-  // Straight time for the NEW entries only. Daily-rate workers: each worked day
-  // pays the daily rate once — a day already on a bill adds nothing; a new day's
-  // rate is split across its entries by hours so every project gets its share.
+  // ── Worked pay per DAY: each day's share of its week, chronologically —
+  // workedC(week's rows up to d) − workedC(week's rows before d). Any rounding
+  // residual vs the whole statement lands on the last day, so the days always sum
+  // to exactly what the stub pays.
+  const weekKey = d => weekBucketKey(d, settings.week_start);
+  const workedByDay = (rows, whole) => {
+    const out = new Map();
+    if (!rows.length) return out;
+    const weeks = new Map();
+    for (const e of rows) {
+      const k = weekKey(e.work_date);
+      if (!weeks.has(k)) weeks.set(k, []);
+      weeks.get(k).push(e);
+    }
+    for (const ws of [...weeks.keys()].sort()) {
+      const wrows = weeks.get(ws);
+      const dates = [...new Set(wrows.map(e => e.work_date))].sort();
+      const f = fullRange ? (from > ws ? from : ws) : null;
+      let before = 0;
+      for (const d of dates) {
+        const subset = wrows.filter(e => e.work_date <= d).map(copyRow);
+        const c = workedC(fullRange ? statementOver(subset, f, d, leaveBetween(leaveDaysOf, f, d)) : statementOver(subset, null, null, NO_LEAVE));
+        out.set(d, c - before);
+        before = c;
+      }
+    }
+    const last = [...out.keys()].sort().pop();
+    const residual = workedC(whole) - [...out.values()].reduce((s, v) => s + v, 0);
+    if (last && residual) out.set(last, out.get(last) + residual);
+    return out;
+  };
+  const curDay = workedByDay([...g.billed, ...g.billable], stmt);
+  const prevDay = prev ? workedByDay(g.billed, prev) : new Map();
+  const hoursOnDay = (list, d) => list.filter(e => e.work_date === d).reduce((s, e) => s + paidHoursOf(e), 0);
+  const allRows = [...g.billed, ...g.billable];
+
+  // ── Straight time for the NEW entries. Daily-rate workers: a day pays the
+  // daily rate ONCE, split across every entry that day by hours (job cost). A new
+  // entry on an already-billed day takes its share from the billed entries (a
+  // negative re-split line on each), so the day's total is unchanged.
   const real = stmt.entries.filter(e => !e.synthetic && !billedIds.has(e.id));
+  const billedReal = stmt.entries.filter(e => !e.synthetic && billedIds.has(e.id));
   const isDailyReg = e => e.wage_type === 'regular' && rateTypeOf(e) === 'daily';
-  const billedDays = new Set(stmt.entries.filter(e => !e.synthetic && billedIds.has(e.id) && isDailyReg(e)).map(e => e.work_date));
-  const dayHours = new Map(), dayCount = new Map();
-  for (const e of real) {
+  const dayHoursAll = new Map(), dayHoursBilled = new Map(), dayCount = new Map();
+  for (const e of [...real, ...billedReal]) {
     if (!isDailyReg(e)) continue;
-    dayHours.set(e.work_date, (dayHours.get(e.work_date) || 0) + paidHoursOf(e));
+    dayHoursAll.set(e.work_date, (dayHoursAll.get(e.work_date) || 0) + paidHoursOf(e));
     dayCount.set(e.work_date, (dayCount.get(e.work_date) || 0) + 1);
+    if (billedIds.has(e.id)) dayHoursBilled.set(e.work_date, (dayHoursBilled.get(e.work_date) || 0) + paidHoursOf(e));
   }
   const entryLines = real.map(e => {
     const hours = paidHoursOf(e);
     if (isDailyReg(e)) {
-      if (billedDays.has(e.work_date)) return { entry: e, hours, unitPrice: 0, amountC: 0 };
-      const dh = dayHours.get(e.work_date) || 0;
+      const dh = dayHoursAll.get(e.work_date) || 0;
       const share = dh > 0 ? hours / dh : 1 / (dayCount.get(e.work_date) || 1);
       const amount = baseRateOf(e) * share; // that day's daily rate, split by hours
       return { entry: e, hours, unitPrice: hours > 0 ? amount / hours : amount, amountC: toCents(amount) };
@@ -1119,6 +1314,16 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
     const base = baseRateOf(e);
     return { entry: e, hours, unitPrice: base, amountC: toCents(hours * base) };
   });
+  const resplitLines = [];
+  for (const d of new Set(real.filter(isDailyReg).map(e => e.work_date))) {
+    const billedOnDay = billedReal.filter(e => isDailyReg(e) && e.work_date === d);
+    if (!billedOnDay.length) continue;
+    const newC = entryLines.filter(l => l.entry.work_date === d && isDailyReg(l.entry)).reduce((s, l) => s + l.amountC, 0);
+    // The new entries' shares come out of the billed entries, by their hours.
+    splitCents(-newC, billedOnDay.map(paidHoursOf)).forEach((amountC, i) => {
+      if (amountC) resplitLines.push({ entry: billedOnDay[i], amountC, date: d });
+    });
+  }
 
   // ── Range-level pay: current amounts, keyed like the ledger ──
   const inRange = d => (!from || d >= from) && (!to || d <= to);
@@ -1134,55 +1339,106 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
     if (inRange(f.date)) put('daily_floor', f.date, f.hours, f.amountC, f.kind === 'guarantee' ? 'Guaranteed hours (no clock-in)' : 'Minimum daily hours top-up');
   }
   if (fullRange) {
+    // Leave: ONE cents-rounding per kind over the range (like the stub's sick /
+    // vacation line), spread over the days by cumulative rounding from `from` —
+    // per-day rounding drifted a cent from the stub.
     const mult = leaveRateMultipliers(settings);
-    for (const [d, v] of leaveDaysOf) {
-      if (!inRange(d)) continue;
-      if (v.sick) put('sick', d, v.sick, toCents(v.sick * hourlyOn(d) * mult.sick));
-      if (v.vacation) put('vacation', d, v.vacation, toCents(v.vacation * hourlyOn(d) * mult.vacation));
-    }
-    // Weekly guarantee: one engine statement per whole week whose LAST day is in
-    // the range (every entry of that week, billed or not, + that week's leave).
-    if (span && parseFloat(g.worker.guaranteed_weekly_hours) > 0) {
-      const all = [...g.context, ...g.billed, ...g.billable];
-      for (let ws = span.from; ws <= span.to; ws = addDaysYmd(ws, 7)) {
-        const we = addDaysYmd(ws, 6);
-        if (!inRange(we)) continue;
-        const wk = buildPayStatement({
-          worker: g.worker,
-          entries: all.filter(e => e.work_date >= ws && e.work_date <= we).map(copyRow),
-          reimbursements: [], deductions: [],
-          leave: leaveBetween(leaveDaysOf, ws, we),
-          otConfig, projectRateMap, rateBook, settings, from: ws, to: we,
-          weekWorkedDays: g.workedDates,
-        });
-        put('weekly_guarantee', ws, wk.hours.guaranteeShortfall || 0, toCents(wk.cost.guarantee));
+    for (const kind of ['sick', 'vacation']) {
+      let raw = 0, prevC = 0;
+      for (const d of [...leaveDaysOf.keys()].filter(inRange).sort()) {
+        const h = leaveDaysOf.get(d)[kind];
+        if (!h) continue;
+        raw += h * hourlyOn(d) * mult[kind];
+        const upTo = toCents(raw);
+        put(kind, d, h, upTo - prevC);
+        prevC = upTo;
       }
+    }
+    // Weekly guarantee: the ENGINE's per-week numbers (the same the stub / payroll
+    // pay): every entry of the range + the weeks' out-of-range rows and leave.
+    if (span && parseFloat(g.worker.guaranteed_weekly_hours) > 0) {
+      const spanLeave = new Map([...leaveDaysOf].map(([d, v]) => [d, v.sick + v.vacation]));
+      const gst = buildPayStatement({
+        worker: g.worker,
+        entries: allRows.map(copyRow),
+        weekContextEntries: g.context.map(copyRow),
+        weekContextLeaveByDate: spanLeave,
+        reimbursements: [], deductions: [],
+        leave: rangeLeave,
+        otConfig, projectRateMap, rateBook, settings, from, to,
+        weekWorkedDays: g.workedDates,
+      });
+      for (const w of gst.hours.guaranteeByWeek || []) put('weekly_guarantee', w.weekStart, w.shortfall || 0, toCents(w.cost));
     }
   }
 
-  // ── Diff against the ledger ──
-  const inScope = (kind, date) => (kind === 'weekly_guarantee'
-    ? fullRange && inRange(addDaysYmd(date, 6))
-    : (kind === 'daily_floor' || fullRange) && inRange(date));
-  const keys = new Set(current.keys());
+  // ── Every ledger key: current vs what's recorded ──
   const prefix = `${worker.id}|`;
+  const legacy = d => g.legacyWeeks.has(weekKey(d));
+  const keys = new Map(); // 'kind|date' → { kind, date, cur, hours, label }
+  for (const [d, c] of curDay) if (inRange(d)) keys.set(`worked|${d}`, { kind: 'worked', date: d, cur: c, hours: hoursOnDay(allRows, d) });
+  for (const [k, c] of current) keys.set(k, { kind: c.kind, date: c.date, cur: c.amountC, hours: c.hours, label: c.label });
+  const inScope = (kind, date) => {
+    if (kind === 'worked') return fullRange ? inRange(date) : curDay.has(date);
+    if (kind === 'weekly_guarantee') return fullRange && inRange(addDaysYmd(date, 6));
+    return (kind === 'daily_floor' || fullRange) && inRange(date);
+  };
   for (const k of ledger.keys()) {
     if (!k.startsWith(prefix)) continue;
     const [kind, date] = k.slice(prefix.length).split('|');
-    if (inScope(kind, date)) keys.add(`${kind}|${date}`);
+    if (!keys.has(`${kind}|${date}`) && inScope(kind, date)) keys.set(`${kind}|${date}`, { kind, date, cur: 0, hours: 0 });
   }
-  const deltas = [], ledgerWrites = [];
-  for (const k of [...keys].sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1]) || a.localeCompare(b))) {
-    const [kind, date] = k.split('|');
-    const cur = current.get(k) || { kind, date, hours: 0, amountC: 0, label: null };
-    const stored = ledger.get(`${prefix}${k}`) || null;
-    const was = force || !stored ? { amountC: 0, hours: 0 } : stored;
-    const deltaC = cur.amountC - was.amountC;
-    if (deltaC !== 0) deltas.push({ ...cur, deltaC, deltaHours: +(cur.hours - was.hours).toFixed(2), adjustment: was.amountC !== 0 });
-    if (!stored ? cur.amountC !== 0 : (stored.amountC !== cur.amountC || force)) {
-      ledgerWrites.push({ kind, date, amountC: cur.amountC, hours: +cur.hours.toFixed(2) });
+
+  const deltas = [], ledgerWrites = [], heldCredits = [];
+  const workedDays = []; // { date, newPart, trueUp }
+  const sorted = [...keys.values()].sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
+  for (const key of sorted) {
+    const { kind, date, cur } = key;
+    const hours = +(key.hours || 0).toFixed(2);
+    const stored = force ? null : (ledger.get(`${prefix}${kind}|${date}`) || null);
+    let was, baseline = false, newPart = 0, trueUp = 0;
+    if (kind === 'worked') {
+      const pv = force ? 0 : (prevDay.get(date) || 0);
+      newPart = cur - pv;
+      if (stored) { was = stored.amountC; trueUp = pv - stored.amountC; } else { was = pv; baseline = pv !== 0; }
+    } else if (stored) {
+      was = stored.amountC;
+    } else if (!force && legacy(date)) {
+      was = cur; baseline = cur !== 0; // billed before the ledger existed (see "Cutover")
+    } else {
+      was = 0;
+    }
+    const deltaC = cur - was;
+    if (deltaC < 0 && hold) {
+      // Held: the ledger keeps what was billed; the credit carries forward.
+      heldCredits.push({ kind, date, amountC: deltaC });
+      ledgerWrites.push({ kind, date, amountC: was, hours: stored ? stored.hours : hours, status: stored ? stored.status : 'baseline', creditC: deltaC, noBill: true });
+      continue;
+    }
+    if (kind === 'worked') workedDays.push({ date, newPart, trueUp });
+    if (deltaC !== 0) {
+      deltas.push({ kind, date, hours, label: key.label, deltaC, deltaHours: +(hours - (stored ? stored.hours : (baseline ? hours : 0))).toFixed(2), adjustment: was !== 0 });
+      ledgerWrites.push({ kind, date, amountC: cur, hours, status: 'billed', creditC: 0 });
+    } else if (!stored) {
+      if (baseline && cur !== 0) ledgerWrites.push({ kind, date, amountC: cur, hours, status: 'baseline', creditC: 0, noBill: true });
+      else if (force && cur !== 0) ledgerWrites.push({ kind, date, amountC: cur, hours, status: 'billed', creditC: 0 });
+    } else if (stored.creditC !== 0 || stored.hours !== hours) {
+      ledgerWrites.push({ kind, date, amountC: cur, hours, status: stored.status, creditC: 0, noBill: true });
     }
   }
+
+  // Pay adjustments on already-billed days (a backdated raise, a re-costed day):
+  // job-costed to the billed entries of the day by hours.
+  const trueUpLines = [];
+  for (const w of workedDays) {
+    if (!w.trueUp) continue;
+    const onDay = billedReal.filter(e => e.work_date === w.date);
+    if (!onDay.length) { trueUpLines.push({ entry: null, date: w.date, amountC: w.trueUp }); continue; }
+    splitCents(w.trueUp, onDay.map(e => paidHoursOf(e) || 0)).forEach((amountC, i) => {
+      if (amountC) trueUpLines.push({ entry: onDay[i], date: w.date, amountC });
+    });
+  }
+
   const rangeLines = [];
   for (const d of deltas.filter(x => x.kind === 'daily_floor')) {
     rangeLines.push({ key: `daily_floor|${d.date}`, hours: d.deltaHours, amountC: d.deltaC, description: `${d.date} · ${d.label || 'Minimum daily hours'}${d.adjustment ? ' (adjustment)' : ''}` });
@@ -1207,21 +1463,26 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
 
   const nightC = toCents(stmt.cost.night) - (prev ? toCents(prev.cost.night) : 0);
   const nightHours = (stmt.hours.night || 0) - (prev ? (prev.hours.night || 0) : 0);
-  const workedTargetC = workedC(stmt) - (prev ? workedC(prev) : 0);
-  const straightC = entryLines.reduce((s, l) => s + l.amountC, 0);
+  const newWorkC = workedDays.reduce((s, w) => s + w.newPart, 0);
+  const trueUpC = trueUpLines.reduce((s, l) => s + l.amountC, 0);
+  const straightC = entryLines.reduce((s, l) => s + l.amountC, 0) + resplitLines.reduce((s, l) => s + l.amountC, 0);
   const rangeC = rangeLines.reduce((s, l) => s + l.amountC, 0);
   // The OT premium is what the engine paid beyond straight time — tiers, rest-day,
   // 7th-day, weighted-average and prevailing OT all land here at their real price
   // (and, on a follow-up bill, the OT the new rows added to the week).
-  const premiumC = workedTargetC - straightC - nightC;
+  const premiumC = newWorkC - straightC - nightC;
   const overtimeHours = +((stmt.hours.overtime || 0) - (prev ? (prev.hours.overtime || 0) : 0)).toFixed(2);
   const bands = prev ? '' : (stmt.hours.overtimeBands || []).map(b => `${Number(b.hours).toFixed(2)} h @ ${b.mult}×`).join(', ');
   const rule = otRuleFromSettings(settings, worker.overtime_rule);
 
   return {
     entryLines,
+    resplitLines,
+    trueUpLines,
     rangeLines,
     ledgerWrites,
+    heldCredits,
+    workedKeys: workedDays.filter(w => w.newPart + w.trueUp !== 0).map(w => `${w.date}:${w.newPart + w.trueUp}`),
     premium: {
       hours: overtimeHours,
       amountC: premiumC,
@@ -1232,7 +1493,8 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
     night: { hours: nightHours, amountC: nightC },
     hours: entryLines.reduce((s, l) => s + l.hours, 0),
     rate,
-    totalC: workedTargetC + rangeC,
+    adjustmentsC: trueUpC + resplitLines.reduce((s, l) => s + l.amountC, 0),
+    totalC: newWorkC + trueUpC + rangeC,
     includeRangeLevel: rangeLines.length > 0,
   };
 }
@@ -1241,6 +1503,7 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
 function billLinesFor(g, { laborItemId, expenseAccountId }) {
   const lines = [];
   const L = g.labor;
+  const where = e => `${e.project_name ? ' · ' + e.project_name : ''}${e.wage_type === 'prevailing' ? ' (prevailing)' : ''}`;
   if (L) {
     for (const l of L.entryLines) {
       if (l.amountC === 0 && l.hours <= 0) continue;
@@ -1248,9 +1511,27 @@ function billLinesFor(g, { laborItemId, expenseAccountId }) {
       lines.push({
         type: 'item', itemId: laborItemId,
         qty: l.hours, unitPrice: l.unitPrice, amount: l.amountC / 100,
-        description: `${isoDate(e.work_date)}${e.project_name ? ' · ' + e.project_name : ''}${e.wage_type === 'prevailing' ? ' (prevailing)' : ''}${e.notes ? ' — ' + e.notes : ''}`.slice(0, 4000),
+        description: `${isoDate(e.work_date)}${where(e)}${e.notes ? ' — ' + e.notes : ''}`.slice(0, 4000),
         customerId: e.qbo_customer_id || null,
         classId: e.qbo_class_id || null,
+      });
+    }
+    for (const l of L.resplitLines) {
+      const e = l.entry;
+      lines.push({
+        type: 'item', itemId: laborItemId, qty: 1, unitPrice: l.amountC / 100, amount: l.amountC / 100,
+        description: `${l.date}${where(e)} — day rate re-split with another project (adjustment)`.slice(0, 4000),
+        customerId: e.qbo_customer_id || null, classId: e.qbo_class_id || null,
+      });
+    }
+    for (const l of L.trueUpLines) {
+      const e = l.entry;
+      lines.push({
+        type: 'item', itemId: laborItemId, qty: 1, unitPrice: l.amountC / 100, amount: l.amountC / 100,
+        description: e
+          ? `${l.date}${where(e)} — pay adjustment on already-billed time (rate change)`.slice(0, 4000)
+          : `${l.date} — worked pay adjustment (billed time no longer approved)`,
+        customerId: e ? (e.qbo_customer_id || null) : null, classId: e ? (e.qbo_class_id || null) : null,
       });
     }
     for (const l of L.rangeLines) {
@@ -1279,19 +1560,23 @@ function billLinesFor(g, { laborItemId, expenseAccountId }) {
 }
 
 // Intuit requestid for a vendor bill: the CONTENT (entry + reimbursement ids and
-// amounts), not just vendor+range. Keyed by range alone, re-pushing the range after
-// a late approval got the ORIGINAL bill back from Intuit's dedupe and stamped the
-// new entries with it, so they were never billed. A force re-push is versioned by
-// the bill(s) it replaces, so it creates a new bill but a double-click still dedupes.
+// amounts, range + worked-day deltas), not just vendor+range. Keyed by range alone,
+// re-pushing the range after a late approval got the ORIGINAL bill back from
+// Intuit's dedupe and stamped the new entries with it, so they were never billed.
+// A force re-push is versioned by the bill(s) it replaces, so it creates a new
+// bill but a double-click still dedupes.
 function billRequestId(companyId, g, { from, to, force, totalC }) {
   const te = (g.labor ? g.labor.entryLines : []).map(l => `${l.entry.id}:${l.amountC}`).sort().join(',');
   const rb = g.reimbursements.map(r => `${r.id}:${toCents(r.amount)}`).sort().join(',');
   const rl = (g.labor ? g.labor.rangeLines : []).map(l => `${l.key}:${l.amountC}`).sort().join(',');
+  const wk = (g.labor ? g.labor.workedKeys : []).join(',');
   const prior = force
     ? [...new Set([...g.billable.map(e => e.qbo_bill_id), ...g.reimbursements.map(r => r.qboBillId)].filter(Boolean))].sort().join(',')
     : '';
-  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, ...(rl ? [`rl:${rl}`] : []), `t:${totalC}`, force ? `f:${prior}` : ''].join('|'))}`;
+  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, ...(rl ? [`rl:${rl}`] : []), ...(wk ? [`w:${wk}`] : []), `t:${totalC}`, force ? `f:${prior}` : ''].join('|'))}`;
 }
+
+const heldTotal = g => (g.labor ? g.labor.heldCredits.reduce((s, c) => s + c.amountC, 0) : 0);
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
 // Body: { from, to, worker_ids, force }
@@ -1301,21 +1586,29 @@ router.post('/push-bills-preview', requireAdmin, requirePerm('manage_integration
   try {
     // Settings first: gatherBillData needs the policy to compute the PAID punch.
     const settings = await loadSettings(req.user.company_id);
-    const groups = await gatherBillData(req.user.company_id, { from, to, workerIds: worker_ids, force }, settings);
-    const result = groups.map(g => {
+    const [groups, pendingR] = await Promise.all([
+      gatherBillData(req.user.company_id, { from, to, workerIds: worker_ids, force }, settings),
+      pool.query("SELECT DISTINCT user_id FROM qbo_bill_pushes WHERE company_id = $1 AND status = 'pending'", [req.user.company_id]),
+    ]);
+    const pendingUsers = new Set(((pendingR && pendingR.rows) || []).map(r => r.user_id));
+    const result = groups.filter(g => g.billable.length || g.reimbursements.length || (g.labor && (g.labor.totalC !== 0 || g.labor.heldCredits.length))).map(g => {
       const L = g.labor;
       const reimbC = g.reimbursements.reduce((s, r) => s + toCents(r.amount), 0);
       const straightC = L ? L.entryLines.reduce((s, l) => s + l.amountC, 0) : 0;
       const rangeC = L ? L.rangeLines.reduce((s, l) => s + l.amountC, 0) : 0;
+      const adjC = L ? L.adjustmentsC : 0;
       return {
         user_id: g.userId,
         full_name: g.fullName,
         hourly_rate: L ? L.rate : (parseFloat(g.worker?.hourly_rate) || 0),
         time_entries: g.billable.length,
         hours: L ? parseFloat(L.hours.toFixed(2)) : 0,
-        // Straight time + rule-generated pay (floors, weekly guarantee, leave).
-        labor_amount: (straightC + rangeC) / 100,
+        // Straight time + adjustments on billed days + rule-generated pay (floors, weekly guarantee, leave).
+        labor_amount: (straightC + adjC + rangeC) / 100,
         other_pay: rangeC / 100,
+        adjustments: adjC / 100,
+        credit_held: heldTotal(g) / 100,
+        pending_earlier_bill: pendingUsers.has(g.userId),
         overtime_hours: L ? parseFloat((L.premium.hours || 0).toFixed(2)) : 0,
         overtime_premium: L ? L.premium.amountC / 100 : 0,
         night_hours: L ? parseFloat((L.night.hours || 0).toFixed(2)) : 0,
@@ -1369,12 +1662,16 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
     const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
+    // Bills an earlier push left unconfirmed first — they're in QuickBooks (or
+    // not); either way this push must see them before pricing anything.
+    const { reconciled, blocked } = await reconcilePendingBills(companyId);
+
     const settings = await loadSettings(companyId);
     const groups = await gatherBillData(companyId, { from, to, workerIds: worker_ids, force }, settings);
 
     // Only require the expense account when we actually need it (any reimbursement
     // line in this push). Contractors paid for time only don't need it.
-    const anyReimbursements = groups.some(g => g.reimbursements.length > 0);
+    const anyReimbursements = groups.some(g => g.reimbursements.length > 0 && !blocked.has(g.userId));
     if (anyReimbursements && !expenseAccountId) {
       return res.status(400).json({ error: 'Some contractors have reimbursements — set a Reimbursement Expense Account before pushing.' });
     }
@@ -1388,80 +1685,155 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
 
     const pushed = [];
     const skipped = [];
+    const creditsHeld = [];
+    // Rows that don't ride on a bill: baselines (already billed before the
+    // ledger) and held credits.
+    const writeUnbilled = async (g) => {
+      const w = (g.labor ? g.labor.ledgerWrites : []).filter(x => x.noBill);
+      if (w.length) await writeLedger(pool, companyId, g.userId, w, null);
+    };
 
     for (const g of groups) {
-      const lines = billLinesFor(g, { laborItemId, expenseAccountId });
-      if (!lines.length) continue;
-      const totalC = lines.reduce((s, l) => s + toCents(l.amount != null ? l.amount : l.qty * l.unitPrice), 0);
-      // A follow-up bill can net out negative (e.g. leave revoked after it was
-      // billed). QuickBooks can't take a negative bill — that's a vendor credit.
-      if (totalC < 0) {
-        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: `Net adjustment is −$${(-totalC / 100).toFixed(2)} (pay already billed was reduced) — record a vendor credit in QuickBooks.` });
+      if (blocked.has(g.userId)) {
+        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: blocked.get(g.userId) });
         continue;
       }
-      if (totalC === 0 && !g.billable.length && !g.reimbursements.length) continue;
-
-      try {
-        const bill = await qbo.createBill(companyId, {
-          vendorId: g.vendorId,
-          txnDate: today,
-          dueDate,
-          memo: `OpsFloa bill ${from || ''}–${to || ''} for ${g.fullName}`.trim(),
-          lines,
-          requestId: billRequestId(companyId, g, { from, to, force, totalC }),
+      const lines = billLinesFor(g, { laborItemId, expenseAccountId });
+      const totalC = lines.reduce((s, l) => s + toCents(l.amount != null ? l.amount : l.qty * l.unitPrice), 0);
+      const held = heldTotal(g);
+      if (held) {
+        creditsHeld.push({
+          user_id: g.userId, full_name: g.fullName, amount: held / 100,
+          reason: `−$${(-held / 100).toFixed(2)} of pay already billed was reduced. It's held as a credit and comes off this worker's next bill — or record a vendor credit in QuickBooks and mark it recorded (Bill credits).`,
         });
-        // Defensive: if Intuit hands back a bill that isn't this content (a dedupe
-        // hit on some other bill), don't stamp these rows with it — they'd never bill.
-        if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
-          skipped.push({
-            user_id: g.userId, full_name: g.fullName,
-            reason: `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)}, expected $${(totalC / 100).toFixed(2)} — rows were not marked billed.`,
-          });
-          continue;
-        }
-        const billId = bill?.Id || 'synced';
-        const timeIds = g.billable.map(t => t.id);
-        const reimbIds = g.reimbursements.map(r => r.id);
-        if (timeIds.length) {
-          await pool.query(
-            "UPDATE time_entries SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])",
-            [billId, timeIds]
-          );
-        }
-        if (reimbIds.length) {
-          await pool.query(
-            "UPDATE reimbursements SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])",
-            [billId, reimbIds]
-          );
-        }
-        // Record the range-level pay this bill carries (current amounts), so the
-        // next bill for an overlapping range posts only the difference.
-        const lw = (g.labor ? g.labor.ledgerWrites : []).filter(w => QBO_BILL_RANGE_PAY_KINDS.includes(w.kind));
-        if (lw.length) {
-          // The bill exists and its rows are stamped — a failed ledger write must
-          // not report it as skipped; log it (the next push would re-bill the diff).
-          await pool.query(
-            `INSERT INTO qbo_bill_range_pay (company_id, user_id, kind, pay_date, amount_cents, hours, qbo_bill_id)
-             SELECT $1, t.user_id, t.kind, t.pay_date::date, t.amount_cents, t.hours, $7
-               FROM unnest($2::int[], $3::text[], $4::text[], $5::bigint[], $6::numeric[])
-                    AS t(user_id, kind, pay_date, amount_cents, hours)
-             ON CONFLICT (company_id, user_id, kind, pay_date)
-             DO UPDATE SET amount_cents = EXCLUDED.amount_cents, hours = EXCLUDED.hours,
-                           qbo_bill_id = EXCLUDED.qbo_bill_id, updated_at = NOW()`,
-            [companyId, lw.map(() => g.userId), lw.map(w => w.kind), lw.map(w => w.date), lw.map(w => w.amountC), lw.map(w => w.hours), billId]
-          ).catch(ledgerErr => logger.error({ err: ledgerErr, billId, userId: g.userId }, 'push-bills: range-pay ledger write failed'));
-        }
-        pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: timeIds.length, reimbursements: reimbIds.length, total: totalC / 100 });
-      } catch (pushErr) {
-        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: pushErr.response?.data?.Fault?.Error?.[0]?.Detail || pushErr.message });
       }
+      const hasMoney = lines.some(l => toCents(l.amount != null ? l.amount : l.qty * l.unitPrice) !== 0);
+      if (!hasMoney && !g.billable.length && !g.reimbursements.length) {
+        try { await writeUnbilled(g); } catch (err) { logger.error({ err, userId: g.userId }, 'push-bills: baseline/credit ledger write failed'); }
+        continue;
+      }
+
+      const requestId = billRequestId(companyId, g, { from, to, force, totalC });
+      const payload = {
+        vendorId: g.vendorId,
+        txnDate: today,
+        dueDate,
+        memo: `OpsFloa bill ${from || ''}–${to || ''} for ${g.fullName}`.trim(),
+        lines,
+      };
+      const p = {
+        userId: g.userId, requestId,
+        timeIds: g.billable.map(t => t.id),
+        reimbIds: g.reimbursements.map(r => r.id),
+        ledger: g.labor ? g.labor.ledgerWrites : [],
+      };
+      // Outbox FIRST: if this fails, no bill is created.
+      try {
+        await pool.query(
+          `INSERT INTO qbo_bill_pushes (company_id, user_id, request_id, bill, total_cents, time_entry_ids, reimbursement_ids, ledger, created_by)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6::int[], $7::int[], $8::jsonb, $9)
+           ON CONFLICT (company_id, request_id) DO UPDATE SET updated_at = NOW()`,
+          [companyId, g.userId, requestId, JSON.stringify(payload), totalC, p.timeIds, p.reimbIds, JSON.stringify(p.ledger), req.user.id]
+        );
+      } catch (err) {
+        logger.error({ err, userId: g.userId }, 'push-bills: outbox write failed');
+        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: 'Could not record the bill before sending it — nothing was sent to QuickBooks. Try again.' });
+        continue;
+      }
+
+      let bill;
+      try {
+        bill = await qbo.createBill(companyId, { ...payload, requestId });
+      } catch (pushErr) {
+        if (!qboOutcomeUnknown(pushErr)) {
+          await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, requestId]).catch(() => {});
+          skipped.push({ user_id: g.userId, full_name: g.fullName, reason: qboErrorText(pushErr) });
+        } else {
+          skipped.push({ user_id: g.userId, full_name: g.fullName, reason: `QuickBooks didn't answer (${qboErrorText(pushErr)}). The bill is pending and is confirmed on the next push — it won't be created twice.` });
+        }
+        continue;
+      }
+      // Defensive: if Intuit hands back a bill that isn't this content (a dedupe
+      // hit on some other bill), don't stamp these rows with it — they'd never bill.
+      if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
+        await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, requestId]).catch(() => {});
+        skipped.push({
+          user_id: g.userId, full_name: g.fullName,
+          reason: `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)}, expected $${(totalC / 100).toFixed(2)} — rows were not marked billed.`,
+        });
+        continue;
+      }
+      const billId = bill?.Id || 'synced';
+      try {
+        await finalizeBill(companyId, p, billId);
+      } catch (err) {
+        // The bill exists; its stamps + ledger rolled back together. The outbox
+        // row stays pending → the next push replays it (same requestid) and records it.
+        logger.error({ err, billId, userId: g.userId }, 'push-bills: recording the bill failed');
+        skipped.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, reason: `Bill ${billId} was created in QuickBooks but OpsFloa couldn't record it. It's confirmed on the next push — don't re-create it by hand.` });
+        continue;
+      }
+      pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: p.timeIds.length, reimbursements: p.reimbIds.length, total: totalC / 100 });
     }
 
     logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.bills_pushed', null, null, null,
-      { pushed: pushed.length, skipped: skipped.length, from, to });
-    res.json({ pushed, skipped });
+      { pushed: pushed.length, skipped: skipped.length, reconciled: reconciled.length, credits_held: creditsHeld.length, from, to });
+    res.json({ pushed, skipped, reconciled, credits_held: creditsHeld });
   } catch (err) {
     logger.error({ err }, 'push-bills error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/qbo/bill-credits — negative adjustments held back per worker (a bill
+// that would have netted negative). Each nets against the worker's next bill.
+router.get('/bill-credits', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT l.user_id, u.full_name, l.kind, to_char(l.pay_date, 'YYYY-MM-DD') AS pay_date, l.credit_cents
+         FROM qbo_bill_range_pay l JOIN users u ON u.id = l.user_id
+        WHERE l.company_id = $1 AND l.credit_cents <> 0
+        ORDER BY u.full_name, l.pay_date, l.kind`,
+      [req.user.company_id]
+    );
+    const byUser = new Map();
+    for (const row of r.rows || []) {
+      if (!byUser.has(row.user_id)) byUser.set(row.user_id, { user_id: row.user_id, full_name: row.full_name, amount: 0, items: [] });
+      const u = byUser.get(row.user_id);
+      u.amount += Number(row.credit_cents) / 100;
+      u.items.push({ kind: row.kind, date: row.pay_date, amount: Number(row.credit_cents) / 100 });
+    }
+    res.json([...byUser.values()].map(u => ({ ...u, amount: Math.round(u.amount * 100) / 100 })));
+  } catch (err) {
+    logger.error({ err }, 'bill-credits error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/qbo/bill-credits/record — an admin entered the held credit as a
+// vendor credit in QuickBooks by hand: apply it to the ledger so the next bill
+// doesn't deduct it again. Body: { user_id }
+router.post('/bill-credits/record', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
+  const userId = parseInt(req.body && req.body.user_id, 10);
+  if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'user_id is required' });
+  const companyId = req.user.company_id;
+  try {
+    // RETURNING the credit each row carried (o.credit — the pre-update value).
+    const r = await pool.query(
+      `UPDATE qbo_bill_range_pay l
+          SET amount_cents = l.amount_cents + o.credit, credit_cents = 0, updated_at = NOW()
+         FROM (SELECT id, credit_cents AS credit FROM qbo_bill_range_pay
+                WHERE company_id = $1 AND user_id = $2 AND credit_cents <> 0 FOR UPDATE) o
+        WHERE l.id = o.id
+        RETURNING l.kind, to_char(l.pay_date, 'YYYY-MM-DD') AS pay_date, l.amount_cents, o.credit AS credit_cents`,
+      [companyId, userId]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: 'No held credit for this worker' });
+    const fromSum = (r.rows || []).reduce((sum, row) => sum + (Number(row.credit_cents) || 0), 0);
+    logAudit(companyId, req.user.id, req.user.full_name, 'qbo.bill_credit_recorded', 'user', userId, null, { amount: fromSum / 100, rows: r.rowCount });
+    res.json({ user_id: userId, amount: fromSum / 100, rows: r.rowCount });
+  } catch (err) {
+    logger.error({ err }, 'bill-credits/record error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1497,26 +1869,12 @@ router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), r
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
     const payrollSettings = await loadSettings(companyId);
-    // Everyone with pay in the range, NOT just today's active workers: a corrected
-    // re-push after a worker was deactivated (or who logs time without the worker
-    // role) used to drop them from the total and post a diff reversing their wages.
-    // Active workers stay in for range-level pay (weekly guarantee) with no entries.
-    const workers = await pool.query(
-      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule,
-              u.role_id, u.guaranteed_weekly_hours
-         FROM users u
-        WHERE u.company_id = $1 AND u.worker_type <> 'unpaid'
-          AND ((u.role = 'worker' AND u.active = true)
-               OR EXISTS (SELECT 1 FROM time_entries te
-                           WHERE te.user_id = u.id AND te.company_id = $1 AND te.status = 'approved'
-                             AND te.work_date >= $2::date AND te.work_date <= $3::date)
-               OR EXISTS (SELECT 1 FROM time_off_requests r
-                           WHERE r.user_id = u.id AND r.company_id = $1 AND r.status = 'approved'
-                             AND r.type IN ('sick','vacation')
-                             AND r.start_date <= $3::date AND r.end_date >= $2::date))
-        ORDER BY u.full_name`,
-      [companyId, from, to]
-    );
+    // The ONE payroll worker set, shared with the payroll CSV and the overtime
+    // report (utils/payStatement.js payrollWorkers): everyone with approved time /
+    // leave in the range whatever their active flag (a corrected re-push after a
+    // deactivation must not reverse their wages), never owners / unpaid / admins
+    // without a rate of their own.
+    const workers = { rows: await payrollWorkers(companyId, from, to) };
     const statements = await companyStatements({
       companyId,
       workers: workers.rows,

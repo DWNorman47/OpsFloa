@@ -24,7 +24,8 @@ jest.mock('../middleware/auth', () => ({
   requireAdmin: (req, _res, next) => { req.user = mockUser; next(); },
   requirePerm: () => (_req, _res, next) => next(),
 }));
-jest.mock('../db', () => ({ query: jest.fn() }));
+// connect(): push-bills records each bill (stamps + ledger + outbox) in one transaction.
+jest.mock('../db', () => { const m = { query: jest.fn() }; m.connect = jest.fn(async () => ({ query: (...a) => m.query(...a), release: () => {} })); return m; });
 jest.mock('../services/qbo', () => {
   const actual = jest.requireActual('../services/qbo');
   return {

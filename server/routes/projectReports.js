@@ -132,7 +132,7 @@ async function spendTotals(projectId, settings) {
           AND te.end_time IS NOT NULL`,
       [projectId]
     );
-    labor = laborCostCents(r.rows, settings, { includeBurden: true, ...(await loadLaborCostOpts(r.rows, settings, { includePending: true })) });
+    labor = laborCostCents(r.rows, settings, { includeBurden: true, ...(await loadLaborCostOpts(r.rows, settings)) });
   } catch { /* time_entries shape may differ */ }
   // Manual expenses, split actual (spent) vs planned (committed forecast).
   try {
@@ -272,7 +272,7 @@ async function loadPortfolioFinancials(projectIds, companyId, settings) {
   // One effective-dated rate book + daily-rate day context for every project's
   // labor rows (batched: one query each, shared by every project below).
   let laborOpts = { rateBook: null, dayContext: [] };
-  try { if (laborRows && laborRows.length) laborOpts = await loadLaborCostOpts(laborRows, settings, { includePending: true }); } catch { laborOpts = { rateBook: null, dayContext: [] }; }
+  try { if (laborRows && laborRows.length) laborOpts = await loadLaborCostOpts(laborRows, settings); } catch { laborOpts = { rateBook: null, dayContext: [] }; }
   for (const r of laborRows || []) {
     const k = String(r.project_id);
     if (!laborByProject.has(k)) laborByProject.set(k, []);

@@ -259,7 +259,10 @@ describe('buildPayStatement — the reconciled decisions', () => {
   });
 
   test('guarantee tops the period up to the weekly floor', () => {
-    const st = build({ worker: worker({ guaranteed_weekly_hours: 40 }), entries: [entry()] }); // 8h worked, 1 week
+    // 8h worked, 1 week. The guarantee is per company week, paid by the period
+    // holding the week's last day (Mon Jul 6 – Sun Jul 12) — a one-day period no
+    // longer earns a whole week's guarantee (payGuaranteePerWeek.test.js).
+    const st = build({ worker: worker({ guaranteed_weekly_hours: 40 }), entries: [entry()], to: '2026-07-12' });
     expect(st.hours.guaranteeShortfall).toBe(32); // 40 − 8
     expect(st.cost.guarantee).toBe(960);          // 32 × 30
   });
@@ -269,6 +272,7 @@ describe('buildPayStatement — the reconciled decisions', () => {
       worker: worker({ guaranteed_weekly_hours: 40 }),
       entries: [entry()],                // 8h worked
       leave: { sick: 20, vacation: 4 },  // 24h paid leave
+      to: '2026-07-12',                  // the whole week (per-week guarantee)
     });
     // Covered for 8 + 24 = 32 of the 40h guarantee → 8h shortfall, not 32.
     expect(st.hours.guaranteeShortfall).toBe(8);

@@ -177,9 +177,25 @@ describe('#8 companyToday without a company_timezone', () => {
     });
     expect(await store.companyToday('co')).toBe(wallDateInTZ(new Date(), 'Pacific/Kiritimati'));
   });
-  test('no worker time zone either → a US default, not UTC', async () => {
-    pool.query.mockImplementation(async sql => (/key = 'company_timezone'/.test(sql) ? { rows: [] } : { rows: [] }));
-    expect(await store.companyToday('co')).toBe(wallDateInTZ(new Date(), store.FALLBACK_TIMEZONE));
-    expect(store.FALLBACK_TIMEZONE).toMatch(/^America\//);
+  test('no active user time zone → the company owner\'s time zone', async () => {
+    pool.query.mockImplementation(async sql => {
+      if (/key = 'company_timezone'/.test(sql)) return { rows: [] };
+      if (/GROUP BY timezone/.test(sql)) return { rows: [] };
+      if (/owner/.test(sql) && /FROM users/.test(sql)) return { rows: [{ timezone: 'Pacific/Kiritimati' }] };
+      return { rows: [] };
+    });
+    expect(await store.companyToday('co-owner')).toBe(wallDateInTZ(new Date(), 'Pacific/Kiritimati'));
+  });
+  test('nothing on file → UTC, logged once per company (not a silent Phoenix guess)', async () => {
+    const logger = require('../logger');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+    pool.query.mockImplementation(async () => ({ rows: [] }));
+    expect(store.FALLBACK_TIMEZONE).toBe('UTC');
+    expect(await store.companyToday('co-none')).toBe(wallDateInTZ(new Date(), 'UTC'));
+    await store.companyToday('co-none');
+    await store.companyToday('co-none-2');
+    const calls = warn.mock.calls.filter(c => JSON.stringify(c).includes('co-none'));
+    expect(calls).toHaveLength(2); // once for co-none, once for co-none-2
+    warn.mockRestore();
   });
 });

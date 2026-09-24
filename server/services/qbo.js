@@ -4,6 +4,7 @@ const { encrypt, decrypt } = require('./encryption');
 const { sendEmail } = require('../email');
 const { roundEntriesFromSettings, ymd } = require('../utils/hoursRules');
 const { entryDuration } = require('../utils/payCalculations');
+const { escapeHtml } = require('../utils/htmlEscape');
 
 const IS_PRODUCTION = process.env.QBO_ENVIRONMENT === 'production';
 const QBO_BASE = IS_PRODUCTION
@@ -41,7 +42,7 @@ async function notifyDisconnect(companyId) {
     );
     for (const admin of admins.rows) {
       sendEmail(admin.email, 'QuickBooks disconnected — action required',
-        `<p>Hi ${admin.full_name},</p><p>Your QuickBooks Online connection for OpsFloa has expired or been revoked. Auto-sync of time entries and expenses has <b>paused</b> until you reconnect.</p><p>To restore the connection, go to <b>Administration → QuickBooks</b> and click Reconnect.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(admin.full_name)},</p><p>Your QuickBooks Online connection for OpsFloa has expired or been revoked. Auto-sync of time entries and expenses has <b>paused</b> until you reconnect.</p><p>To restore the connection, go to <b>Administration → QuickBooks</b> and click Reconnect.</p><p>— OpsFloa</p>`);
     }
   } catch (e) { /* non-fatal */ }
 }

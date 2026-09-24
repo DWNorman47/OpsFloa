@@ -1,4 +1,5 @@
 const router  = require('express').Router();
+const { getAppUrl } = require('../utils/appUrl');
 const crypto  = require('crypto');
 const pool    = require('../db');
 const logger  = require('../logger');
@@ -22,7 +23,7 @@ const { projectBelongsToCompany, clientBelongsToCompany } = require('../utils/te
 // Frontend base URL for the client-facing link in the send email — the same env
 // the auth / invite emails use. Trailing slash trimmed so `${APP_URL}/i/<token>`
 // is clean.
-const APP_URL = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+const APP_URL = getAppUrl();
 
 // Native invoices (owner-side AR) — OpsFloa's own invoice concept so a company
 // without QuickBooks can invoice, record payment, and close out. Mirrors
@@ -562,7 +563,9 @@ async function emailInvoiceToClient({ invoice, token, companyName, currency, rep
       <p style="color:#9ca3af;font-size:12px;margin-top:24px;word-break:break-all">${url}</p>
     </div>`;
   // From shows the company name; replies go to the sender (not OpsFloa).
-  return sendEmail(invoice.client_email, subject, html, undefined, { fromName: companyName, replyTo });
+  // From = "<Company> via OpsFloa" (email.js fromHeader); clientCompanyId applies the
+  // trial-company daily cap on client-facing mail.
+  return sendEmail(invoice.client_email, subject, html, undefined, { fromName: companyName, replyTo, clientCompanyId: invoice.company_id });
 }
 
 // POST /invoices/:id/send — draft → sent; mint a public token, freeze lines,

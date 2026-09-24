@@ -1,7 +1,7 @@
 const pool = require('../db');
 const {
   computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost,
-  nightPremiumCost, nightHoursForEntry, entryDuration, computeGuaranteeShortfall,
+  nightPremiumCost, nightHoursForEntry, entryDuration,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('./paidHours');
@@ -107,6 +107,63 @@ function eachDay(from, to) {
   const t = ymd(to);
   for (let i = 0; d && d <= t && i < 4000; i++) { out.push(d); d = addDays(d, 1); }
   return out;
+}
+
+/**
+ * The weekly-hours guarantee, one row per week this period pays:
+ * [{ weekStart, weekEnd, covered, shortfall, cost }].
+ *
+ * The guarantee is a WEEKLY floor, so it's figured per company week (week_start),
+ * never pooled across a period — pooled, a 50h week hid a 30h week's shortfall on
+ * the stub / payroll while the QBO bill (priced per week) billed it. A week
+ * belongs to the period holding its LAST day, the same chronological attribution
+ * full-week OT loading uses: its out-of-period hours (contextEntries) and leave
+ * (contextLeaveByDate) count toward it, and a week that ends after `to` is paid
+ * by the next period — so adjacent periods sum to the full weeks. Open range (no
+ * from/to): every week holding a worked row. Covered hours = paid punches + rule
+ * floor hours + paid leave. Each week's cost is cents-rounded at the hourly rate
+ * in effect on the week's last day.
+ */
+function weekGuarantee({ guaranteed, weekStart, from, to, paid, floorDetail, contextEntries, leave, contextLeaveByDate, hourlyOn }) {
+  const G = parseFloat(guaranteed) || 0;
+  if (!(G > 0)) return [];
+  const ws0 = normWeekStart(weekStart ?? 1);
+  const dow = dk => { const m = String(dk).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay() : null; };
+  const weekOf = dk => { const w = dow(dk); return w == null ? null : addDays(dk, -((w - ws0 + 7) % 7)); };
+  const f = from ? ymd(from) : null, t = to ? ymd(to) : null;
+  const inPeriod = d => !!(f && t) && d >= f && d <= t;
+  let weeks;
+  if (f && t) {
+    weeks = [];
+    const span = fullWeekSpan(f, t, weekStart);
+    for (let ws = span ? span.from : null; ws && ws <= span.to; ws = addDays(ws, 7)) {
+      const we = addDays(ws, 6);
+      if (we >= f && we <= t) weeks.push(ws);
+    }
+  } else {
+    weeks = [...new Set((paid || []).map(e => weekOf(ymd(e.work_date))).filter(Boolean))].sort();
+  }
+  if (!weeks.length) return [];
+  const covered = new Map(weeks.map(w => [w, 0]));
+  const add = (d, h) => { const w = d ? weekOf(ymd(d)) : null; if (w && covered.has(w)) covered.set(w, covered.get(w) + (parseFloat(h) || 0)); };
+  for (const e of paid || []) add(e.work_date, entryDuration(e));
+  for (const fl of floorDetail || []) add(fl.date, fl.hours);
+  for (const e of contextEntries || []) { const d = ymd(e.work_date); if (!inPeriod(d)) add(d, entryDuration(e)); }
+  if (leave && leave.leaveByDate instanceof Map) {
+    for (const [d, h] of leave.leaveByDate) add(d, h);
+  } else if (leave && ((leave.sick || 0) + (leave.vacation || 0)) > 0) {
+    // Undated leave totals (a hand-built statement): the last week, where the
+    // leave lines are dated.
+    const last = weeks[weeks.length - 1];
+    covered.set(last, covered.get(last) + (leave.sick || 0) + (leave.vacation || 0));
+  }
+  if (contextLeaveByDate instanceof Map) for (const [d, h] of contextLeaveByDate) if (!inPeriod(ymd(d))) add(d, h);
+  return weeks.map(ws => {
+    const we = addDays(ws, 6);
+    const c = covered.get(ws);
+    const shortfall = +Math.max(0, G - c).toFixed(2);
+    return { weekStart: ws, weekEnd: we, covered: +c.toFixed(2), shortfall, cost: cents(shortfall * hourlyOn(we)) };
+  });
 }
 
 /**
@@ -335,10 +392,15 @@ function workedPay(p) {
  *                                are paid here — the OT goes to the chronologically
  *                                later hours, so the period holding the hours past
  *                                the threshold gets that OT and two adjacent periods
- *                                sum to the full week. Ignored unless the worker's
- *                                effective rule is 'weekly' (daily OT is per-day).
+ *                                sum to the full week. Ignored for OT unless the
+ *                                worker's effective rule is 'weekly' (daily OT is
+ *                                per-day); always counted toward the weekly guarantee.
+ * @param opts.weekContextLeaveByDate Map('YYYY-MM-DD' → paid-leave hours) over those
+ *                                same whole weeks (dates in [from,to] are ignored —
+ *                                `leave` has them): leave just outside the period
+ *                                that covers a guarantee week's hours.
  */
-function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false, weekWorkedDays = null, weekContextEntries = null, rateBook = null }) {
+function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false, weekWorkedDays = null, weekContextEntries = null, weekContextLeaveByDate = null, rateBook = null }) {
   // 'unpaid' team members are tracked (hours are still computed from their entries) but
   // earn NOTHING. Force every wage RATE to 0 and drop the pay artifacts (guarantee top-up,
   // leave, deductions, per-project prevailing rates) so ALL pay math below yields $0 —
@@ -463,18 +525,22 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const sickHours = (leave && leave.sick) || 0;
   const vacationHours = (leave && leave.vacation) || 0;
 
-  // Paid leave counts toward the weekly-hours guarantee. A worker guaranteed 40h
-  // who worked 30h and took 10h sick has been covered for 40h — paying a 10h
-  // guarantee shortfall ON TOP of the 10h sick pay would double-pay those hours.
-  const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
-    computeGuaranteeShortfall(totalHours + sickHours + vacationHours, worker.guaranteed_weekly_hours, from, to);
-
   // Per-hour pay lines (leave, weekly guarantee shortfall) price at an HOURLY rate.
   // For a daily-rate worker `rate` is the DAILY amount, so use the derived hourly
   // (daily ÷ standard day) — otherwise 8h of sick would pay 8 daily rates (~8× over).
   const leaveDailyHours = parseFloat(settings.regular_shift_hours) || 8;
   const hourlyOn = d => { const r = workerRateAt(d); return r.rateType === 'daily' ? (leaveDailyHours > 0 ? r.rate / leaveDailyHours : 0) : r.rate; };
   const hourlyRate = hourlyOn(periodEndKey);
+
+  // Weekly-hours guarantee, PER WEEK (weekGuarantee below). Paid leave counts toward
+  // it: a worker guaranteed 40h who worked 30h and took 10h sick has been covered.
+  const guaranteeByWeek = weekGuarantee({
+    guaranteed: worker.guaranteed_weekly_hours, weekStart, from, to, paid, floorDetail,
+    contextEntries: weekContextEntries, leave, contextLeaveByDate: weekContextLeaveByDate, hourlyOn,
+  });
+  const guaranteeShortfall = +guaranteeByWeek.reduce((s, w) => s + w.shortfall, 0).toFixed(2);
+  const guaranteeWeeks = guaranteeByWeek.length;
+  const guaranteeMinHours = +((parseFloat(worker.guaranteed_weekly_hours) || 0) * guaranteeWeeks).toFixed(2);
   // Leave is priced at the rate in effect on each leave day (a raise mid-period pays
   // the pre-raise sick day at the old rate). One rate → exactly hourlyRate.
   const blendLeave = m => blendRate([...m].map(([d, h]) => ({ w: h, r: hourlyOn(d) })), hourlyRate);
@@ -492,7 +558,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const regularCost = cents(regularCostRaw);
   const overtimeCost = cents(overtimeCostRaw);
   const prevailingCost = cents(prevailingCostRaw);
-  const guaranteeCost = cents(guaranteeShortfall * hourlyRate);
+  // One cents-rounded line per week (each at the rate in effect on the week's last
+  // day), summed — the QBO bill posts exactly these per-week amounts.
+  const guaranteeCost = cents(guaranteeByWeek.reduce((s, w) => s + w.cost, 0));
   const sickCost = cents(sickHours * sickHourly * mult.sick);
   const vacationCost = cents(vacationHours * vacationHourly * mult.vacation);
   const nightPremium = cents(nightPremiumRaw);
@@ -582,6 +650,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       night: nightHours,
       sick: sickHours, vacation: vacationHours,
       guaranteeShortfall, guaranteeMin: guaranteeMinHours, guaranteeWeeks,
+      // [{ weekStart, weekEnd, covered, shortfall, cost }] — the weeks this period pays.
+      guaranteeByWeek,
       total: totalHours, mileage,
       // Daily-rate workers: the paid-day count behind regular pay (regular = days × rate),
       // so a stub can show "N days × rate/day" instead of an unverifiable "/hr" line.
@@ -621,7 +691,9 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
   // Entries are fetched for the FULL weeks touching [from,to] so weekly OT sees the
   // whole week; only [from,to] is paid (buildPayStatement weekContextEntries).
   const span = fullWeekSpan(from, to, settings.week_start);
-  const [entriesR, reimbR, dedR, projectRateMap, leave, weekWorkedR, rateBook] = await Promise.all([
+  // The weekly guarantee counts leave on the week's out-of-period days too.
+  const wantCtxLeave = !!span && (parseFloat(worker.guaranteed_weekly_hours) || 0) > 0;
+  const [entriesR, reimbR, dedR, projectRateMap, leave, weekWorkedR, rateBook, spanLeave] = await Promise.all([
     pool.query(
       // work_date AS text — this column wins over te.*'s Date. pg returns DATE as
       // a JS Date, but the rules engine keys on a 'YYYY-MM-DD' string, so a Date
@@ -665,6 +737,7 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
     ),
     // Effective-dated rates: this worker, every company project, the company default.
     loadRateBook({ companyId, userIds: [worker.id], projectIds: null, to: (span ? span.to : to) || null }),
+    wantCtxLeave ? computeWorkerLeave({ companyId, userId: worker.id, roleId: worker.role_id, settings, from: span.from, to: span.to }) : null,
   ]);
 
   const rounded = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
@@ -676,6 +749,7 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
   const stmt = buildPayStatement({
     worker, entries, reimbursements: reimbR.rows, leave, deductions: previewDeductions,
     otConfig, projectRateMap, settings, from, to, explain, weekWorkedDays, weekContextEntries, rateBook,
+    weekContextLeaveByDate: spanLeave ? spanLeave.leaveByDate : null,
   });
   stmt.deferredDeductions = deferredNames; // grouped/monthly deductions shown at payroll run, not here
   return stmt;
@@ -698,7 +772,9 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
 
   // Full weeks touching [from,to], so weekly OT sees the whole week (see workerStatement).
   const span = fullWeekSpan(from, to, settings.week_start);
-  const [entriesR, dedR, projectRateMap, leaveByUser, weekWorkedR, rateBook] = await Promise.all([
+  // The weekly guarantee counts leave on the week's out-of-period days too.
+  const ctxLeaveWorkers = span ? list.filter(w => (parseFloat(w.guaranteed_weekly_hours) || 0) > 0) : [];
+  const [entriesR, dedR, projectRateMap, leaveByUser, weekWorkedR, rateBook, spanLeaveByUser] = await Promise.all([
     pool.query(
       // ORDER BY is REQUIRED, not cosmetic: rate-aware OT attributes overtime to
       // the chronologically-later hours and prices each at its own rate, so the
@@ -736,6 +812,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
     ),
     // Effective-dated rates for these workers + every company project, one query each.
     loadRateBook({ companyId, userIds: list.map(w => w.id), projectIds: null, to: span ? span.to : to }),
+    ctxLeaveWorkers.length ? computeCompanyLeave({ companyId, workers: ctxLeaveWorkers, settings, from: span.from, to: span.to }) : new Map(),
   ]);
 
   const paidRows = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById });
@@ -763,6 +840,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
       rateBook,
       settings, from, to, explain: false,
       weekWorkedDays: weekWorkedByUser.get(w.id) || null,
+      weekContextLeaveByDate: spanLeaveByUser.has(w.id) ? spanLeaveByUser.get(w.id).leaveByDate : null,
     });
     stmt.deferredDeductions = deferredNames;
     out.set(w.id, stmt);
@@ -809,12 +887,12 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
       `SELECT type, hours, start_date, end_date FROM time_off_requests
        WHERE user_id = $1 AND company_id = $2 AND type IN ('sick','vacation') AND status = 'approved'
          AND start_date <= $4::date AND end_date >= $3::date`,
-      [worker.id, companyId, minDate, maxDate]
+      [worker.id, companyId, span.from, span.to] // whole weeks: the weekly guarantee counts a week's leave
     ),
     pool.query(
       `SELECT shift_date, start_time, end_time FROM shifts
        WHERE user_id = $1 AND company_id = $2 AND shift_date >= $3::date AND shift_date <= $4::date`,
-      [worker.id, companyId, minDate, maxDate]
+      [worker.id, companyId, span.from, span.to]
     ),
     // Worked-day DATES for the whole weeks touching the span (±7d), so each period's
     // week-based guarantee gate sees clock-ins in adjacent periods / just outside the
@@ -843,9 +921,13 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
     // This period's week context: rows outside [ps,pe] but in the weeks it touches.
     const pw = fullWeekSpan(ps, pe, settings.week_start);
     const weekContextEntries = pw ? paidAll.filter(e => (e.work_date < ps || e.work_date > pe) && e.work_date >= pw.from && e.work_date <= pw.to) : [];
+    const weekContextLeaveByDate = pw && (parseFloat(worker.guaranteed_weekly_hours) || 0) > 0
+      ? computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, settings.regular_shift_hours, pw.from, pw.to).leaveByDate
+      : null;
     const statement = buildPayStatement({
       worker, entries, reimbursements: [], leave, deductions: previewDeductions,
       otConfig, projectRateMap, rateBook, settings, from: ps, to: pe, explain: false, weekWorkedDays, weekContextEntries,
+      weekContextLeaveByDate,
     });
     statement.deferredDeductions = deferredNames; // grouped/monthly deductions shown at payroll run, not here
     out.push({ period, statement });
@@ -853,4 +935,41 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
   return out;
 }
 
-module.exports = { buildPayStatement, workerStatement, companyStatements, workerPeriodStatements };
+/**
+ * THE worker set for every company-wide payroll total: the payroll CSV, the
+ * overtime report and the QuickBooks payroll journal. They used to disagree —
+ * the JE loaded anyone with approved time/leave (incl. owners/admins), the CSV /
+ * report only ACTIVE role='worker' users — so the JE posted wages the payroll CSV
+ * never paid, and the CSV dropped a worker deactivated mid-period.
+ *
+ *   - approved time OR approved sick/vacation in [$2,$3], whatever the active flag,
+ *     OR still active with a weekly-hours guarantee (owed a top-up with no time);
+ *   - never worker_type 'owner' / 'unpaid';
+ *   - there is no "salaried" flag, so role admin / super_admin only when they have
+ *     their own rate (users.hourly_rate > 0): an owner-operator logging time for
+ *     job cost is not put on payroll at the company default rate.
+ * Params: $1 company_id, $2 from, $3 to. Rows carry what companyStatements needs.
+ */
+const PAYROLL_WORKERS_SQL = `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule,
+       u.role_id, u.guaranteed_weekly_hours, u.worker_type
+  FROM users u
+ WHERE u.company_id = $1
+   AND COALESCE(u.worker_type, 'employee') NOT IN ('owner', 'unpaid')
+   AND (u.role NOT IN ('admin', 'super_admin') OR COALESCE(u.hourly_rate, 0) > 0)
+   AND (EXISTS (SELECT 1 FROM time_entries te
+                 WHERE te.user_id = u.id AND te.company_id = $1 AND te.status = 'approved'
+                   AND te.work_date >= $2::date AND te.work_date <= $3::date)
+        OR EXISTS (SELECT 1 FROM time_off_requests r
+                    WHERE r.user_id = u.id AND r.company_id = $1 AND r.status = 'approved'
+                      AND r.type IN ('sick','vacation')
+                      AND r.start_date <= $3::date AND r.end_date >= $2::date)
+        OR (u.active = true AND COALESCE(u.guaranteed_weekly_hours, 0) > 0))
+ ORDER BY u.full_name, u.id`;
+
+/** Rows of PAYROLL_WORKERS_SQL for [from,to]. */
+async function payrollWorkers(companyId, from, to, db = pool) {
+  const r = await db.query(PAYROLL_WORKERS_SQL, [companyId, from, to]);
+  return (r && r.rows) || [];
+}
+
+module.exports = { buildPayStatement, workerStatement, companyStatements, workerPeriodStatements, payrollWorkers, PAYROLL_WORKERS_SQL };

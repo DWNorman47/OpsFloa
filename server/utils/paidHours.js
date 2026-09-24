@@ -275,10 +275,16 @@ const LABOR_ENTRY_COLUMNS = `
  * Day context for laborCostCents: every REGULAR entry (any project) of the
  * workers in `rows` on the dates in `rows` where the worker is on a DAILY rate
  * (per the rate book when given, else the row's current rate_type). One query,
- * and none at all when no row is a daily-rate day. `includePending` mirrors the
- * caller's status filter (spend / WIP count pending; invoices approved only).
+ * and none at all when no row is a daily-rate day.
+ *
+ * APPROVED rows only, for every caller (T&M invoice, admin project bill, project
+ * spend, WIP / P&L): the split is a cost-allocation rule, and a pending (maybe
+ * later rejected) punch on another project must not take part of the day away
+ * from this one. Spend / P&L used to split by pending rows too, so the same day
+ * cost a project $100 on its P&L and $200 on its invoice. (A caller's OWN rows may
+ * still include pending — spend / P&L count unapproved time as spent.)
  */
-async function loadLaborDayContext(rows, { rateBook = null, settings = {}, includePending = false, db = pool } = {}) {
+async function loadLaborDayContext(rows, { rateBook = null, settings = {}, db = pool } = {}) {
   const list = (rows || []).filter(r => r && r.company_id && r.user_id != null && r.work_date);
   if (!list.length) return [];
   const companyId = list[0].company_id;
@@ -301,7 +307,7 @@ async function loadLaborDayContext(rows, { rateBook = null, settings = {}, inclu
       WHERE te.company_id = $1
         AND te.wage_type = 'regular'
         AND te.start_time IS NOT NULL AND te.end_time IS NOT NULL
-        AND ${includePending ? "te.status != 'rejected'" : "te.status = 'approved'"}`,
+        AND te.status = 'approved'`,
     [companyId, keys.map(k => k[0]), keys.map(k => k[1])]
   );
   return (res && res.rows) || [];
@@ -311,9 +317,9 @@ async function loadLaborDayContext(rows, { rateBook = null, settings = {}, inclu
  * Everything laborCostCents needs beyond the rows: the effective-dated rate book
  * and the daily-rate day context. `{ rateBook, dayContext }` — spread into opts.
  */
-async function loadLaborCostOpts(rows, settings, { includePending = false, db = pool } = {}) {
+async function loadLaborCostOpts(rows, settings, { db = pool } = {}) {
   const rateBook = await loadRateBookForLaborRows(rows, db);
-  const dayContext = await loadLaborDayContext(rows, { rateBook, settings, includePending, db });
+  const dayContext = await loadLaborDayContext(rows, { rateBook, settings, db });
   return { rateBook, dayContext };
 }
 

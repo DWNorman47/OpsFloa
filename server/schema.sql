@@ -574,3 +574,50 @@ CREATE TABLE IF NOT EXISTS company_prevailing_rate_history (
   CONSTRAINT chk_company_prevailing_rate_history_nonneg CHECK (rate >= 0),
   CONSTRAINT uq_company_prevailing_rate_history_company_date UNIQUE (company_id, effective_date)
 );
+-- 0216: per-admin read markers on worker company_chat threads — see
+-- migrations/0216_company_chat_reads.sql + routes/chat.js.
+CREATE TABLE IF NOT EXISTS company_chat_reads (
+  company_id   UUID        NOT NULL,
+  admin_id     INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  worker_id    INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_id INTEGER     NOT NULL DEFAULT 0,
+  read_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (admin_id, worker_id)
+);
+CREATE INDEX IF NOT EXISTS idx_company_chat_reads_company ON company_chat_reads (company_id);
+-- 0215: security round 2 — see migrations/0215_security_round2.sql.
+ALTER TABLE stripe_webhook_events ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;  -- set when the handler succeeds
+ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_out_late_minutes INTEGER;      -- claimed clock-out this many min before the server got it
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS client_email_count     INTEGER NOT NULL DEFAULT 0;  -- trial client-email daily cap counter
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS client_email_count_day DATE;
+-- 0214: QuickBooks bill ledger v2 — 'worked' per-day kind, baseline status, held
+-- credits, and the bill outbox — see migrations/0214_qbo_bill_ledger_v2.sql.
+ALTER TABLE qbo_bill_range_pay DROP CONSTRAINT IF EXISTS chk_qbo_bill_range_pay_kind;
+ALTER TABLE qbo_bill_range_pay ADD CONSTRAINT chk_qbo_bill_range_pay_kind
+  CHECK (kind IN ('worked', 'daily_floor', 'weekly_guarantee', 'sick', 'vacation'));
+ALTER TABLE qbo_bill_range_pay ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'billed';
+ALTER TABLE qbo_bill_range_pay DROP CONSTRAINT IF EXISTS chk_qbo_bill_range_pay_status;
+ALTER TABLE qbo_bill_range_pay ADD CONSTRAINT chk_qbo_bill_range_pay_status CHECK (status IN ('billed', 'baseline'));
+ALTER TABLE qbo_bill_range_pay ADD COLUMN IF NOT EXISTS credit_cents BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE qbo_bill_range_pay DROP CONSTRAINT IF EXISTS chk_qbo_bill_range_pay_credit;
+ALTER TABLE qbo_bill_range_pay ADD CONSTRAINT chk_qbo_bill_range_pay_credit CHECK (credit_cents <= 0);
+CREATE INDEX IF NOT EXISTS idx_qbo_bill_range_pay_credit ON qbo_bill_range_pay (company_id, user_id) WHERE credit_cents <> 0;
+CREATE TABLE IF NOT EXISTS qbo_bill_pushes (
+  id                 SERIAL PRIMARY KEY,
+  company_id         UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  request_id         TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'pending',
+  bill               JSONB NOT NULL,
+  total_cents        BIGINT NOT NULL,
+  time_entry_ids     INTEGER[] NOT NULL DEFAULT '{}',
+  reimbursement_ids  INTEGER[] NOT NULL DEFAULT '{}',
+  ledger             JSONB NOT NULL DEFAULT '[]'::jsonb,
+  qbo_bill_id        TEXT,
+  created_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_qbo_bill_pushes_status CHECK (status IN ('pending', 'posted')),
+  CONSTRAINT uq_qbo_bill_pushes_request UNIQUE (company_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_qbo_bill_pushes_pending ON qbo_bill_pushes (company_id) WHERE status = 'pending';

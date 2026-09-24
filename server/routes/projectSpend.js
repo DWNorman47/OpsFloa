@@ -64,8 +64,9 @@ async function laborSpent(projectId, settings) {
     [projectId]
   );
   // Dated rates + the daily-rate day context (a day shared with another project
-  // costs this one only its hours' share). Pending counts, like the rows above.
-  return laborCostCents(r.rows, settings, { includeBurden: true, ...(await loadLaborCostOpts(r.rows, settings, { includePending: true })) });
+  // costs this one only its hours' share). This project's pending rows count as
+  // spent; the OTHER-project rows that split a day are approved-only (paidHours.js).
+  return laborCostCents(r.rows, settings, { includeBurden: true, ...(await loadLaborCostOpts(r.rows, settings)) });
 }
 
 // Stub for the forthcoming sub PO + payment integration.

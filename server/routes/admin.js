@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { getAppUrl } = require('../utils/appUrl');
 const bcrypt = require('bcryptjs');
 const logger = require('../logger');
 const { csvCell } = require('../utils/csv');
@@ -205,6 +206,26 @@ router.get('/kpis', requireAdmin, async (req, res) => {
     });
   } catch (err) {
     logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /admin/pending-count — just the pending-approvals badge number. The dashboard polls
+// this every minute; it used to poll the full /kpis (settings + hours + OT scans) for it.
+// Scoped like GET /entries/pending (an admin limited to some workers sees their count).
+router.get('/pending-count', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  const accessIds = req.user.worker_access_ids;
+  try {
+    const scoped = Array.isArray(accessIds) && accessIds.length > 0;
+    const r = await pool.query(
+      `SELECT COUNT(*) FROM time_entries
+        WHERE company_id = $1 AND status = 'pending'${scoped ? ' AND user_id = ANY($2)' : ''}`,
+      scoped ? [companyId, accessIds] : [companyId]
+    );
+    res.json({ pending_approvals: parseInt(r.rows[0].count, 10) || 0 });
+  } catch (err) {
+    logger.error({ err }, 'pending-count error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -426,6 +447,9 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
           if ([...notifKeys, 'overtime_threshold'].includes(key) && val < 0) return res.status(400).json({ error: `Invalid value for ${key}` });
           // Day count read by jobs/inactiveWorkers.js — must be a positive whole number.
           if (key === 'notification_inactive_days' && (!Number.isInteger(val) || val < 1)) return res.status(400).json({ error: 'notification_inactive_days must be a whole number of days (1 or more)' });
+          // Read by the chat / DM prune (routes/chat.js, directMessages.js): 0 would wipe every
+          // message on each send. Whole days, 1..90 (matches the settings form's min/max).
+          if (key === 'chat_retention_days' && (!Number.isInteger(val) || val < 1 || val > 90)) return res.status(400).json({ error: 'chat_retention_days must be a whole number of days from 1 to 90' });
           await pool.query(
             'INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (company_id, key) DO UPDATE SET value = $3',
             [companyId, key, val]
@@ -1537,7 +1561,7 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
       worker_type: assignedWorkerType,
       classification: assignedClassification,
     });
-    const inviteUrl = `${process.env.APP_URL}/accept-invite?token=${token}`;
+    const inviteUrl = `${getAppUrl()}/accept-invite?token=${token}`;
     let emailSent = true;
     try {
       await sgMail.send({
@@ -1587,7 +1611,7 @@ router.post('/workers/:id/send-invite', requireAdmin, requirePerm('manage_worker
       'UPDATE users SET invite_token = $1, invite_token_expires = $2, invite_pending = true WHERE id = $3',
       [tokenHash, expires, worker.id]
     );
-    const inviteUrl = `${process.env.APP_URL}/accept-invite?token=${token}`;
+    const inviteUrl = `${getAppUrl()}/accept-invite?token=${token}`;
     let emailSent = true;
     try {
       await sgMail.send({
@@ -1733,15 +1757,30 @@ const holdsOwnerTier = (user, perms) =>
 //   - escalation: the granted role's permissions must be a subset of the caller's;
 //   - a super_admin account's role is never changed from a tenant screen;
 //   - only an Owner-tier caller may move someone OFF the Owner role;
+//   - outranks: the TARGET's current permissions must be a subset of the
+//     caller's (a custom role carrying owner-level perms — manage_billing,
+//     delete_company — is protected like the built-in Owner, by what it can do
+//     rather than by its name);
 //   - last-Owner: a company always keeps at least one active Owner.
-// Returns null on success, or { status, body } to send.
+// checkRoleAssignment runs every guard WITHOUT writing and returns
+// { fail: { status, body } } or { apply: async () => {...} } so a caller doing
+// other writes (PATCH /workers/:id rate history) can run all guards first.
+// assignRoleToUser = check + apply; returns null on success, or { status, body }.
 async function assignRoleToUser(req, targetUserId, roleId) {
+  const r = await checkRoleAssignment(req, targetUserId, roleId);
+  if (r.fail) return r.fail;
+  await r.apply();
+  return null;
+}
+
+async function checkRoleAssignment(req, targetUserId, roleId) {
+  const fail = (status, body) => ({ fail: { status, body } });
   const companyId = req.user.company_id;
   const targetRole = await pool.query(
     'SELECT id, name, parent_role, is_builtin FROM roles WHERE id = $1 AND company_id = $2',
     [roleId, companyId]
   );
-  if (targetRole.rowCount === 0) return { status: 404, body: { error: 'Role not found' } };
+  if (targetRole.rowCount === 0) return fail(404, { error: 'Role not found' });
 
   // Privilege-escalation guard: a user may only grant a role whose
   // permission set is a SUBSET of their own. Without this, anyone with
@@ -1756,21 +1795,32 @@ async function assignRoleToUser(req, targetUserId, roleId) {
     .map(r => r.permission)
     .filter(p => !granterPerms.has(p));
   if (exceeded.length > 0) {
-    return { status: 403, body: { error: 'You cannot grant a role with more permissions than you hold.', code: 'role_exceeds_granter' } };
+    return fail(403, { error: 'You cannot grant a role with more permissions than you hold.', code: 'role_exceeds_granter' });
   }
 
   const targetUser = await pool.query(
-    `SELECT u.id, u.full_name, u.role AS current_legacy_role, u.role_id AS current_role_id,
+    `SELECT u.id, u.full_name, u.role AS current_legacy_role, u.role_id AS current_role_id, u.admin_permissions,
             r.name AS current_role_name, r.is_builtin AS current_role_builtin
        FROM users u LEFT JOIN roles r ON r.id = u.role_id
        WHERE u.id = $1 AND u.company_id = $2 AND u.active = true`,
     [targetUserId, companyId]
   );
-  if (targetUser.rowCount === 0) return { status: 404, body: { error: 'Worker not found' } };
+  if (targetUser.rowCount === 0) return fail(404, { error: 'Worker not found' });
   const user = targetUser.rows[0];
 
   if (user.current_legacy_role === 'super_admin' && req.user.role !== 'super_admin') {
-    return { status: 403, body: { error: 'This account\'s role cannot be changed here.', code: 'protected_account' } };
+    return fail(403, { error: 'This account\'s role cannot be changed here.', code: 'protected_account' });
+  }
+
+  // Outranks guard: changing the role of someone holding permissions the caller
+  // lacks is refused (same test as the PATCH /workers/:id email guard). Checking
+  // the role NAME alone let an Admin with assign_roles demote a custom role that
+  // carries owner-level perms. Changing your own role is always a subset.
+  if (String(user.id) !== String(req.user.id)) {
+    const theirs = await getUserPermissions({ role: user.current_legacy_role, role_id: user.current_role_id, admin_permissions: user.admin_permissions });
+    if ([...theirs].some(p => !granterPerms.has(p))) {
+      return fail(403, { error: 'You cannot change the role of a user with more permissions than you (e.g. an Owner).', code: 'owner_protected' });
+    }
   }
 
   const isOwner = user.current_role_name === 'Owner' && user.current_role_builtin !== false;
@@ -1778,7 +1828,7 @@ async function assignRoleToUser(req, targetUserId, roleId) {
     // Demoting an Owner is an Owner decision — an Admin holding assign_roles
     // could otherwise strip the Owner and take the company over.
     if (!holdsOwnerTier(req.user, granterPerms)) {
-      return { status: 403, body: { error: 'Only an Owner can change another Owner\'s role.', code: 'owner_protected' } };
+      return fail(403, { error: 'Only an Owner can change another Owner\'s role.', code: 'owner_protected' });
     }
     // Last-Owner guard: if changing AWAY from Owner, ensure ≥1 other Owner
     // remains in the company. Built-in Owner role has name 'Owner'.
@@ -1790,7 +1840,7 @@ async function assignRoleToUser(req, targetUserId, roleId) {
       [companyId, user.id]
     );
     if (otherOwners.rows[0].cnt === 0) {
-      return { status: 400, body: { error: 'Cannot remove the only Owner. Promote another user to Owner first.', code: 'last_owner' } };
+      return fail(400, { error: 'Cannot remove the only Owner. Promote another user to Owner first.', code: 'last_owner' });
     }
   }
 
@@ -1799,11 +1849,12 @@ async function assignRoleToUser(req, targetUserId, roleId) {
   // token_version invalidates the user's existing JWT (which carries
   // the old role_id) so the next request 401s and they re-auth, picking
   // up a fresh token + permission set.
-  await pool.query(
-    'UPDATE users SET role_id = $1, role = $2, token_version = COALESCE(token_version, 0) + 1 WHERE id = $3',
-    [roleId, targetRole.rows[0].parent_role, user.id]
-  );
-  return null;
+  return {
+    apply: () => pool.query(
+      'UPDATE users SET role_id = $1, role = $2, token_version = COALESCE(token_version, 0) + 1 WHERE id = $3',
+      [roleId, targetRole.rows[0].parent_role, user.id]
+    ),
+  };
 }
 
 // Update a worker (full_name, first_name, middle_name, last_name, username, role, language, hourly_rate, rate_type, email, worker_type)
@@ -1985,6 +2036,15 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
         return res.status(409).json({ error: 'conflict' });
       }
     }
+    // Role guards run BEFORE any write (the rate-history row below commits on
+    // its own) so a rejected role change can't leave a half-applied edit behind.
+    // The role write itself is applied after the rate change is accepted.
+    let roleApply = null;
+    if (roleAssignId != null) {
+      const chk = await checkRoleAssignment(req, req.params.id, roleAssignId);
+      if (chk.fail) return res.status(chk.fail.status).json(chk.fail.body);
+      roleApply = chk.apply;
+    }
     let rateOut = null;
     if (rateChange) {
       rateOut = await rateStore.addChange('worker', {
@@ -1994,12 +2054,8 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
       // Backdated into locked pay periods → nothing saved; the UI confirms and resends.
       if (rateOut.conflict) return res.status(409).json(rateOut.conflict);
     }
-    // Role change last among the checks (all validation above has passed), via
-    // the shared role-assignment path. It bumps token_version itself.
-    if (roleAssignId != null) {
-      const fail = await assignRoleToUser(req, req.params.id, roleAssignId);
-      if (fail) return res.status(fail.status).json(fail.body);
-    }
+    // Role write (bumps token_version itself) — every guard already passed.
+    if (roleApply) await roleApply();
     fields.push(`updated_at = NOW()`);
     values.push(req.params.id);
     values.push(companyId);
@@ -2275,7 +2331,8 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
         if (!(otherH > 0)) continue;
         const [uid, d] = k.split('|');
         const f = workerEntries.get(Number(uid))?.[0] || workerEntries.get(uid)?.[0];
-        if (!f) continue;
+        // 'unpaid' workers were priced at $0 above — nothing to split (as laborCostCents).
+        if (!f || f.worker_type === 'unpaid') continue;
         const r = workerRateOn(rateBook, { id: f.user_id, hourly_rate: f.hourly_rate, rate_type: f.rate_type }, d, settings);
         if (r.rateType !== 'daily') continue;
         regularCost -= (r.rate || 0) * otherH / (ownH + otherH);
@@ -2324,6 +2381,11 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
                 u.role_id AS role_id
            FROM time_entries te
            JOIN users u ON te.user_id = u.id
+           -- Only entries on the ACTIVE projects this report lists. It used to load every
+           -- entry the company ever logged (archived jobs, no-project punches) into Node on
+           -- each Projects page load — enough rows to hit the statement timeout. Lifetime
+           -- per project is kept on purpose: the totals are compared to lifetime budgets.
+           JOIN projects p ON p.id = te.project_id AND p.company_id = $1 AND p.active = true
           WHERE te.company_id = $1 AND te.status != 'rejected'`,
         [companyId, defaultRate]
       ),
@@ -3276,7 +3338,12 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
   // Validate dates if provided
   const fromDate = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : null;
   const toDate = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : null;
-  const hoursExpr = `EXTRACT(EPOCH FROM (CASE WHEN end_time < start_time THEN end_time + INTERVAL '1 day' - start_time ELSE end_time - start_time END)) / 3600`;
+  // Worked hours net of the unpaid break (same definition as /kpis + daily-report suggest);
+  // rejected entries never count toward analytics. Column refs are unqualified — every query
+  // below reads time_entries (aliased te or not) and the joined tables have no such columns;
+  // the status filter is qualified per query because projects/users also have `status`.
+  const hoursExpr = `(EXTRACT(EPOCH FROM (CASE WHEN end_time < start_time THEN end_time + INTERVAL '1 day' - start_time ELSE end_time - start_time END)) / 3600 - COALESCE(break_minutes, 0)::float / 60)`;
+  const notRejected = alias => `${alias ? alias + '.' : ''}status IS DISTINCT FROM 'rejected'`;
   try {
     const settings = await getSettings(companyId);
     const ws = parseInt(settings.week_start ?? 1, 10);
@@ -3285,23 +3352,26 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
     // (EXTRACT DOW is 0-6 Sun..Sat; subtract (dow - ws) mod 7 days to land on the week's first day.)
     const weekBucketSql = `(work_date - ((EXTRACT(DOW FROM work_date)::int - ${ws} + 7) % 7))::date`;
     const [daily, weekly, projects, workers, summary] = await Promise.all([
-      // Hours per day — custom range or last 14 days
+      // Hours per day — custom range (the LATEST 90 days of it, ascending — the old
+      // ASC LIMIT 90 kept the oldest 90 and dropped the recent days) or last 14 days
       fromDate || toDate
         ? pool.query(
-            `SELECT work_date::text as date,
-                    ROUND(SUM(${hoursExpr})::numeric, 2) as hours
-             FROM time_entries
-             WHERE company_id = $1
-               AND ($2::date IS NULL OR work_date >= $2::date)
-               AND ($3::date IS NULL OR work_date <= $3::date)
-             GROUP BY work_date ORDER BY work_date ASC LIMIT 90`,
+            `SELECT * FROM (
+               SELECT work_date::text as date,
+                      ROUND(SUM(${hoursExpr})::numeric, 2) as hours
+               FROM time_entries
+               WHERE company_id = $1 AND ${notRejected()}
+                 AND ($2::date IS NULL OR work_date >= $2::date)
+                 AND ($3::date IS NULL OR work_date <= $3::date)
+               GROUP BY work_date ORDER BY work_date DESC LIMIT 90
+             ) d ORDER BY date ASC`,
             [companyId, fromDate, toDate]
           )
         : pool.query(
             `SELECT work_date::text as date,
                     ROUND(SUM(${hoursExpr})::numeric, 2) as hours
              FROM time_entries
-             WHERE company_id = $1 AND work_date >= CURRENT_DATE - 13
+             WHERE company_id = $1 AND ${notRejected()} AND work_date >= CURRENT_DATE - 13
              GROUP BY work_date ORDER BY work_date ASC LIMIT 14`,
             [companyId]
           ),
@@ -3311,7 +3381,7 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
             `SELECT to_char(${weekBucketSql}, 'YYYY-MM-DD') as week_start,
                     ROUND(SUM(${hoursExpr})::numeric, 1) as hours
              FROM time_entries
-             WHERE company_id = $1
+             WHERE company_id = $1 AND ${notRejected()}
                AND ($2::date IS NULL OR work_date >= $2::date)
                AND ($3::date IS NULL OR work_date <= $3::date)
              GROUP BY week_start ORDER BY week_start ASC`,
@@ -3321,7 +3391,7 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
             `SELECT to_char(${weekBucketSql}, 'YYYY-MM-DD') as week_start,
                     ROUND(SUM(${hoursExpr})::numeric, 1) as hours
              FROM time_entries
-             WHERE company_id = $1 AND work_date >= CURRENT_DATE - 83
+             WHERE company_id = $1 AND ${notRejected()} AND work_date >= CURRENT_DATE - 83
              GROUP BY week_start ORDER BY week_start ASC LIMIT 12`,
             [companyId]
           ),
@@ -3331,7 +3401,7 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
                 ROUND(SUM(${hoursExpr})::numeric, 2) as hours
          FROM time_entries te
          JOIN projects p ON te.project_id = p.id
-         WHERE te.company_id = $1
+         WHERE te.company_id = $1 AND ${notRejected('te')}
            AND ($2::date IS NULL OR te.work_date >= $2::date)
            AND ($3::date IS NULL OR te.work_date <= $3::date)
            ${!fromDate && !toDate ? 'AND te.work_date >= CURRENT_DATE - 29' : ''}
@@ -3344,7 +3414,7 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
                 ROUND(SUM(${hoursExpr})::numeric, 2) as hours
          FROM time_entries te
          JOIN users u ON te.user_id = u.id
-         WHERE te.company_id = $1
+         WHERE te.company_id = $1 AND ${notRejected('te')}
            AND ($2::date IS NULL OR te.work_date >= $2::date)
            AND ($3::date IS NULL OR te.work_date <= $3::date)
            ${!fromDate && !toDate ? 'AND te.work_date >= CURRENT_DATE - 29' : ''}
@@ -3363,7 +3433,7 @@ router.get('/analytics', requireAdmin, requirePerm('view_reports'), requirePlan(
            COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_approvals,
            ROUND(COALESCE(SUM(CASE WHEN work_date >= $2::date THEN mileage END), 0)::numeric, 1) as mileage_this_week,
            ROUND(COALESCE(SUM(CASE WHEN work_date >= date_trunc('month', CURRENT_DATE) THEN mileage END), 0)::numeric, 1) as mileage_this_month
-         FROM time_entries WHERE company_id = $1
+         FROM time_entries WHERE company_id = $1 AND ${notRejected()}
            AND (work_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '1 month'
                 OR status = 'pending')`,
         [companyId, weekStartDate]
@@ -3789,8 +3859,8 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
             ? `Budget exceeded: ${pname}`
             : `Budget alert (${threshold}%): ${pname}`;
           const body = threshold === 100
-            ? `<p>The project <b>${pname}</b> has exceeded its hour budget.</p><p>Approved: <b>${approvedH.toFixed(1)} hrs</b> / Budget: <b>${budgetH} hrs</b></p><p>— OpsFloa</p>`
-            : `<p>The project <b>${pname}</b> has reached ${threshold}% of its hour budget.</p><p>Approved: <b>${approvedH.toFixed(1)} hrs</b> / Budget: <b>${budgetH} hrs</b></p><p>— OpsFloa</p>`;
+            ? `<p>The project <b>${escapeHtml(pname)}</b> has exceeded its hour budget.</p><p>Approved: <b>${approvedH.toFixed(1)} hrs</b> / Budget: <b>${escapeHtml(budgetH)} hrs</b></p><p>— OpsFloa</p>`
+            : `<p>The project <b>${escapeHtml(pname)}</b> has reached ${threshold}% of its hour budget.</p><p>Approved: <b>${approvedH.toFixed(1)} hrs</b> / Budget: <b>${escapeHtml(budgetH)} hrs</b></p><p>— OpsFloa</p>`;
           for (const admin of admins.rows) {
             sendEmail(admin.email, subject, body);
           }
@@ -4037,12 +4107,9 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
   const companyId = req.user.company_id;
   try {
     const s = await getSettings(companyId);
-    const workers = await pool.query(
-      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours FROM users u
-       WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'
-       ORDER BY u.full_name`,
-      [companyId]
-    );
+    // The ONE payroll worker set (same as the QBO payroll journal) — see
+    // utils/payStatement.js payrollWorkers for the rule.
+    const workers = { rows: await require('../utils/payStatement').payrollWorkers(companyId, from, to) };
     const statements = await companyStatements({ companyId, workers: workers.rows, settings: s, from, to });
     const n2 = x => parseFloat((x || 0).toFixed(2));
     const rows = workers.rows.map(w => {
@@ -4547,12 +4614,9 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
   const companyId = req.user.company_id;
   try {
     const s = await getSettings(companyId);
-    const workers = await pool.query(
-      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours FROM users u
-       WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'
-       ORDER BY u.full_name`,
-      [companyId]
-    );
+    // The ONE payroll worker set (same as the QBO payroll journal) — see
+    // utils/payStatement.js payrollWorkers for the rule.
+    const workers = { rows: await require('../utils/payStatement').payrollWorkers(companyId, from, to) };
     const statements = await companyStatements({ companyId, workers: workers.rows, settings: s, from, to });
 
     const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard

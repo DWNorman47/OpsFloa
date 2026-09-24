@@ -33,6 +33,7 @@ const COMPANY_TABLES = [
   { table: 'field_report_photos',          where: via('report_id', 'field_reports') },
   { table: 'entry_messages' },
   { table: 'equipment_hours' },
+  { table: 'company_chat_reads',           export: false }, // per-admin chat read markers (0216) — UI state, not customer data
   { table: 'company_chat' },
   { table: 'direct_messages' },
   { table: 'incident_reports' },
@@ -80,6 +81,7 @@ const COMPANY_TABLES = [
   { table: 'payroll_runs' },
   { table: 'qbo_payroll_journals' },
   { table: 'qbo_bill_range_pay' },
+  { table: 'qbo_bill_pushes' },
 
   // ── Worker-level records ─────────────────────────────────────────────────
   { table: 'worker_documents' },
