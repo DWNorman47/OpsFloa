@@ -6,22 +6,31 @@ on:
   pull_request:
     branches: [main, stage, dev]
 
+permissions:
+  contents: read
+
+# CI runs exactly what `npm run verify` runs locally — server: eslint + jest; client:
+# eslint + vitest (incl. i18n parity) + vite build — plus the CI-only gates that need
+# services verify can't assume: migrations lint on a throwaway Postgres, and npm audit.
+# Third-party actions are pinned to full commit SHAs (the tag is in the comment); bump
+# both together.
 jobs:
-  server-tests:
-    name: Server (Jest)
+  server-verify:
+    name: Server verify (ESLint + Jest)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (tag v4)
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
       - run: npm install
-      - run: npm test
+      # = npm run verify:server (eslint . && jest)
+      - run: npm run verify
       # Fail the build on high/critical prod vulns. Moderate and below don't
       # block — fix at your cadence. --omit=dev ignores vulns in dev-only
       # packages (jest, nodemon, etc.) that can't affect production. A registry
@@ -51,6 +60,7 @@ jobs:
     defaults:
       run:
         working-directory: server
+    # Throwaway Postgres that lives only for this job — never a real database.
     services:
       postgres:
         image: postgres:16
@@ -66,8 +76,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (tag v4)
         with:
           node-version: '22'
           cache: 'npm'
@@ -78,39 +88,23 @@ jobs:
           DATABASE_URL: postgres://test:test@localhost:5432/test
           DATABASE_SSL: 'false'
 
-  client-lint:
-    name: Client lint (ESLint)
+  client-verify:
+    name: Client verify (ESLint + Vitest + Vite build)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (tag v4)
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
       - run: npm install
-      # Narrow rule set (no-undef, rules-of-hooks, etc.) — catches runtime
-      # ReferenceErrors the Vite build misses. Style is intentionally not linted.
-      - run: npm run lint
-
-  client-tests:
-    name: Client (Vitest)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: client
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: client/package-lock.json
-      - run: npm install
-      - run: npm test
+      # = npm run verify:client (eslint src && vitest run && vite build). The build
+      # catches import / JSX errors the linter and unit tests miss.
+      - run: npm run verify
       # Client has two known build-time advisories (esbuild, serialize-javascript
       # via vite-plugin-pwa) that require breaking Vite upgrades to clear.
       # Neither is reachable at runtime, so we only fail on *critical* here

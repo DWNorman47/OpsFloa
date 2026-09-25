@@ -5,17 +5,76 @@ name: Sync Staging DB from Production
 # branch and lets it go back to idle (stage's background jobs are disabled, so nothing
 # else keeps it awake). On-demand refreshes also come from the SuperAdmin "Copy
 # production → staging" button (which dispatches this workflow) or the Actions tab.
+#
+# Safety (see docs/BACKUP-RESTORE.md → "Stage sync"):
+#   1. Guard: refuses to touch the target unless its host differs from prod's AND matches
+#      the repo variable STAGING_DB_HOST (Settings → Secrets and variables → Actions →
+#      Variables). No variable → the job fails before anything is dropped.
+#   2. Scrub: right after the restore, every personal/secret field is replaced (emails →
+#      user+<id>@example.invalid, phones/tokens/MFA/QuickBooks/Stripe ids nulled, push
+#      subscriptions + location pings deleted, every password replaced) and
+#      system_flags.email_mode is set to 'suppress' so the stage server never emails.
+#   3. Verify: counts that must be zero after the scrub. Any failure after the wipe
+#      DROPS the stage schema, so a raw prod copy is never left behind.
 on:
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-staging
+  cancel-in-progress: false
+
 jobs:
   sync:
-    name: prod -> staging
+    name: prod -> staging (scrubbed)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+      STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+      STAGING_DB_HOST: ${{ vars.STAGING_DB_HOST }}
+      PGBIN: /usr/lib/postgresql/17/bin
 
     steps:
+      - name: Guard — target must be the staging host, never prod
+        shell: bash
+        run: |
+          set -euo pipefail
+          host() {
+            # Hostname only, lowercased; Neon's "-pooler" suffix stripped so the pooled
+            # and direct URLs of the same endpoint compare equal.
+            python3 -c 'import sys, urllib.parse; h = (urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower(); print(h.replace("-pooler.", "."))' "$1"
+          }
+          if [ -z "${PROD_DATABASE_URL:-}" ] || [ -z "${STAGING_DATABASE_URL:-}" ]; then
+            echo "::error::PROD_DATABASE_URL and STAGING_DATABASE_URL secrets are both required."; exit 1
+          fi
+          if [ -z "${STAGING_DB_HOST:-}" ]; then
+            echo "::error::Repo variable STAGING_DB_HOST is not set — refusing to drop anything. Set it to the stage DB host (e.g. ep-xxx.us-east-2.aws.neon.tech)."; exit 1
+          fi
+          prod_host="$(host "$PROD_DATABASE_URL")"
+          stage_host="$(host "$STAGING_DATABASE_URL")"
+          expected="$(echo "$STAGING_DB_HOST" | tr 'A-Z' 'a-z' | sed 's/-pooler\././')"
+          if [ -z "$stage_host" ] || [ -z "$prod_host" ]; then
+            echo "::error::Could not parse a host out of the database URLs."; exit 1
+          fi
+          if [ "$stage_host" = "$prod_host" ] || [ "$STAGING_DATABASE_URL" = "$PROD_DATABASE_URL" ]; then
+            echo "::error::STAGING_DATABASE_URL points at the PRODUCTION host. Refusing."; exit 1
+          fi
+          # STAGING_DB_HOST may be an exact host or a shell glob (e.g. ep-stage-*.neon.tech).
+          # shellcheck disable=SC2053
+          if [[ "$stage_host" != $expected ]]; then
+            echo "::error::Staging host does not match vars.STAGING_DB_HOST. Refusing."; exit 1
+          fi
+          # shellcheck disable=SC2053
+          if [[ "$prod_host" == $expected ]]; then
+            echo "::error::vars.STAGING_DB_HOST also matches the PRODUCTION host. Refusing."; exit 1
+          fi
+          echo "Guard passed: target is the configured staging host."
+
       - name: Install postgresql-client
         run: |
           sudo apt-get install -y --no-install-recommends gnupg curl
@@ -26,24 +85,163 @@ jobs:
 
       - name: Dump production database
         run: |
-          /usr/lib/postgresql/17/bin/pg_dump "${{ secrets.PROD_DATABASE_URL }}" \
+          "$PGBIN/pg_dump" "$PROD_DATABASE_URL" \
             --no-owner \
             --no-acl \
             --format=custom \
             --file=/tmp/prod.pgc
 
       - name: Wipe staging schema
+        id: wipe
         run: |
-          /usr/lib/postgresql/17/bin/psql "${{ secrets.STAGING_DATABASE_URL }}" \
+          "$PGBIN/psql" "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 \
             -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
       - name: Restore to staging database
         run: |
-          /usr/lib/postgresql/17/bin/pg_restore \
-            --dbname "${{ secrets.STAGING_DATABASE_URL }}" \
+          "$PGBIN/pg_restore" \
+            --dbname "$STAGING_DATABASE_URL" \
             --no-owner \
             --no-acl \
             /tmp/prod.pgc
+          rm -f /tmp/prod.pgc
+
+      # Every personal / secret field on stage is replaced. Schema-driven where it can be
+      # (any text column named *email / *phone / *mobile / *token / *token_hash / ip /
+      # ip_address / registration_ip / user_agent, in every table), explicit for the rest,
+      # so a future column with one of those names is scrubbed too.
+      # Passwords: every hash is replaced. With the optional STAGING_PASSWORD_HASH secret
+      # (a bcrypt hash of a stage-only password) every stage account logs in with that
+      # password; without it no stage account can log in (not a bcrypt hash → never matches).
+      - name: Scrub personal data and secrets
+        env:
+          STAGING_PASSWORD_HASH: ${{ secrets.STAGING_PASSWORD_HASH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PW_HASH="${STAGING_PASSWORD_HASH:-}"
+          if [ -z "$PW_HASH" ]; then PW_HASH='!scrubbed-no-login'; fi
+          "$PGBIN/psql" "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction \
+            -v pw_hash="$PW_HASH" <<'SQL'
+          -- 1. Stage must never send email (read by server/email.js; migration 0221).
+          CREATE TABLE IF NOT EXISTS system_flags (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT chk_system_flags_key CHECK (key IN ('email_mode')),
+            CONSTRAINT chk_system_flags_email_mode CHECK (key <> 'email_mode' OR value IN ('real', 'redirect', 'suppress'))
+          );
+          INSERT INTO system_flags (key, value) VALUES ('email_mode', 'suppress')
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+
+          -- Helper: run an UPDATE only when the column exists (the dump may predate a migration).
+          CREATE FUNCTION pg_temp.scrub_col(t text, c text, expr text) RETURNS void AS $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = t AND column_name = c) THEN
+              EXECUTE format('UPDATE public.%I SET %I = %s', t, c, expr);
+            END IF;
+          END $$ LANGUAGE plpgsql;
+
+          -- 2. Users: deterministic fake emails, no MFA, no SSN digits, every password
+          --    replaced, every outstanding session revoked. (Phones and the invite / reset /
+          --    confirm tokens are covered by the schema-driven pass below.)
+          UPDATE users SET email = 'user+' || id || '@example.invalid' WHERE email IS NOT NULL;
+          UPDATE users SET password_hash = :'pw_hash';
+          SELECT pg_temp.scrub_col('users', 'token_version', 'COALESCE(token_version, 0) + 1');
+          SELECT pg_temp.scrub_col('users', 'mfa_enabled', 'false');
+          SELECT pg_temp.scrub_col('users', 'mfa_secret', 'NULL');
+          SELECT pg_temp.scrub_col('users', 'mfa_secret_pending', 'NULL');
+          SELECT pg_temp.scrub_col('users', 'mfa_last_used_step', 'NULL');
+          SELECT pg_temp.scrub_col('users', 'invite_token_expires', 'NULL');
+          SELECT pg_temp.scrub_col('users', 'reset_token_expires', 'NULL');
+          SELECT pg_temp.scrub_col('users', 'email_confirm_token_expires', 'NULL');
+          SELECT pg_temp.scrub_col('users', 'ssn_last4_enc', 'NULL');
+
+          -- 3. Companies: QuickBooks tokens + realm, Stripe ids.
+          SELECT pg_temp.scrub_col('companies', 'qbo_access_token', 'NULL');
+          SELECT pg_temp.scrub_col('companies', 'qbo_refresh_token', 'NULL');
+          SELECT pg_temp.scrub_col('companies', 'qbo_realm_id', 'NULL');
+          SELECT pg_temp.scrub_col('companies', 'qbo_token_expires_at', 'NULL');
+          SELECT pg_temp.scrub_col('companies', 'stripe_customer_id', 'NULL');
+          SELECT pg_temp.scrub_col('companies', 'stripe_subscription_id', 'NULL');
+          SELECT pg_temp.scrub_col('companies', 'stripe_connect_account_id', 'NULL');
+
+          -- 4. Schema-driven: every text column named like an email / phone / token / IP /
+          --    user agent, in every table (users.phone, clients.contact_email/phone,
+          --    estimates/invoices.client_email, appointments.client_email/phone,
+          --    service_requests.requester_*, subcontractors, suppliers, affiliates,
+          --    submittals.reviewer_email, public-link token hashes, …).
+          --    Nullable → NULL. NOT NULL → a unique throwaway value.
+          DO $$
+          DECLARE r record; filler text;
+          BEGIN
+            FOR r IN
+              SELECT c.table_name, c.column_name, c.is_nullable
+                FROM information_schema.columns c
+                JOIN information_schema.tables t
+                  ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
+               WHERE c.table_schema = 'public'
+                 AND c.data_type IN ('text', 'character varying')
+                 AND (c.column_name ~ '(^|_)(email|phone|mobile)$'
+                      OR c.column_name ~ '(^|_)token(_hash)?$'
+                      OR c.column_name IN ('ip', 'ip_address', 'registration_ip', 'user_agent'))
+                 AND NOT (c.table_name = 'users' AND c.column_name = 'email')
+            LOOP
+              IF r.is_nullable = 'YES' THEN
+                EXECUTE format('UPDATE public.%I SET %I = NULL WHERE %I IS NOT NULL', r.table_name, r.column_name, r.column_name);
+              ELSE
+                filler := CASE
+                  WHEN r.column_name ~ 'email$' THEN $f$'scrubbed+' || md5(random()::text || clock_timestamp()::text) || '@example.invalid'$f$
+                  WHEN r.column_name ~ 'token(_hash)?$' THEN $f$md5(random()::text || clock_timestamp()::text)$f$
+                  ELSE $f$'scrubbed'$f$ END;
+                EXECUTE format('UPDATE public.%I SET %I = %s', r.table_name, r.column_name, filler);
+              END IF;
+            END LOOP;
+          END $$;
+
+          -- 5. Whole tables that are personal data or device credentials.
+          DO $$
+          DECLARE t text;
+          BEGIN
+            FOREACH t IN ARRAY ARRAY['push_subscriptions', 'location_pings', 'login_failures',
+                                     'client_errors', 'stripe_webhook_events'] LOOP
+              IF to_regclass('public.' || t) IS NOT NULL THEN
+                EXECUTE format('DELETE FROM public.%I', t);
+              END IF;
+            END LOOP;
+          END $$;
+          SQL
+
+      - name: Verify scrub
+        shell: bash
+        run: |
+          set -euo pipefail
+          left="$("$PGBIN/psql" "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          SELECT
+            (SELECT COUNT(*) FROM users WHERE email IS NOT NULL AND email NOT LIKE '%@example.invalid')
+          + (SELECT COUNT(*) FROM users WHERE mfa_secret IS NOT NULL OR mfa_secret_pending IS NOT NULL)
+          + (SELECT COUNT(*) FROM users WHERE reset_token IS NOT NULL OR invite_token IS NOT NULL OR email_confirm_token IS NOT NULL)
+          + (SELECT COUNT(*) FROM companies WHERE qbo_access_token IS NOT NULL OR qbo_refresh_token IS NOT NULL
+                                              OR stripe_customer_id IS NOT NULL OR stripe_subscription_id IS NOT NULL)
+          + (SELECT COUNT(*) FROM push_subscriptions)
+          + (SELECT COUNT(*) FROM clients WHERE contact_email IS NOT NULL OR contact_phone IS NOT NULL)
+          + (SELECT CASE WHEN EXISTS (SELECT 1 FROM system_flags WHERE key = 'email_mode' AND value = 'suppress') THEN 0 ELSE 1 END);
+          SQL
+          )"
+          if [ "$left" != "0" ]; then
+            echo "::error::Scrub verification failed ($left unscrubbed rows/flags)."; exit 1
+          fi
+          echo "Scrub verified."
+
+      # Never leave a raw (unscrubbed) prod copy on stage: any failure after the wipe
+      # drops the stage schema. Stage is then empty until the next successful run.
+      - name: Wipe stage on failure
+        if: failure() && steps.wipe.outcome == 'success'
+        run: |
+          rm -f /tmp/prod.pgc
+          "$PGBIN/psql" "$STAGING_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+          echo "::error::Stage schema wiped because the sync did not finish scrubbing."
 
       - name: Done
-        run: echo "Staging DB refreshed from production at $(date -u)"
+        run: echo "Staging DB refreshed from production (scrubbed) at $(date -u)"

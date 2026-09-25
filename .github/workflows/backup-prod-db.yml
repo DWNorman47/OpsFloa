@@ -1,0 +1,101 @@
+name: Backup Production DB (manual)
+
+# OPT-IN, MANUAL ONLY — there is deliberately no schedule. It READS production
+# (pg_dump) and never writes to any database. See docs/BACKUP-RESTORE.md.
+#
+# What it does: pg_dump (custom format) of PROD → encrypted with BACKUP_PASSPHRASE
+# (gpg, AES256) → uploaded as a workflow artifact (kept `retention_days`), and ALSO
+# to an S3-compatible bucket (e.g. a Cloudflare R2 bucket separate from the app's
+# uploads bucket) when the BACKUP_S3_* secrets are set. A raw, unencrypted dump
+# never leaves the runner.
+#
+# To make it periodic later: add a `schedule:` trigger (e.g. weekly) once you have
+# decided where the dumps live and who can read them. Protect it with a GitHub
+# Environment ("production", reviewers, main only) — the job already names it.
+#
+# Secrets: PROD_DATABASE_URL, BACKUP_PASSPHRASE (required);
+#          BACKUP_S3_BUCKET, BACKUP_S3_ENDPOINT, BACKUP_S3_ACCESS_KEY_ID,
+#          BACKUP_S3_SECRET_ACCESS_KEY (optional, all four).
+on:
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Days to keep the encrypted artifact (1-90)'
+        required: false
+        default: '14'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-prod-db
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: pg_dump prod (encrypted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      PGBIN: /usr/lib/postgresql/17/bin
+    steps:
+      - name: Check secrets
+        shell: bash
+        run: |
+          if [ -z "${PROD_DATABASE_URL:-}" ] || [ -z "${BACKUP_PASSPHRASE:-}" ]; then
+            echo "::error::PROD_DATABASE_URL and BACKUP_PASSPHRASE secrets are required."; exit 1
+          fi
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get install -y --no-install-recommends gnupg curl
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump and encrypt
+        id: dump
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          name="opsfloa-prod-${stamp}.pgc.gpg"
+          "$PGBIN/pg_dump" "$PROD_DATABASE_URL" --no-owner --no-acl --format=custom --file=/tmp/prod.pgc
+          # Sanity: the archive must list tables before it is kept.
+          "$PGBIN/pg_restore" --list /tmp/prod.pgc | grep -q "TABLE DATA public users" || { echo "::error::Dump has no users table data."; exit 1; }
+          gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 \
+            --symmetric --cipher-algo AES256 --output "/tmp/${name}" /tmp/prod.pgc 3<<<"$BACKUP_PASSPHRASE"
+          rm -f /tmp/prod.pgc
+          sha256sum "/tmp/${name}" | tee "/tmp/${name}.sha256"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to separate bucket (optional)
+        env:
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKUP_S3_BUCKET:-}" ]; then echo "No BACKUP_S3_BUCKET — artifact only."; exit 0; fi
+          name="${{ steps.dump.outputs.name }}"
+          aws s3 cp "/tmp/${name}" "s3://${BACKUP_S3_BUCKET}/db/${name}" --endpoint-url "$BACKUP_S3_ENDPOINT"
+          aws s3 cp "/tmp/${name}.sha256" "s3://${BACKUP_S3_BUCKET}/db/${name}.sha256" --endpoint-url "$BACKUP_S3_ENDPOINT"
+
+      - name: Upload encrypted artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2 (tag v4)
+        with:
+          name: ${{ steps.dump.outputs.name }}
+          path: |
+            /tmp/${{ steps.dump.outputs.name }}
+            /tmp/${{ steps.dump.outputs.name }}.sha256
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
