@@ -30,6 +30,7 @@ test('worker cannot delete their own open incident', async () => {
   pool.query.mockResolvedValue({ rowCount: 1, rows: [{ id: 3, user_id: 7, status: 'open' }] });
   const res = await request(makeApp()).delete('/api/incidents/3');
   expect(res.status).toBe(403);
+  expect(res.body.code).toBe('incident_delete_admin_only');
   expect(pool.query.mock.calls.some(c => /DELETE FROM incident_reports/.test(c[0]))).toBe(false);
 });
 

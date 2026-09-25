@@ -46,6 +46,7 @@ test('400 when checkout_id is missing and the caller has no single open checkout
   pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // back-compat lookup finds nothing
   const res = await request(makeApp()).post('/api/equipment/3/return').send({});
   expect(res.status).toBe(400);
+  expect(res.body.code).toBe('checkout_id_required');
   expect(uploadBase64).not.toHaveBeenCalled();
 });
 
@@ -84,6 +85,7 @@ test('409 (and no photo upload) when the referenced checkout is already closed b
   const res = await request(makeApp()).post('/api/equipment/3/return')
     .set('Idempotency-Key', KEY).send({ checkout_id: 11, return_photo: PHOTO });
   expect(res.status).toBe(409);
+  expect(res.body.code).toBe('already_returned');
   expect(uploadBase64).not.toHaveBeenCalled();
   expect(pool.connect).not.toHaveBeenCalled();
 });
@@ -109,5 +111,6 @@ test('409 when the checkout closes concurrently between the check and the UPDATE
   client.query = jest.fn(async (sql) => (/UPDATE equipment_checkouts/.test(sql) ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [] }));
   const res = await request(makeApp()).post('/api/equipment/3/return').send({ checkout_id: 11 });
   expect(res.status).toBe(409);
+  expect(res.body.code).toBe('already_returned');
   expect(client.query.mock.calls.map(c => c[0])).toContain('ROLLBACK');
 });

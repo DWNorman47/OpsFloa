@@ -203,6 +203,7 @@ router.patch('/:id', requirePerm('manage_projects'), async (req, res) => {
       if (!fresh.rows[0]) return res.status(404).json({ error: 'Work order not found.' });
       return res.status(409).json({
         error: 'This work order was changed by someone else. The latest version has been loaded.',
+        code: 'work_order_conflict',
         current: fresh.rows[0],
       });
     }

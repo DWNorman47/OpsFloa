@@ -179,9 +179,11 @@ function ReportEditor({ report: initial, projects, onSaved, onCancel, companyNam
       setDirty(false);
       onSaved(r.data);
     } catch (err) {
-      const msg = err.response?.status === 409
-        ? t.concurrentModification
-        : err.response?.data?.error || t.failedToSave;
+      const msg = err.response?.data?.code === 'report_reviewed_locked'
+        ? t.dailyReportReviewedLockedEdit
+        : err.response?.status === 409
+          ? t.concurrentModification
+          : err.response?.data?.error || t.failedToSave;
       setError(msg);
     } finally { setSaving(false); setSubmitting(false); }
   };
@@ -412,7 +414,10 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
     setDeleting(true);
     setDeleteError('');
     try { await api.delete(`/daily-reports/${report.id}`); onDelete(report.id); }
-    catch { setDeleteError(t.failedToDelete); setConfirmingDelete(false); }
+    catch (err) {
+      setDeleteError(err?.response?.data?.code === 'report_reviewed_locked' ? t.dailyReportReviewedLockedDelete : t.failedToDelete);
+      setConfirmingDelete(false);
+    }
     finally { setDeleting(false); }
   };
 

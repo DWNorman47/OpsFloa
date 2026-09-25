@@ -170,7 +170,7 @@ router.post('/', requireAuth, async (req, res) => {
     // Same edit-lock PATCH enforces: a worker must not rewrite a report an admin reviewed.
     if (dupe.rowCount > 0 && !isAdmin && dupe.rows[0].status === 'reviewed') {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Reviewed reports cannot be edited' });
+      return res.status(403).json({ error: 'Reviewed reports cannot be edited', code: 'report_reviewed_locked' });
     }
 
     // Upsert. The unique index folds a NULL project to 0 via COALESCE (migrations 0194/0197),
@@ -300,7 +300,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
     // reviewer's name over content they never saw).
     if (!isAdmin && existing.rows[0].status === 'reviewed') {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Reviewed reports cannot be edited' });
+      return res.status(403).json({ error: 'Reviewed reports cannot be edited', code: 'report_reviewed_locked' });
     }
 
     if (clientUpdatedAt && isNaN(new Date(clientUpdatedAt).getTime())) {
@@ -422,7 +422,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
           [req.params.id, companyId, req.user.id]
         );
         if (probe.rows[0]?.status === 'reviewed') {
-          return res.status(403).json({ error: 'Reviewed reports cannot be deleted' });
+          return res.status(403).json({ error: 'Reviewed reports cannot be deleted', code: 'report_reviewed_locked' });
         }
       }
       return res.status(404).json({ error: 'Report not found' });

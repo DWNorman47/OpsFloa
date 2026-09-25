@@ -154,7 +154,7 @@ router.patch('/:id/close', requireAdmin, async (req, res) => {
       `UPDATE incident_reports SET status = 'closed' WHERE id = $1 AND company_id = $2 RETURNING *`,
       [req.params.id, req.user.company_id]
     );
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Incident not found' });
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Incident not found', code: 'incident_not_found' });
     logAudit(req.user.company_id, req.user.id, req.user.full_name, 'incident.closed', 'incident_report', req.params.id, null, null);
     res.json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -166,16 +166,16 @@ router.patch('/:id/close', requireAdmin, async (req, res) => {
 router.delete('/:id', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
-  if (!isAdmin) return res.status(403).json({ error: 'Only an admin can delete an incident report' });
+  if (!isAdmin) return res.status(403).json({ error: 'Only an admin can delete an incident report', code: 'incident_delete_admin_only' });
   try {
     const existing = await pool.query(
       'SELECT * FROM incident_reports WHERE id = $1 AND company_id = $2',
       [req.params.id, companyId]
     );
-    if (existing.rowCount === 0) return res.status(404).json({ error: 'Incident not found' });
+    if (existing.rowCount === 0) return res.status(404).json({ error: 'Incident not found', code: 'incident_not_found' });
     const report = existing.rows[0];
-    if (!isAdmin && report.user_id !== req.user.id) return res.status(403).json({ error: 'Not your report' });
-    if (!isAdmin && report.status === 'closed') return res.status(403).json({ error: 'Closed incidents cannot be deleted' });
+    if (!isAdmin && report.user_id !== req.user.id) return res.status(403).json({ error: 'Not your report', code: 'incident_not_yours' });
+    if (!isAdmin && report.status === 'closed') return res.status(403).json({ error: 'Closed incidents cannot be deleted', code: 'incident_closed' });
 
     await pool.query('DELETE FROM incident_reports WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     logAudit(companyId, req.user.id, req.user.full_name, 'incident.deleted', 'incident_report', req.params.id, null,

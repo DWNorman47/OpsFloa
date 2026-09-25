@@ -495,7 +495,7 @@ router.post('/:id/return', requireAuth, async (req, res) => {
             AND (user_id=$3 OR checked_out_by=$3)`,
         [req.params.id, companyId, req.user.id]
       );
-      if (open.rowCount !== 1) return res.status(400).json({ error: 'checkout_id is required' });
+      if (open.rowCount !== 1) return res.status(400).json({ error: 'checkout_id is required', code: 'checkout_id_required' });
       checkoutId = open.rows[0].id;
     } catch (err) {
       req.log.error({ err }, 'route error');
@@ -512,7 +512,7 @@ router.post('/:id/return', requireAuth, async (req, res) => {
     const row = cur.rows[0];
     if (row.returned_at) {
       if (clientRequestId && row.return_request_id === clientRequestId) return res.status(200).json(row);
-      return res.status(409).json({ error: 'Already returned' });
+      return res.status(409).json({ error: 'Already returned', code: 'already_returned' });
     }
   } catch (err) {
     req.log.error({ err }, 'route error');
@@ -530,7 +530,7 @@ router.post('/:id/return', requireAuth, async (req, res) => {
        WHERE id=$1 AND asset_id=$2 AND company_id=$3 AND returned_at IS NULL RETURNING *`,
       [checkoutId, req.params.id, companyId, return_photo_url, clientRequestId]
     );
-    if (co.rowCount === 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Already returned' }); }
+    if (co.rowCount === 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Already returned', code: 'already_returned' }); }
     await client.query("UPDATE equipment_items SET status='available', updated_at=NOW() WHERE id=$1 AND company_id=$2",
       [req.params.id, companyId]);
     await client.query('COMMIT');

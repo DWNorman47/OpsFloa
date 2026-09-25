@@ -46,6 +46,7 @@ test('409 with the fresh row when updated_at is stale', async () => {
     .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3, status: 'completed', updated_at: 'x' }] }); // fresh
   const res = await request(makeApp()).patch('/api/work-orders/3').send({ status: 'scheduled', updated_at: TS });
   expect(res.status).toBe(409);
+  expect(res.body.code).toBe('work_order_conflict');
   expect(res.body.current).toMatchObject({ id: 3, status: 'completed' });
 });
 

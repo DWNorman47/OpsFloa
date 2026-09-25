@@ -99,6 +99,7 @@ test('DELETE blocks a non-admin from deleting a reviewed report', async () => {
     .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'reviewed' }] }); // probe
   const res = await request(makeApp()).delete('/api/daily-reports/5');
   expect(res.status).toBe(403);
+  expect(res.body.code).toBe('report_reviewed_locked');
   expect(pool.query.mock.calls[0][0]).toMatch(/status <> 'reviewed'/);
 });
 

@@ -108,7 +108,11 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
       load();
       onChange?.();
     } catch (err) {
-      setError(err?.response?.data?.error || t.eqReturnFailed);
+      const code = err?.response?.data?.code;
+      if (code === 'already_returned') { setReturningId(null); setReturnPhoto(null); load(); onChange?.(); }
+      setError(code === 'already_returned' ? t.eqAlreadyReturned
+        : code === 'checkout_id_required' ? t.eqCheckoutIdRequired
+          : (err?.response?.data?.error || t.eqReturnFailed));
     } finally { setBusy(''); }
   };
 

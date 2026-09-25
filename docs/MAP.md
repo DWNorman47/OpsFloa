@@ -7,6 +7,7 @@ Keep it current when a subsystem moves.
 - **Client**: Vite + React → Vercel. `client/`
 - **Server**: Node + Express → Render (`npm start` = `node migrate.js && node index.js`). `server/`
 - **DB**: PostgreSQL (Neon). Migrations: `server/migrations/NNNN_*.sql` (numbered, run on boot).
+- **Backups / restore / stage sync scrub**: `docs/BACKUP-RESTORE.md` (Neon PITR, restore-to-timestamp, manual encrypted dump workflow, restore drill).
 - **Email** Resend · **Files** Cloudflare R2 · **Payments** Stripe · **Accounting** QuickBooks/Intuit.
 - Branches: `dev` → dev.opsfloa.com (work here). `main` → opsfloa.com (PR only; never pushed directly).
 - Deploys from `dev`: Vercel (client) **auto** on every push (~1 min); Render (server) usually-but-**not-always** — a backend change may need a manual Render deploy to show up. See `CLAUDE.md`.
@@ -80,6 +81,10 @@ role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder
 - Client tests: `cd client && npx vitest run [file]` (Vitest; i18n EN/ES parity is `src/i18n.test.js`).
 - **CI-only gates** (need services `verify` can't assume locally): `npm run lint:migrations` (applies migrations to a scratch Postgres) and `npm audit --omit=dev --audit-level=high` (new advisories move, so it's out of `verify`; transitive fixes go in `server/package.json` `overrides`).
 - When touching Plan Room, also confirm `git status --porcelain client/public/tool-apps/sitework/` is empty.
+
+## Push notifications
+- Server fan-out + trailing per-thread coalescing: `server/push.js`. Subscribe API: `server/routes/push.js`.
+- Client: `utils/pushSubscription.js` (shared helpers, per-device opt-out), `hooks/usePushResubscribe.js` (re-subscribes on every session start, mounted in `AuthContext`), Account-page toggle `components/NotificationSetup.jsx`. Logout unsubscribes (`AuthContext.logout`).
 
 ## Conventions
 - Work on `dev`; push after every commit; never touch `main`/stage without per-case OK.

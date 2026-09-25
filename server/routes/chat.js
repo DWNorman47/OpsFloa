@@ -124,7 +124,7 @@ router.get('/', requireAuth, requirePerm('view_company_chat'), async (req, res) 
       return res.json(result.rows);
     }
 
-    if (!workerInScope(req, workerId)) return res.status(403).json({ error: 'Not authorized for this worker' });
+    if (!workerInScope(req, workerId)) return res.status(403).json({ error: 'Not authorized for this worker', code: 'worker_not_in_scope' });
 
     // Validate worker belongs to this company before fetching their thread
     const workerCheck = await pool.query(
@@ -152,7 +152,7 @@ router.post('/read', requireAuth, requirePerm('view_company_chat'), async (req, 
   const workerId = req.body?.worker_id;
   try {
     if (workerId != null && workerId !== '') {
-      if (!workerInScope(req, workerId)) return res.status(403).json({ error: 'Not authorized for this worker' });
+      if (!workerInScope(req, workerId)) return res.status(403).json({ error: 'Not authorized for this worker', code: 'worker_not_in_scope' });
       await markThreadRead(companyId, req.user.id, workerId);
       return res.json({ ok: true });
     }
@@ -186,14 +186,14 @@ router.post('/', requireAuth, requirePerm('send_company_chat'), chatWriteLimiter
   const isAdmin = req.user.role === 'admin';
   const targetWorkerId = isAdmin ? worker_id : req.user.id;
   if (!targetWorkerId) return res.status(400).json({ error: 'worker_id required' });
-  if (isAdmin && !workerInScope(req, targetWorkerId)) return res.status(403).json({ error: 'Not authorized for this worker' });
+  if (isAdmin && !workerInScope(req, targetWorkerId)) return res.status(403).json({ error: 'Not authorized for this worker', code: 'worker_not_in_scope' });
 
   try {
     // A globally-muted user (users.messaging_blocked) may not send — same rule as DMs
     // (utils/messaging.js canMessage).
     const me = await pool.query('SELECT messaging_blocked FROM users WHERE id = $1', [req.user.id]);
     if (me.rows[0]?.messaging_blocked) {
-      return res.status(403).json({ error: 'You are not allowed to send messages.', reason: 'muted' });
+      return res.status(403).json({ error: 'You are not allowed to send messages.', code: 'chat_muted', reason: 'muted' });
     }
 
     // Validate target worker belongs to this company

@@ -39,6 +39,16 @@ function formatTime(str, locale = 'en-US') {
   return new Date(str).toLocaleString(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+// Map a failed send to a bilingual message. The server returns a stable `code` alongside its
+// English `error` (kept for API consumers); the UI never shows the raw English text.
+function chatSendErrorText(err, t) {
+  const code = err?.response?.data?.code;
+  if (code === 'chat_muted') return t.chatErrMuted;
+  if (code === 'worker_not_in_scope') return t.chatErrWorkerScope;
+  if (err?.response?.status === 403) return t.chatBlocked;
+  return t.chatErrSendFailed;
+}
+
 // Worker view — the shared "Admins" thread (company_chat) plus 1:1 direct
 // messages with specific people (/api/dm), when the company setting allows it.
 // active === 'admins' → the collective thread; a number → a DM with that user.
@@ -52,6 +62,7 @@ function WorkerChat({ settings, onRead }) {
   const [messages, setMessages] = useState([]);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const [loading, setLoading] = useState(true);
   const [hasOlder, setHasOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -134,6 +145,7 @@ function WorkerChat({ settings, onRead }) {
     e.preventDefault();
     if (!body.trim()) return;
     setSending(true);
+    setSendError('');
     const target = active;
     try {
       const r = target === 'admins'
@@ -144,8 +156,7 @@ function WorkerChat({ settings, onRead }) {
       setBody('');
       if (active !== 'admins') loadContacts();
     } catch (err) {
-      // eslint-disable-next-line no-alert
-      if (err?.response?.status === 403) alert(err.response.data?.error || t.chatBlocked);
+      setSendError(chatSendErrorText(err, t));
     } finally { setSending(false); }
   };
 
@@ -157,7 +168,7 @@ function WorkerChat({ settings, onRead }) {
       </div>
       {contacts.length > 0 && (
         <div style={styles.workerPicker}>
-          <select style={styles.pickerSelect} value={String(active)} onChange={e => { setActive(e.target.value === 'admins' ? 'admins' : Number(e.target.value)); setBody(''); }}>
+          <select style={styles.pickerSelect} value={String(active)} onChange={e => { setActive(e.target.value === 'admins' ? 'admins' : Number(e.target.value)); setBody(''); setSendError(''); }}>
             <option value="admins">🏢 {t.chatAdminsOption}</option>
             {contacts.map(c => (
               <option key={c.id} value={c.id}>{c.full_name}{c.role === 'admin' ? ` · ${t.chatAdminBadge}` : ''}{c.unread ? ` 🔴 ${c.unread}` : ''}</option>
@@ -167,7 +178,7 @@ function WorkerChat({ settings, onRead }) {
       )}
       <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale}
         hasOlder={hasOlder} loadingOlder={loadingOlder} onLoadOlder={loadOlder} />
-      <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} />
+      <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} error={sendError} />
     </div>
   );
 }
@@ -186,6 +197,7 @@ function AdminChat({ workers, settings }) {
   const [messages, setMessages] = useState([]);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const [loading, setLoading] = useState(false);
   const [unreadByWorker, setUnreadByWorker] = useState({});
   const [hasOlder, setHasOlder] = useState(false);
@@ -296,6 +308,7 @@ function AdminChat({ workers, settings }) {
     e.preventDefault();
     if (!body.trim() || !selected) return;
     setSending(true);
+    setSendError('');
     const target = selected;
     try {
       const kind = target.startsWith('d:') ? 'dm' : 'worker';
@@ -307,8 +320,7 @@ function AdminChat({ workers, settings }) {
       if (selectedRef.current === target) setMessages(prev => [...prev, r.data]);
       setBody('');
     } catch (err) {
-      // eslint-disable-next-line no-alert
-      if (err?.response?.status === 403) alert(err.response.data?.error || t.chatBlocked);
+      setSendError(chatSendErrorText(err, t));
     } finally { setSending(false); }
   };
 
@@ -324,7 +336,7 @@ function AdminChat({ workers, settings }) {
         <span style={styles.sub}>{t.chatAdminPrivateNote}</span>
       </div>
       <div style={styles.workerPicker}>
-        <select style={styles.pickerSelect} value={selected} onChange={e => { setSelected(e.target.value); setBody(''); }}>
+        <select style={styles.pickerSelect} value={selected} onChange={e => { setSelected(e.target.value); setBody(''); setSendError(''); }}>
           <option value="">{t.chatSelectRecipient}</option>
           <optgroup label={`${workerLabel} ${t.chatThreadsGroup}`}>
             {workers.filter(w => w.role !== 'admin').map(w => (
@@ -344,7 +356,7 @@ function AdminChat({ workers, settings }) {
         <>
           <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale}
             hasOlder={hasOlder} loadingOlder={loadingOlder} onLoadOlder={loadOlder} />
-          <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} />
+          <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} error={sendError} />
         </>
       ) : (
         <p style={styles.hint}>{t.chatSelectHint}</p>
@@ -394,8 +406,10 @@ function Thread({ messages, loading, currentUserId, bottomRef, t, locale, hasOld
   );
 }
 
-function ChatForm({ body, setBody, sending, onSubmit, t }) {
+function ChatForm({ body, setBody, sending, onSubmit, t, error }) {
   return (
+    <>
+    {error && <div role="alert" style={styles.sendError}>{error}</div>}
     <form onSubmit={onSubmit} style={styles.form}>
       <input
         style={styles.input}
@@ -409,6 +423,7 @@ function ChatForm({ body, setBody, sending, onSubmit, t }) {
         {sending ? t.sending : t.chatSend}
       </button>
     </form>
+    </>
   );
 }
 
@@ -440,6 +455,7 @@ const styles = {
   time: { fontSize: 10, color: '#6b7280' },
   msgBody: { lineHeight: 1.5 },
   form: { display: 'flex', borderTop: '1px solid #e5e7eb' },
+  sendError: { padding: '8px 12px', background: '#fef2f2', color: '#b91c1c', fontSize: 13, borderTop: '1px solid #fecaca' },
   input: { flex: 1, padding: '10px 14px', border: 'none', fontSize: 13, outline: 'none', background: '#fff' },
   sendBtn: { padding: '10px 18px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
 };

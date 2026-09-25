@@ -8398,6 +8398,11 @@ function setLiveState(t) { $('liveState').textContent = t || ''; }
 // landed recently. Gives a joiner visible proof they're actually in the session.
 function refreshLiveStatus() {
   if (!session) return;
+  const st = $('liveState');
+  st.classList.toggle('live-err', !!session.syncError);
+  st.style.color = session.syncError ? '#b91c1c' : '';
+  // A rejected push is shown until a later push succeeds — never masked by "Live".
+  if (session.syncError) { setLiveState(session.syncError); return; }
   if (session.connected) { setLiveState('🟢 Live'); return; }
   const fresh = session.syncedAt && (Date.now() - session.syncedAt < 12000);
   setLiveState(fresh ? '🟡 Live · backup sync' : '🔴 Reconnecting…');
@@ -8424,29 +8429,104 @@ function sessionSyncSoon() {
   clearTimeout(session.timer);
   session.timer = setTimeout(sessionPush, 250);
 }
+// Server-side caps on one POST /live/:id/op (server/utils/planDocValidate.js LIMITS):
+// at most `ops` (20,000) ops and `opsBytes` (24 MB) of JSON. One edit can produce more than
+// that (a big import / bulk delete), so the diff is sent in batches under both caps.
+const LIVE_OP_CAP = 20000;
+const LIVE_BATCH_BYTES = 12 * 1024 * 1024; // half of opsBytes — headroom for non-ASCII text
+function chunkLiveOps(ops, sizeOf, cap = LIVE_OP_CAP, maxBytes = LIVE_BATCH_BYTES) {
+  const out = [];
+  let cur = [], bytes = 0;
+  for (const op of ops) {
+    const n = sizeOf(op);
+    if (cur.length && (cur.length >= cap || bytes + n > maxBytes)) { out.push(cur); cur = []; bytes = 0; }
+    cur.push(op); bytes += n;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+// Plan Room has no i18n table; the live-sync error follows the signed-in user's OpsFloa
+// language (tc_user.language) so a Spanish-speaking crew isn't shown English only.
+function liveIsSpanish() {
+  try {
+    const u = JSON.parse(sessionStorage.getItem('tc_user') || localStorage.getItem('tc_user') || '{}');
+    return !!u && u.language === 'Spanish';
+  } catch (_) { return false; }
+}
+function liveRejectedText() {
+  return liveIsSpanish()
+    ? '⚠ Error de sincronización: el servidor rechazó un cambio. Se recargó la sesión; tu último cambio no se compartió.'
+    : '⚠ Sync error: the server rejected an edit. Reloaded the session; your last change was not shared.';
+}
 async function sessionPush() {
-  if (!session) return;
+  const s = session;
+  if (!s) return;
+  // One push at a time: a batched push spans several requests, and a second diff taken
+  // mid-flight would re-send batches the first one is still committing.
+  if (s.pushing) { s.pushAgain = true; return s.pushing; }
+  s.pushing = (async () => { try { await sessionPushOnce(s); } finally { s.pushing = null; } })();
+  await s.pushing;
+  if (s.pushAgain && session === s) { s.pushAgain = false; sessionSyncSoon(); }
+}
+async function sessionPushOnce(s) {
+  if (s.needsResync) { await sessionResync(s); return; }
   const ops = [];
   const cur = new Map();
   for (const m of state.markups) {
     const j = JSON.stringify(m);
     cur.set(m.id, j);
-    if (session.lastSync.get(m.id) !== j) ops.push({ t: 'up', id: m.id, o: m, ts: Date.now() });
+    if (s.lastSync.get(m.id) !== j) ops.push({ t: 'up', id: m.id, o: m, ts: Date.now() });
   }
-  for (const id of session.lastSync.keys()) if (!cur.has(id)) ops.push({ t: 'del', id, ts: Date.now() });
+  for (const id of s.lastSync.keys()) if (!cur.has(id)) ops.push({ t: 'del', id, ts: Date.now() });
   const docNow = sessionDoc();
   const docHash = JSON.stringify(docNow);
-  const doc = docHash !== session.docHash ? docNow : null;
-  if (!ops.length && !doc) { session.lastSync = cur; session.docHash = docHash; return; }
+  const doc = docHash !== s.docHash ? docNow : null;
+  if (!ops.length && !doc) { s.lastSync = cur; s.docHash = docHash; return; }
+  const batches = chunkLiveOps(ops, op => (op.t === 'up' ? (cur.get(op.id) || '').length : 0) + 96);
+  if (!batches.length) batches.push([]); // doc-only change
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const sendDoc = i === 0 ? doc : null;
+    let res;
+    try {
+      res = await apiLive('/' + s.id + '/op', { method: 'POST', body: JSON.stringify({ clientId: s.clientId, ops: batch, doc: sendDoc, docTs: Date.now() }) });
+    } catch (_) { return; } // network: keep the baseline; the rest re-pushes on the next edit or poll
+    if (session !== s) return;
+    if (res.status === 400 || res.status === 413) {
+      // The server validates a batch whole and rejects it every time — re-sending the same
+      // diff would loop forever while the bar claims Live. Surface it (persistently) and
+      // take the server's copy instead.
+      s.syncError = liveRejectedText();
+      refreshLiveStatus();
+      await sessionResync(s);
+      return;
+    }
+    if (!res.ok) return; // transient (5xx/401…): keep the baseline, retry later
+    // Commit the baseline per confirmed batch, so a later failure re-sends only what's left
+    // (and an edit is never silently lost / clobbered by the backup poll's pull).
+    for (const op of batch) {
+      if (op.t === 'del') s.lastSync.delete(op.id);
+      else s.lastSync.set(op.id, cur.get(op.id));
+    }
+    if (sendDoc) s.docHash = docHash;
+  }
+  if (s.syncError) { s.syncError = null; refreshLiveStatus(); }
+}
+// Replace local state with the session's server copy (after a rejected push). If the fetch
+// fails, `needsResync` stays set so the next push/poll retries the RESYNC — never the diff
+// the server already rejected.
+async function sessionResync(s) {
+  s.needsResync = true;
+  let t;
   try {
-    const res = await apiLive('/' + session.id + '/op', { method: 'POST', body: JSON.stringify({ clientId: session.clientId, ops, doc, docTs: Date.now() }) });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    // Commit the baseline ONLY on a confirmed push. If it failed, we keep the old
-    // lastSync/docHash so the same diff re-pushes next tick instead of the edit
-    // being silently lost (and later clobbered by the backup poll's pull).
-    session.lastSync = cur;
-    session.docHash = docHash;
-  } catch (_) { /* leave baseline; retry on the next edit or poll */ }
+    const res = await apiLive('/' + s.id, { timeout: 8000 });
+    if (!res.ok) return;
+    t = await res.json();
+  } catch (_) { return; }
+  if (session !== s) return;
+  s.needsResync = false;
+  applyStream({ type: 'init', objects: t.objects, doc: t.doc, roster: t.roster });
+  refreshLiveStatus();
 }
 
 function applyStream(msg) {

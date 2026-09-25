@@ -3,6 +3,7 @@ import api from '../api';
 import { silentError } from '../errorReporter';
 import { usePerm } from '../hooks/usePerm';
 import { useAuth } from '../contexts/AuthContext';
+import { useT } from '../hooks/useT';
 
 const STATUSES = [
   { v: 'open', label: 'Open' },
@@ -67,6 +68,7 @@ export const workOrderDisplayName = record => (
 export default function WorkOrdersPanel() {
   const canManage = usePerm('manage_projects');
   const { user } = useAuth();
+  const t = useT();
   const [orders, setOrders] = useState([]);
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -122,7 +124,9 @@ export default function WorkOrdersPanel() {
       // Someone else (e.g. the tech completing the job) saved first: show their version.
       const current = e?.response?.status === 409 ? e.response.data?.current : null;
       if (current) { setForm(formFrom(current)); setEditing(current); load(); }
-      setError(e?.response?.data?.error || 'Could not save the work order.');
+      setError(e?.response?.data?.code === 'work_order_conflict'
+        ? t.workOrderConflict
+        : (e?.response?.data?.error || t.workOrderSaveFailed));
     } finally { setSaving(false); }
   };
 

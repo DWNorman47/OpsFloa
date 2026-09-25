@@ -6746,3 +6746,58 @@ build); migrations 0214-0217 applied on a throwaway local Postgres.
   RFI numbering lock; company-local closeout dates; admin-only incident delete; analytics hours
   subtract breaks; /projects/metrics limited to active projects; superadmin list LATERAL
   counts; /admin/pending-count.
+
+## 2026-09-24 — Infra / sign-up / push pass
+
+**Stage sync (HIGH).** `sync-staging-db.yml` copied prod raw. Now: host guard before the DROP
+(stage host ≠ prod host AND matches `vars.STAGING_DB_HOST`, exact or glob, `-pooler` ignored;
+tested locally against fake URLs), one-transaction scrub right after the restore, a verify step,
+and a failure path that drops the stage schema so a raw copy never survives. The scrub is
+schema-driven (any text column named *email/*phone/*mobile/*token/*token_hash/ip/user_agent in
+any table) plus explicit MFA/QBO/Stripe/SSN columns and emptied push/location/login-failure
+tables. Judgment calls: (1) **password hashes are replaced**, not kept — with an optional
+`STAGING_PASSWORD_HASH` secret for a shared stage password, otherwise no stage login; prod hashes
+never reach stage. (2) Names/addresses/notes/JSON snapshots are NOT scrubbed (stage must stay
+useful) — documented. (3) "Never send email" is a DB flag, `system_flags.email_mode` (new table,
+migration 0221), read by `email.js` with a 60 s cache; it can only make sending safer. `email.js`
+also never sends to `*.invalid`. I could not run the scrub SQL against a database (not allowed
+in this pass) — its first real run is the nightly job; the verify + wipe-on-failure steps bound
+the damage if it's wrong.
+
+**Workflows.** Top-level `permissions: contents: read` everywhere; actions pinned to commit SHAs
+(checkout 11d5960 = v4.4.0, setup-node 49933ea = v4.4.0, upload-artifact ea165f8 = v4.6.2, looked
+up with `git ls-remote`). `test.yml` now runs `npm run verify` for server and client (server CI
+previously skipped eslint; client CI skipped `vite build`) + migrations lint. New
+`backup-prod-db.yml`: workflow_dispatch only, encrypted dump. Job names changed → branch
+protection note in FOLLOW-UP.
+
+**backfill-storage.js deleted.** One-shot from long ago; nothing referenced it; it loaded `.env`
+and rewrote every company's storage counter from only 2 tables (wipe-demo-storage.js knows many
+more), so re-running it would have under-counted everyone.
+
+**Push.** Logout unsubscribes the device but only the Account page re-subscribed → pushes stopped
+silently after any re-login. New `hooks/usePushResubscribe.js` (mounted in AuthProvider) +
+`utils/pushSubscription.js`: on every session start, if permission is already granted and the
+user didn't turn pushes off on this device (new per-device opt-out flag set by the Account toggle),
+subscribe + POST. Never prompts; waits for an in-flight logout unsubscribe. Server coalescing
+(`push.js`) dropped every message after the first within 30 s; now trailing: first goes out,
+the rest are held and sent as one "N new messages · latest" push when the window closes; the
+window only starts after a push was accepted; the trailing send re-reads the subscription rows.
+
+**Sign-up / onboarding.** welcomed_at now stamped only when a session is issued (login, MFA
+confirm, complete-setup) — not on unconfirmed-email / MFA-pending attempts. confirm-email returns
+company + username; the client lands on a pre-filled /login with a banner and sends the admin to
+Administration (questionnaire). I chose pre-fill over auto-login: the link would otherwise be a
+passwordless login token sitting in an inbox. IPv4 trial limit 5 → 10 / 30 days (IPv6 /56 stays
+5), neutral messages with a support address; company-name 409 neutral. public_visits keeps the row
+with `registered = true` on sign-up (the later logged-in exclusion no longer deletes it).
+Expired-trial admins go to `/administration#billing`. Free card's inert button → "Contact us"
+(no Free plan built). Onboarding checklist: links /team, /work, /administration#workspace; rates
+done = explicit confirm OR an admin-made default-rate history row OR rate ≠ 30; timezone done only
+on explicit confirm (two new settings keys, allow-listed in settingsDefaults.js + admin.js).
+Canonical: `useDocumentMeta` now sets a self-canonical per route (/welcome → /), so /privacy,
+/eula, public company profiles no longer claim to be the home page; index.html keeps the home
+default for non-JS crawlers.
+
+Not done / for later: the super-admin prospect list doesn't show the new `registered` column yet
+(superadmin.js wasn't in scope).

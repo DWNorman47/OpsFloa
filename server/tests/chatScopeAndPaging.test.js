@@ -71,6 +71,7 @@ describe('worker scope for partial admins', () => {
     mockUser = SCOPED;
     const res = await request(makeApp()).post('/api/chat').send({ worker_id: 11, body: 'hi' });
     expect(res.status).toBe(403);
+    expect(res.body.code).toBe('worker_not_in_scope');
     expect(calls(/INSERT INTO company_chat /)).toHaveLength(0);
   });
 
@@ -149,6 +150,7 @@ describe('messaging_blocked + retention', () => {
     const res = await request(makeApp()).post('/api/chat').send({ body: 'hi' });
     expect(res.status).toBe(403);
     expect(res.body.reason).toBe('muted');
+    expect(res.body.code).toBe('chat_muted');
     expect(calls(/INSERT INTO company_chat /)).toHaveLength(0);
   });
 

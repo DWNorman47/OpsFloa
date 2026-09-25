@@ -18,9 +18,36 @@ Check items off (or delete them) as they're done. Engineering-only parked work l
       mail out broken `undefined/...` links instead).
 - [ ] *(Optional)* `TRIAL_CLIENT_EMAIL_DAILY_CAP` on Render — trial companies may send at most
       this many client-facing emails per day (default 50).
-- [ ] **(If not already done) set `DISABLE_BACKGROUND_JOBS=true` on the stage Render
-      service** — from the Neon cost notes (`docs/claude-memory/project_neon_compute.md`);
-      keeps the stage DB branch idle. Do NOT set it on prod.
+- [ ] **URGENT — set `DISABLE_BACKGROUND_JOBS=true` on the stage Render service** (do NOT
+      set it on prod). Stage receives a nightly copy of PRODUCTION data; with jobs running it
+      can email real customers (trial-expiry etc.) and, if it shares prod's R2 bucket, its
+      media-retention job can delete production files. Also keeps the stage Neon branch idle.
+- [ ] **Check stage's R2 settings** (`R2_PUBLIC_URL`, bucket name/credentials on the stage Render
+      service) are a SEPARATE bucket from production's.
+
+- [ ] **Set the repo variable `STAGING_DB_HOST`** (GitHub → Settings → Secrets and variables →
+      Actions → *Variables*) to the stage Neon host, e.g. `ep-xxx.us-east-2.aws.neon.tech`
+      (the `-pooler` part is optional). Until it is set, the nightly **prod → stage sync fails
+      on purpose before touching anything** (new guard). The sync now also scrubs personal
+      data and secrets and makes stage send no email — see `docs/BACKUP-RESTORE.md` §6.
+- [ ] *(Optional)* **`STAGING_PASSWORD_HASH` secret** — a bcrypt hash of a stage-only password.
+      Every stage account then signs in with that password. Without it no stage account can
+      sign in (prod password hashes are no longer copied to stage).
+- [ ] **Move the DB secrets into GitHub Environments** (can't be done from the repo): create
+      `production` (PROD_DATABASE_URL, BACKUP_* — main only, you as required reviewer) and
+      `staging` (STAGING_DATABASE_URL, STAGING_PASSWORD_HASH — main only). Today any workflow
+      on any branch can read PROD_DATABASE_URL. Steps: `docs/BACKUP-RESTORE.md` §7.
+- [ ] **Neon restore window:** check Settings → Instant restore on the Neon project and raise it
+      to at least 7 days for prod (`docs/BACKUP-RESTORE.md` §2).
+- [ ] *(Optional)* **Off-Neon backups:** add `BACKUP_PASSPHRASE` (+ optional `BACKUP_S3_*`) and
+      run *Backup Production DB (manual)* from Actions once; it is manual-only until you decide
+      where dumps live. Then do the restore drill (`docs/BACKUP-RESTORE.md` §5).
+- [ ] **Branch protection:** CI job names changed (now "Server verify (ESLint + Jest)",
+      "Migrations lint", "Client verify (ESLint + Vitest + Vite build)"). If `main`/`dev`
+      require status checks, re-select these names or merges will wait forever on the old ones.
+- [ ] **`TRIAL_LIMIT_PER_IP` on Render:** if it is set to `5` there, change it to `10` (or
+      unset it) — the new default for a shared IPv4 address is 10 per 30 days; IPv6 /56 stays 5
+      (`TRIAL_LIMIT_PER_IPV6_SUBNET`).
 
 ## Decisions pending
 - [ ] **Invoice markup visibility.** An invoice created from an estimate now carries
@@ -33,7 +60,20 @@ Check items off (or delete them) as they're done. Engineering-only parked work l
       trial company named e.g. "PayPal Billing". Decide whether to block well-known brand
       names at sign-up.
 
+- [ ] **QuickBooks contractor bills — billing model.** Incremental any-range billing keeps
+      producing edge cases (patched 2026-09-24). Recommended: bill each contractor once per
+      LOCKED pay period, with later changes as separate adjustment bills. Decide later.
+      Known gap under the current model: an already-billed entry later moved to another
+      date can end up billed nowhere.
+- [ ] **Free plan.** The site advertises a $0 Free plan but no path leads to it. Either make it
+      real (expired trials drop to Free, ≤3 workers) or remove it from the site. Decide later.
+
+- [ ] **Free plan.** Deferred (your call). Until you decide, the Free card's button on Billing
+      says **"Contact us"** (opens an email to info@opsfloa.com) — it used to do nothing.
+
 ## Decisions made (for reference)
+- 2026-09-24 — **Company names stay globally unique** (login uses the company name).
+- 2026-09-24 — **Browser extension (`extension/`) is out of scope** for reviews and fixes.
 - 2026-09-24 — **Dated pay rates:** effective-dated history for worker, project prevailing,
   company default and company prevailing rates; backdating allowed; backdating into a
   locked pay period warns and requires confirmation.
@@ -76,6 +116,47 @@ Check items off (or delete them) as they're done. Engineering-only parked work l
 - [ ] QuickBooks bill credits: if a bill would go negative, the credit is held —
       `GET /api/qbo/bill-credits` lists them, `POST /api/qbo/bill-credits/record {user_id}`
       marks one recorded after you enter the vendor credit in QuickBooks (no UI yet).
+
+- [ ] Sign up a new company → confirmation email link → lands on the sign-in page with company +
+      username filled in and a green "Email confirmed" banner → after signing in you are on
+      Administration with the setup questionnaire open.
+- [ ] Log out and back in on a phone that had notifications on → a chat message still pushes
+      (no need to visit Account). Two quick messages in one thread → one push now, then one
+      "2 new messages · …" push ~30 s later.
+- [ ] A trial company that has hit its daily client-email cap sends an invoice/estimate → yellow
+      toast says it was NOT emailed (not "sent").
+- [ ] Expired-trial admin logs in → lands on Administration → **Billing**; the Free card button
+      says "Contact us" and opens an email.
+- [ ] Dashboard onboarding checklist: links open Team / Projects / Company Settings; "Looks right"
+      ticks the rate and time-zone steps.
+
+- [ ] QuickBooks sandbox, round 5 additions: bills now carry a bill number (`OF-…`) and
+      `ref <requestId>` in the memo — check QuickBooks doesn't warn about duplicate bill numbers.
+      Open/stuck bills: `GET /api/qbo/bill-outbox` lists them, `POST /api/qbo/bill-outbox/:id/resolve`
+      with `{action:'confirm', qbo_bill_id}` or `{action:'discard'}` (no UI yet).
+- [ ] Lock a pay period, then as a worker clock out into it → the entry is saved as pending with
+      a warning; an admin can't approve it until the period is unlocked.
+- [ ] Certified payroll (WH-347) for one project where a worker also worked another project that
+      week → overtime counts all projects; deductions + net wages columns appear; sign it, edit an
+      entry → "data changed since signed".
+- [ ] Time off: request overlapping days → refused; revoke an approved request; Fri–Mon vacation
+      pays only Fri + Mon.
+- [ ] Log out and back in on a phone → push notifications still arrive.
+
+## Behaviour changes to know about (2026-09-24, round 5)
+- Leave no longer pays weekends / non-working days; balances and allowances count working days
+  only; overlapping leave requests are refused; approving past the annual allowance needs a
+  confirm.
+- "Toward worker" rounding snaps to the schedule only within the grace window (Honduras preset:
+  leaving at 11:00 now pays 4h, not 9h). Auto-break applies once per worker-day.
+- Admins need `approve_entries` for time-off approvals and `manage_reimbursements` for expenses
+  (403 otherwise); scoped admins only see their workers. Pay-period lock/unlock needs
+  `manage_pay_periods`.
+- Locked pay periods block every time edit/approve/reject path (409). A worker clocking out into
+  a locked period still gets the entry saved (pending, flagged).
+- Contractors with a weekly guarantee and no hours in the range are now billed the guarantee.
+- The new safe stage sync only takes effect after merging to `main` (GitHub runs scheduled
+  workflows from the default branch) — until then the OLD unscrubbed nightly copy keeps running.
 
 ## Behaviour changes to know about (2026-09-24, round 4)
 - Weekly guarantee is computed per company week (a pay period shorter than a week no longer
