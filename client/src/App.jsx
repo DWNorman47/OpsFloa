@@ -87,9 +87,10 @@ function PrivateRoute({ children, adminOnly = false, superAdminOnly = false, mod
   if (BLOCKED_STATUSES.includes(user.subscription_status)) {
     const isAdmin = user.role === 'admin' || user.role === 'super_admin';
     if (isAdmin) {
-      // Admins can only reach /administration (billing) — redirect everything else
+      // Admins can only reach /administration — and land on its Billing tab, where
+      // they can subscribe (the default Company tab has nothing to do about it).
       if (window.location.pathname !== '/administration') {
-        return <Navigate to="/administration" replace />;
+        return <Navigate to="/administration#billing" replace />;
       }
     } else {
       return <WorkerSubscriptionWall />;

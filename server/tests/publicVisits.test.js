@@ -38,10 +38,18 @@ test('rejects invalid visits and ignores automated browsers', async () => {
   expect(pool.query).not.toHaveBeenCalled();
 });
 
-test('exclusion deletes only the matching visit', async () => {
+test('exclusion deletes only the matching, non-converted visit', async () => {
   const res = await request(makeApp()).post('/api/public-visits/exclude').send({ session_id: id });
   expect(res.status).toBe(204);
-  expect(pool.query).toHaveBeenCalledWith('DELETE FROM public_visits WHERE session_id = $1', [id]);
+  expect(pool.query).toHaveBeenCalledWith('DELETE FROM public_visits WHERE session_id = $1 AND registered = false', [id]);
+});
+
+test('a sign-up keeps the visit and flags it registered (conversion is measurable)', async () => {
+  const res = await request(makeApp()).post('/api/public-visits').send({ session_id: id, action: 'registered' });
+  expect(res.status).toBe(204);
+  const [sql, params] = pool.query.mock.calls[0];
+  expect(sql).toMatch(/^UPDATE public_visits SET .*registered = true WHERE session_id = \$1$/);
+  expect(params).toEqual([id]);
 });
 
 test('only super admins can read the prospect list', async () => {

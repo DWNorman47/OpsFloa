@@ -36,4 +36,18 @@ describe('welcome visit', () => {
     await visits.excludeProspectVisit();
     expect(sessionStorage.getItem('ops_public_visit')).toBeNull();
   });
+
+  it('a sign-up flags the visit registered (kept) and stops tracking the tab', async () => {
+    const visits = await import('./prospectVisit');
+    visits.recordWelcomeVisit();
+    await visits.markProspectRegistered();
+    const last = fetch.mock.calls[fetch.mock.calls.length - 1];
+    expect(last[0]).not.toContain('/exclude');
+    expect(JSON.parse(last[1].body)).toEqual({ session_id: 'd04b1046-9b6d-47e2-8d03-d1d7702790f2', action: 'registered' });
+    expect(sessionStorage.getItem('ops_public_visit')).toBeNull();
+    // the post-login exclusion then has nothing to delete
+    const calls = fetch.mock.calls.length;
+    await visits.excludeProspectVisit();
+    expect(fetch.mock.calls.length).toBe(calls);
+  });
 });

@@ -33,12 +33,12 @@ function isAllowedPushEndpoint(endpoint) {
 
 // Send to one stored subscription. Rows written before the endpoint allow-list
 // (or by raw SQL) are re-checked here, so a bad row can never trigger an outbound
-// request — it's pruned instead.
+// request — it's pruned instead. Resolves true when the push service accepted it.
 async function sendToSub(sub, payload) {
   if (!isAllowedPushEndpoint(sub.endpoint)) {
     try { await pool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]); } catch (_) { /* next send retries the prune */ }
     logger.warn({ subId: sub.id, userId: sub.user_id }, 'pruned push subscription with disallowed endpoint');
-    return;
+    return false;
   }
   try {
     await webpush.sendNotification(
@@ -46,6 +46,7 @@ async function sendToSub(sub, payload) {
       JSON.stringify(payload),
       { timeout: PUSH_TIMEOUT_MS } // one hung push service mustn't stall the fan-out
     );
+    return true;
   } catch (err) {
     if (err.statusCode === 410 || err.statusCode === 404) {
       await pool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
@@ -53,44 +54,112 @@ async function sendToSub(sub, payload) {
     } else {
       logger.warn({ err, subId: sub.id, userId: sub.user_id }, 'push send failed');
     }
+    return false;
   }
 }
 
 // Fan out with bounded concurrency: a company broadcast to hundreds of devices
 // used to go strictly one-at-a-time (each a network round trip to the push
 // service). sendToSub never throws, so one failure can't abort the rest.
+// Resolves true when at least one device accepted the push.
 const PUSH_CONCURRENCY = 5;
 async function sendToAll(subs, payload) {
   let next = 0;
+  let delivered = false;
   const worker = async () => {
-    while (next < subs.length) await sendToSub(subs[next++], payload);
+    while (next < subs.length) { if (await sendToSub(subs[next++], payload)) delivered = true; }
   };
   await Promise.all(Array.from({ length: Math.min(PUSH_CONCURRENCY, subs.length) }, worker));
+  return delivered;
 }
 
-// Coalescing: a burst of messages in one conversation (payload.tag, e.g. dm-<from> /
-// chat-<worker>) pushes the same recipient at most once per COALESCE_MS. The device's
-// notification is grouped by that tag anyway, and a flurry of "new message" alerts within a few
-// seconds is noise. In-memory per process — a best-effort throttle, not a guarantee.
+// Coalescing (trailing): a burst of messages in one conversation (payload.tag, e.g. dm-<from> /
+// chat-<worker>) pushes the same recipient at most once per COALESCE_MS — but nothing is
+// dropped: the first message goes out immediately, later ones in the window are held, and when
+// the window closes ONE trailing push goes out ("N new messages · <latest text>"). The window
+// only starts after a push was actually accepted (a failed send doesn't mute the thread). The
+// device groups a thread by tag (sw.js tag + renotify) anyway. In-memory per process — a
+// best-effort throttle, not a guarantee.
 const COALESCE_MS = 30 * 1000;
-const lastSentAt = new Map(); // `${userId}|${tag}` → ms
-function coalesceSubs(subs, payload, now = Date.now()) {
-  const tag = payload && typeof payload.tag === 'string' ? payload.tag : null;
-  if (!tag) return subs;
-  if (lastSentAt.size > 5000) {
-    for (const [k, ts] of lastSentAt) if (now - ts >= COALESCE_MS) lastSentAt.delete(k);
+const coalesceState = new Map(); // `${userId}|${tag}` → { lastSentAt, sending, pending, timer }
+
+function pruneCoalesceState(now) {
+  if (coalesceState.size <= 5000) return;
+  for (const [k, st] of coalesceState) {
+    if (!st.sending && !st.pending && !st.timer && (st.lastSentAt == null || now - st.lastSentAt >= COALESCE_MS)) coalesceState.delete(k);
   }
-  const allowed = new Set();
-  for (const uid of new Set(subs.map(s => s.user_id))) {
-    const key = `${uid}|${tag}`;
-    const prev = lastSentAt.get(key);
-    if (prev != null && now - prev < COALESCE_MS) continue;
-    lastSentAt.set(key, now);
-    allowed.add(uid);
-  }
-  return subs.filter(s => allowed.has(s.user_id));
 }
-function _resetCoalesce() { lastSentAt.clear(); }
+
+function summarizePending(p) {
+  if (p.count <= 1) return p.payload;
+  const latest = typeof p.payload.body === 'string' ? p.payload.body : '';
+  return { ...p.payload, body: `${p.count} new messages${latest ? ` · ${latest}` : ''}`.slice(0, 200), coalesced: p.count };
+}
+
+async function sendAndMark(st, subs, payload) {
+  st.sending = true;
+  let ok = false;
+  try { ok = await sendToAll(subs, payload); } finally { st.sending = false; }
+  if (ok) st.lastSentAt = Date.now(); // the throttle window starts only on a delivered push
+  return ok;
+}
+
+function scheduleTrailing(key, st) {
+  if (st.timer || st.sending || !st.pending) return;
+  const wait = st.lastSentAt != null ? Math.max(0, st.lastSentAt + COALESCE_MS - Date.now()) : 0;
+  st.timer = setTimeout(() => { flushTrailing(key).catch(err => logger.error({ err }, 'push trailing send failed')); }, wait);
+  if (typeof st.timer.unref === 'function') st.timer.unref();
+}
+
+async function flushTrailing(key) {
+  const st = coalesceState.get(key);
+  if (!st) return;
+  st.timer = null;
+  const p = st.pending;
+  st.pending = null;
+  if (!p) return;
+  // Re-read the rows: a device may have logged out (row deleted) or the user been deactivated
+  // during the window.
+  const r = await pool.query(
+    `SELECT ps.* FROM push_subscriptions ps
+       JOIN users u ON ps.user_id = u.id
+      WHERE ps.id = ANY($1::int[]) AND u.active = true`,
+    [p.subIds]
+  );
+  if (r.rows && r.rows.length) await sendAndMark(st, r.rows, summarizePending(p));
+  if (st.pending) scheduleTrailing(key, st); // more arrived while this one was sending
+}
+
+// Deliver a fan-out, coalescing tagged pushes per recipient. Untagged pushes (shift reminders
+// etc.) are never coalesced.
+async function deliverCoalesced(subs, payload) {
+  const tag = payload && typeof payload.tag === 'string' ? payload.tag : null;
+  if (!tag) { await sendToAll(subs, payload); return; }
+  const now = Date.now();
+  pruneCoalesceState(now);
+  const byUser = new Map();
+  for (const sub of subs) {
+    if (!byUser.has(sub.user_id)) byUser.set(sub.user_id, []);
+    byUser.get(sub.user_id).push(sub);
+  }
+  await Promise.all([...byUser].map(async ([uid, userSubs]) => {
+    const key = `${uid}|${tag}`;
+    let st = coalesceState.get(key);
+    if (!st) { st = { lastSentAt: null, sending: false, pending: null, timer: null }; coalesceState.set(key, st); }
+    const inWindow = st.lastSentAt != null && now - st.lastSentAt < COALESCE_MS;
+    if (st.sending || inWindow || st.timer) {
+      st.pending = { count: (st.pending ? st.pending.count : 0) + 1, payload, subIds: userSubs.map(s => s.id) };
+      scheduleTrailing(key, st);
+      return;
+    }
+    await sendAndMark(st, userSubs, payload);
+    if (st.pending) scheduleTrailing(key, st);
+  }));
+}
+function _resetCoalesce() {
+  for (const st of coalesceState.values()) if (st.timer) clearTimeout(st.timer);
+  coalesceState.clear();
+}
 
 // Every send path joins users.active: a deactivated user's devices must stop getting pushes.
 async function sendPushToUser(userId, payload) {
@@ -102,7 +171,7 @@ async function sendPushToUser(userId, payload) {
        WHERE ps.user_id = $1 AND u.active = true`,
       [userId]
     );
-    await sendToAll(coalesceSubs(subs.rows, payload), payload);
+    await deliverCoalesced(subs.rows, payload);
   } catch (err) {
     // Bulk push failure (e.g. DB query failed) — log but don't fail caller.
     logger.error({ err }, 'push broadcast failed');
@@ -126,7 +195,7 @@ async function sendPushToCompanyAdmins(companyId, payload, opts = {}) {
               OR $2::int = ANY(u.worker_access_ids))`,
       [companyId, Number.isFinite(workerId) ? workerId : null]
     );
-    await sendToAll(coalesceSubs(subs.rows, payload), payload);
+    await deliverCoalesced(subs.rows, payload);
   } catch (err) {
     // Bulk push failure (e.g. DB query failed) — log but don't fail caller.
     logger.error({ err }, 'push broadcast failed');

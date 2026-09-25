@@ -20,7 +20,7 @@ function referrerHost(value) {
 
 router.post('/', async (req, res) => {
   const { session_id: id, action } = req.body || {};
-  if (!uuid.test(id) || !['visit', 'pricing', 'register'].includes(action)) {
+  if (!uuid.test(id) || !['visit', 'pricing', 'register', 'registered'].includes(action)) {
     return res.status(400).json({ error: 'Invalid visit' });
   }
   if (/bot|crawler|spider|headless|lighthouse/i.test(req.headers['user-agent'] || '')) return res.sendStatus(204);
@@ -34,6 +34,13 @@ router.post('/', async (req, res) => {
          ON CONFLICT (session_id) DO UPDATE SET last_seen = NOW()`,
         [id, path, referrerHost(referrer), source(utm_source), source(utm_medium), source(utm_campaign),
           ['mobile', 'tablet', 'desktop'].includes(device) ? device : null]
+      );
+    } else if (action === 'registered') {
+      // The sign-up form was submitted from this visit: keep the row (flagged) so
+      // visit → sign-up conversion can be measured, instead of deleting it.
+      await pool.query(
+        'UPDATE public_visits SET last_seen = NOW(), clicked_register = true, registered = true WHERE session_id = $1',
+        [id]
       );
     } else {
       await pool.query(
@@ -50,11 +57,14 @@ router.post('/', async (req, res) => {
   }
 });
 
+// A logged-in user's own visit is not a prospect — drop it. A visit that led to a
+// sign-up (registered) is kept: that user logging in afterwards must not erase the
+// conversion.
 router.post('/exclude', async (req, res) => {
   const id = req.body?.session_id;
   if (!uuid.test(id)) return res.status(400).json({ error: 'Invalid visit' });
   try {
-    await pool.query('DELETE FROM public_visits WHERE session_id = $1', [id]);
+    await pool.query('DELETE FROM public_visits WHERE session_id = $1 AND registered = false', [id]);
     return res.sendStatus(204);
   } catch (err) {
     logger.error({ err }, 'public visit exclusion failed');

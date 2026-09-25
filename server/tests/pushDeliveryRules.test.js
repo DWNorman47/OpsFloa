@@ -17,7 +17,7 @@ const express = require('express');
 const request = require('supertest');
 const webpush = require('web-push');
 const pool = require('../db');
-const { sendPushToUser, sendPushToCompanyAdmins, _resetCoalesce } = require('../push');
+const { sendPushToUser, sendPushToCompanyAdmins, _resetCoalesce, COALESCE_MS } = require('../push');
 const pushRouter = require('../routes/push');
 
 const EP = 'https://fcm.googleapis.com/fcm/send/abc';
@@ -55,6 +55,45 @@ test('a burst to the same recipient + tag is coalesced; other threads still go o
   await sendPushToUser(5, { title: 'd' });
   await sendPushToUser(5, { title: 'e' });
   expect(webpush.sendNotification).toHaveBeenCalledTimes(4);
+});
+
+describe('trailing coalesce', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => { _resetCoalesce(); jest.useRealTimers(); });
+
+  test('messages held in the window go out as ONE trailing push when it closes', async () => {
+    pool.query.mockResolvedValue({ rows: [sub(1, 5)], rowCount: 1 });
+    await sendPushToUser(5, { title: 'From Ana', body: 'one', tag: 'dm-7' });
+    await sendPushToUser(5, { title: 'From Ana', body: 'two', tag: 'dm-7' });
+    await sendPushToUser(5, { title: 'From Ana', body: 'three', tag: 'dm-7' });
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(COALESCE_MS);
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(2);
+    const trailing = JSON.parse(webpush.sendNotification.mock.calls[1][1]);
+    expect(trailing.body).toBe('2 new messages · three');
+    expect(trailing.tag).toBe('dm-7');
+    // the trailing re-read only picks still-subscribed devices of an active user
+    const [sql, params] = pool.query.mock.calls[pool.query.mock.calls.length - 1];
+    expect(sql).toMatch(/ps.id = ANY/);
+    expect(sql).toMatch(/u.active = true/);
+    expect(params).toEqual([[1]]);
+  });
+
+  test('a single held message is sent unchanged', async () => {
+    pool.query.mockResolvedValue({ rows: [sub(1, 5)], rowCount: 1 });
+    await sendPushToUser(5, { title: 't', body: 'first', tag: 'dm-7' });
+    await sendPushToUser(5, { title: 't', body: 'second', tag: 'dm-7' });
+    await jest.advanceTimersByTimeAsync(COALESCE_MS);
+    expect(JSON.parse(webpush.sendNotification.mock.calls[1][1]).body).toBe('second');
+  });
+
+  test('a failed send does not start the throttle window', async () => {
+    pool.query.mockResolvedValue({ rows: [sub(1, 5)], rowCount: 1 });
+    webpush.sendNotification.mockRejectedValueOnce(Object.assign(new Error('boom'), { statusCode: 500 }));
+    await sendPushToUser(5, { title: 'a', body: 'a', tag: 'dm-7' });
+    await sendPushToUser(5, { title: 'b', body: 'b', tag: 'dm-7' });
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(2); // second went straight out
+  });
 });
 
 test('subscribe removes other users\' rows for the same endpoint in the same statement', async () => {

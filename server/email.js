@@ -39,7 +39,9 @@ function fromHeader(fromName) {
 
 // Phishing-abuse limit: a company still in its free TRIAL may send at most this
 // many client-facing emails (sendEmail opts.clientCompanyId) per UTC day. Paying
-// companies are not limited. Counted on companies.client_email_count /
+// companies are not limited — including a company that already subscribed but is
+// still inside Stripe's trial window (Stripe 'trialing' maps to our 'trial'; it
+// has a stripe_subscription_id, i.e. a card on file). Counted on companies.client_email_count /
 // client_email_count_day (migration 0215; the counter resets on a new UTC day).
 function trialClientEmailDailyCap() {
   const n = parseInt(process.env.TRIAL_CLIENT_EMAIL_DAILY_CAP, 10);
@@ -48,7 +50,7 @@ function trialClientEmailDailyCap() {
 
 // Count this send against the company's daily trial allowance. Returns true when
 // the cap is exceeded (→ don't send). One statement: the counter only moves for
-// a company whose status is 'trial', so a paying company costs one no-op UPDATE.
+// a no-card company whose status is 'trial', so a paying company costs one no-op UPDATE.
 // Fails OPEN (logs) on a DB error — an outage of this counter must not block
 // every invoice email.
 async function trialClientEmailCapExceeded(companyId) {
@@ -60,7 +62,7 @@ async function trialClientEmailCapExceeded(companyId) {
           SET client_email_count_day = CURRENT_DATE,
               client_email_count = CASE WHEN client_email_count_day = CURRENT_DATE
                                         THEN COALESCE(client_email_count, 0) + 1 ELSE 1 END
-        WHERE id = $1 AND subscription_status = 'trial'
+        WHERE id = $1 AND subscription_status = 'trial' AND stripe_subscription_id IS NULL
         RETURNING client_email_count AS sent`,
       [companyId]
     );
@@ -86,6 +88,45 @@ const REDIRECT_TO = process.env.EMAIL_REDIRECT_TO || 'info@opsfloa.com';
 // production email by leaving a staging env var in place.
 const isProd = process.env.NODE_ENV === 'production';
 const emailMode = isProd ? 'real' : (process.env.EMAIL_MODE || 'redirect');
+
+// DB-level override (system_flags.email_mode, migration 0221). The stage sync
+// workflow sets it to 'suppress' after restoring a scrubbed prod copy, so a stage
+// server never emails real people even though it runs NODE_ENV=production. The
+// flag can only make sending SAFER: 'suppress' always wins, 'redirect' downgrades
+// 'real', and 'real' (or no row — prod) leaves the env mode alone. Cached for a
+// minute; a missing table / DB error reads as "no flag" (fail-open, so a DB
+// hiccup can't block production email).
+const DB_FLAG_TTL_MS = 60 * 1000;
+let dbFlagCache = { value: null, at: -Infinity };
+async function dbEmailMode(now = Date.now()) {
+  if (now - dbFlagCache.at < DB_FLAG_TTL_MS) return dbFlagCache.value;
+  let value = null;
+  try {
+    const pool = require('./db');
+    const r = await pool.query("SELECT value FROM system_flags WHERE key = 'email_mode'");
+    const v = r && r.rows && r.rows[0] && r.rows[0].value;
+    value = ['real', 'redirect', 'suppress'].includes(v) ? v : null;
+  } catch (err) {
+    if (err && err.code !== '42P01') logger.warn({ err: { message: err.message, code: err.code } }, 'system_flags read failed — using env email mode');
+  }
+  dbFlagCache = { value, at: now };
+  return value;
+}
+function _resetDbEmailModeCache() { dbFlagCache = { value: null, at: -Infinity }; }
+// Tests: pin the flag (no DB read for the next minute).
+function _setDbEmailModeForTest(value) { dbFlagCache = { value, at: Date.now() }; }
+function effectiveEmailMode(flag) {
+  if (flag === 'suppress') return 'suppress';
+  if (flag === 'redirect' && emailMode === 'real') return 'redirect';
+  return emailMode;
+}
+
+// RFC 2606 reserved TLD — scrubbed stage copies rewrite every address to
+// ...@example.invalid. Never hand one to the provider (it would only bounce and
+// hurt the sending domain's reputation).
+function isReservedRecipient(to) {
+  return typeof to === 'string' && /.invalid>?s*$/i.test(to.trim());
+}
 
 // Callers still pass SendGrid-shaped attachments
 // ({ content: base64, filename, type, disposition }); Resend wants
@@ -148,6 +189,17 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
     return { suppressed: 'demo' };
   }
 
+  if (isReservedRecipient(to)) {
+    logger.debug({ to, subject }, 'email skipped — reserved .invalid recipient');
+    return { skipped: 'reserved_recipient' };
+  }
+
+  const mode = effectiveEmailMode(await dbEmailMode());
+  if (mode === 'suppress') {
+    logger.debug({ to, subject }, 'email suppressed (email mode)');
+    return { suppressed: 'dev' };
+  }
+
   // Short-circuit if this recipient is already known-bad from the provider's
   // bounce webhook. Prevents re-sending to invalid addresses.
   if (await isSuppressed(to)) {
@@ -158,11 +210,6 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
   if (opts.clientCompanyId != null && await trialClientEmailCapExceeded(opts.clientCompanyId)) {
     logger.warn({ to, companyId: opts.clientCompanyId }, 'client email skipped — trial daily cap reached');
     return { skipped: 'trial_daily_cap' };
-  }
-
-  if (emailMode === 'suppress') {
-    logger.debug({ to, subject }, 'email suppressed (dev mode)');
-    return { suppressed: 'dev' };
   }
 
   // No key configured — treat as a soft no-op (same as the old behaviour) so
@@ -176,7 +223,7 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
   const from = fromHeader(opts.fromName);
   const replyTo = opts.replyTo || undefined;
 
-  if (emailMode === 'redirect') {
+  if (mode === 'redirect') {
     const env = process.env.NODE_ENV || 'development';
     logger.debug({ to, subject, env }, 'email redirect (dev)');
     const msg = {
@@ -206,4 +253,4 @@ async function sendEmail(to, subject, html, attachments, opts = {}) {
   return deliver(msg);
 }
 
-module.exports = { sendEmail, fromHeader, trialClientEmailCapExceeded, trialClientEmailDailyCap };
+module.exports = { sendEmail, fromHeader, trialClientEmailCapExceeded, trialClientEmailDailyCap, dbEmailMode, _resetDbEmailModeCache, _setDbEmailModeForTest };

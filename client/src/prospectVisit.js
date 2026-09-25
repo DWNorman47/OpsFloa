@@ -57,3 +57,17 @@ export async function excludeProspectVisit() {
     if (response.ok) safeSession.removeItem(ID_KEY);
   } catch { /* keep the id so a later authenticated load can retry */ }
 }
+
+// The sign-up form was submitted from this visit: flag it registered (kept for
+// conversion stats) instead of deleting it, then stop tracking this tab — the
+// exclusion that runs once the new user is logged in then has nothing to delete.
+export async function markProspectRegistered() {
+  const id = safeSession.getItem(ID_KEY);
+  safeSession.setItem(EXCLUDED_KEY, '1');
+  if (!id) return;
+  await pendingVisit;
+  try {
+    const response = await send('', { session_id: id, action: 'registered' });
+    if (response.ok) safeSession.removeItem(ID_KEY);
+  } catch { /* best effort */ }
+}

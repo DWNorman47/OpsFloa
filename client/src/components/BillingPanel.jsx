@@ -464,9 +464,11 @@ export default function BillingPanel() {
                 { text: t.featCSVPayrollExport, lock: true },
                 { text: t.featFullHistory, lock: true },
               ]}
-              btnLabel={currentPlan === 'free' && isActive ? t.currentPlan : isTrial ? t.billingChoosePlan.replace('{plan}', t.planFree) : t.billingContinuePlan.replace('{plan}', t.planFree)}
+              // There is no self-serve Free plan yet (owner decision pending), so the
+              // button used to do nothing. Until then it opens an email to us.
+              btnLabel={currentPlan === 'free' && isActive ? t.currentPlan : t.billingFreeContactUs}
               disabled={currentPlan === 'free' && isActive}
-              onSelect={() => isTrial ? setSelectedPlan('free') : null}
+              onSelect={() => { window.location.href = 'mailto:info@opsfloa.com?subject=' + encodeURIComponent('OpsFloa Free plan'); }}
               t={t}
             />
 

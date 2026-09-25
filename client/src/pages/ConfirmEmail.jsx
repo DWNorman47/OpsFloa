@@ -1,10 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useT } from '../hooks/useT';
 import api from '../api';
 
+// Where to go after a confirmed email: the sign-in form pre-filled with the
+// company + username the link activated (no session is issued by the link — the
+// password is still required). `confirmed=1` shows a banner there and sends a new
+// admin on to the setup questionnaire after they sign in.
+export function loginPathAfterConfirm(data) {
+  const { company, username } = data || {};
+  if (!company || !username) return null;
+  const qs = new URLSearchParams({ company, username, confirmed: '1' });
+  return `/login?${qs}`;
+}
+
 export default function ConfirmEmail() {
   const t = useT();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const token = params.get('token');
   const [status, setStatus] = useState('loading'); // 'loading' | 'success' | 'error'
@@ -13,7 +25,11 @@ export default function ConfirmEmail() {
   useEffect(() => {
     if (!token) { setStatus('error'); setError(t.confirmEmailNoToken); return; }
     api.post('/auth/confirm-email', { token })
-      .then(() => setStatus('success'))
+      .then(r => {
+        const next = loginPathAfterConfirm(r.data);
+        if (next) { navigate(next, { replace: true }); return; }
+        setStatus('success');
+      })
       .catch(err => { setStatus('error'); setError(err.response?.data?.error || t.confirmEmailError); });
   }, [token]);
 
@@ -27,7 +43,7 @@ export default function ConfirmEmail() {
             <div style={styles.icon}>✓</div>
             <h2 style={styles.title}>{t.confirmEmailSuccessTitle}</h2>
             <p style={styles.sub}>{t.confirmEmailActiveDesc}</p>
-            <Link to="/login" style={styles.btn}>{t.confirmEmailGoToLogin}</Link>
+            <Link to="/login?confirmed=1" style={styles.btn}>{t.confirmEmailGoToLogin}</Link>
           </>
         )}
         {status === 'error' && (

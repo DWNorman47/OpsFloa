@@ -25,6 +25,9 @@ const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isValidEmail = email => EMAIL_RE.test(String(email).trim());
 
+// Public support contact shown in sign-up refusals.
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'info@opsfloa.com';
+
 // A throwaway (but structurally valid) cost-10 bcrypt hash used to equalize
 // login timing: when the company or username doesn't exist we still spend a
 // comparable amount of CPU on a bcrypt.compare so response time can't be
@@ -324,17 +327,6 @@ router.post('/login', loginLimiter, async (req, res) => {
       await pool.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
     }
 
-    // Track first login for welcome modal
-    let isFirstLogin = false;
-    try {
-      isFirstLogin = !user.welcomed_at;
-      if (isFirstLogin) {
-        await pool.query('UPDATE users SET welcomed_at = NOW() WHERE id = $1', [user.id]);
-      }
-    } catch {
-      // welcomed_at column may not exist yet — login proceeds normally
-    }
-
     if (!user.email_confirmed) {
       return res.status(403).json({ error: 'email_not_confirmed', email: user.email });
     }
@@ -348,6 +340,9 @@ router.post('/login', loginLimiter, async (req, res) => {
       const mfaToken = jwt.sign({ id: user.id, mfa_pending: true }, process.env.JWT_SECRET, { expiresIn: '5m' });
       return res.json({ mfa_required: true, mfa_token: mfaToken });
     }
+    // Only a login that actually issues a session counts as the first one (the
+    // welcome modal) — not a wrong-password / unconfirmed-email / MFA-pending try.
+    const isFirstLogin = await markWelcomed(user);
     const token = signToken(user);
     res.json({ token, first_login: isFirstLogin, user: await buildSessionUser(user) });
   } catch (err) {
@@ -355,6 +350,18 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Stamp users.welcomed_at on the first SUCCESSFUL login (a session was issued).
+// Returns true when this was that first login. Never blocks a login.
+async function markWelcomed(user) {
+  if (user.welcomed_at) return false;
+  try {
+    const r = await pool.query('UPDATE users SET welcomed_at = NOW() WHERE id = $1 AND welcomed_at IS NULL', [user.id]);
+    return !r || r.rowCount !== 0;
+  } catch {
+    return false; // login proceeds normally
+  }
+}
 
 // Get current user — includes live company billing info for client-side plan gating
 router.get('/me', requireAuth, async (req, res) => {
@@ -442,8 +449,12 @@ router.post('/register', authLimiter, async (req, res) => {
   const whitelistedIps = (process.env.WHITELISTED_IPS || '').split(',').map(s => s.trim()).filter(Boolean);
   const ipIsWhitelisted = whitelistedIps.includes(registrationIp);
 
-  // Block IPs that have registered too many trials recently (skipped for whitelisted IPs)
-  const TRIAL_LIMIT = parseInt(process.env.TRIAL_LIMIT_PER_IP) || 5;
+  // Block networks that have registered too many trials recently (skipped for
+  // whitelisted IPs). IPv4 is often shared (offices, carrier NAT, a supply house's
+  // wifi) so its limit is higher; an IPv6 /56 is one subscriber.
+  const TRIAL_LIMIT = ipIsV6
+    ? (parseInt(process.env.TRIAL_LIMIT_PER_IPV6_SUBNET) || 5)
+    : (parseInt(process.env.TRIAL_LIMIT_PER_IP) || 10);
   if (!ipIsWhitelisted) {
     const ipQuery = await pool.query(
       ipIsV6
@@ -458,7 +469,7 @@ router.post('/register', authLimiter, async (req, res) => {
     );
     const priorCount = parseInt(ipQuery.rows[0].count);
     if (priorCount >= TRIAL_LIMIT) {
-      return res.status(429).json({ error: 'This IP address has been flagged for suspicious activity. Further registration attempts from this network are being logged and reviewed by our trust and safety team.' });
+      return res.status(429).json({ error: `We can't start another free trial from this network right now. If you need a workspace, email ${SUPPORT_EMAIL} and we'll set you up.`, code: 'trial_limit_network' });
     }
     // Alert on second registration from same IP (priorCount >= 1 means this is #2+)
     if (priorCount >= 1) {
@@ -502,7 +513,7 @@ router.post('/register', authLimiter, async (req, res) => {
     );
     const emailPrior = parseInt(emailQuery.rows[0]?.count) || 0;
     if (emailPrior >= (freeMail ? TRIAL_LIMIT_EMAIL : TRIAL_LIMIT_DOMAIN)) {
-      return res.status(429).json({ error: 'A trial has already been started for this email address or organization. Contact support if you need another workspace.', code: 'trial_limit' });
+      return res.status(429).json({ error: `A trial has already been started for this email address or organization. If you need another workspace, email ${SUPPORT_EMAIL}.`, code: 'trial_limit' });
     }
   } // end if (!ipIsWhitelisted)
 
@@ -513,7 +524,7 @@ router.post('/register', authLimiter, async (req, res) => {
     const existing = await client.query('SELECT id FROM companies WHERE lower(name) = lower($1)', [company_name]);
     if (existing.rowCount > 0) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'A company with that name already exists' });
+      return res.status(409).json({ error: 'That company name is taken — try adding your city (for example “Acme Roofing Phoenix”).', code: 'company_name_taken' });
     }
     const trialDays = parseInt(process.env.TRIAL_DAYS) || 14;
     const companyResult = await client.query(
@@ -599,7 +610,9 @@ router.post('/confirm-email', async (req, res) => {
   if (!token) return res.status(400).json({ error: 'Token required' });
   try {
     const result = await pool.query(
-      'SELECT id FROM users WHERE email_confirm_token = $1 AND email_confirm_token_expires > NOW()',
+      `SELECT u.id, u.username, c.name AS company_name
+         FROM users u JOIN companies c ON c.id = u.company_id
+        WHERE u.email_confirm_token = $1 AND u.email_confirm_token_expires > NOW()`,
       [sha256(token)]
     );
     if (result.rowCount === 0) return res.status(400).json({ error: 'Confirmation link is invalid or has expired' });
@@ -608,7 +621,10 @@ router.post('/confirm-email', async (req, res) => {
       'UPDATE users SET email_confirmed = true, email_confirm_token = NULL, email_confirm_token_expires = NULL WHERE id = $1',
       [user.id]
     );
-    res.json({ success: true });
+    // The link was mailed to this address, so its holder may see which login it
+    // activated — the client pre-fills the sign-in form with it (no session is issued
+    // here; the password is still required).
+    res.json({ success: true, company: user.company_name, username: user.username });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -648,6 +664,8 @@ router.post('/complete-setup', async (req, res) => {
       [hash, user.id]
     );
     user.token_version = upd.rows[0].token_version;
+    // First real session for an invited worker (the client shows the welcome).
+    await markWelcomed(user);
     const token = signToken(user);
     res.json({ token, user: await buildSessionUser(user) });
   } catch (err) {
@@ -925,8 +943,9 @@ router.post('/mfa/confirm', loginLimiter, mfaLimiter, async (req, res) => {
     );
     if (accepted.rowCount === 0) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
+    const isFirstLogin = await markWelcomed(user);
     const token = signToken(user);
-    res.json({ token, user: await buildSessionUser(user) });
+    res.json({ token, first_login: isFirstLogin, user: await buildSessionUser(user) });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

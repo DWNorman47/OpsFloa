@@ -19,12 +19,13 @@ process.env.RESEND_API_KEY = 're_test';
 process.env.EMAIL_FROM = 'info@opsfloa.com';
 
 const pool = require('../db');
-const { sendEmail, fromHeader } = require('../email');
+const { sendEmail, fromHeader, dbEmailMode, _resetDbEmailModeCache, _setDbEmailModeForTest } = require('../email');
 
 beforeEach(() => {
   mockSend.mockClear();
   pool.query.mockReset();
   delete process.env.TRIAL_CLIENT_EMAIL_DAILY_CAP;
+  _setDbEmailModeForTest(null); // no system_flags row (prod) — no DB read
 });
 
 describe('fromHeader', () => {
@@ -61,6 +62,8 @@ describe('sendEmail', () => {
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toMatch(/UPDATE companies/);
     expect(sql).toMatch(/subscription_status = 'trial'/);
+    // a company that already subscribed (Stripe 'trialing' → trial) is not capped
+    expect(sql).toMatch(/stripe_subscription_id IS NULL/);
     expect(params).toEqual(['co-1']);
 
     pool.query.mockResolvedValueOnce({ rows: [{ sent: 4 }] });
@@ -84,5 +87,44 @@ describe('sendEmail', () => {
   test('internal (non client-facing) sends never touch the counter', async () => {
     await sendEmail('admin@x.co', 'Alert', '<p/>');
     expect(pool.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('system_flags.email_mode (scrubbed stage copy)', () => {
+  test('suppress: nothing reaches the provider, even with NODE_ENV=production', async () => {
+    _setDbEmailModeForTest('suppress');
+    const r = await sendEmail('real.person@gmail.com', 'Invoice', '<p/>', undefined, { clientCompanyId: 'co-1' });
+    expect(r).toEqual({ suppressed: 'dev' });
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled(); // not even the trial counter
+  });
+
+  test('redirect: a "real" env is downgraded to the intercept address', async () => {
+    _setDbEmailModeForTest('redirect');
+    await sendEmail('real.person@gmail.com', 'Hello', '<p/>');
+    const msg = mockSend.mock.calls[0][0];
+    expect(msg.to).not.toBe('real.person@gmail.com');
+    expect(msg.subject).toMatch(/real.person@gmail.com/);
+  });
+
+  test('flag is read from system_flags once and cached; a missing table reads as no flag', async () => {
+    _resetDbEmailModeCache();
+    pool.query.mockResolvedValueOnce({ rows: [{ value: 'suppress' }] });
+    expect(await dbEmailMode(1000)).toBe('suppress');
+    expect(pool.query.mock.calls[0][0]).toMatch(/FROM system_flags WHERE key = 'email_mode'/);
+    expect(await dbEmailMode(2000)).toBe('suppress');
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    _resetDbEmailModeCache();
+    pool.query.mockRejectedValueOnce(Object.assign(new Error('relation "system_flags" does not exist'), { code: '42P01' }));
+    expect(await dbEmailMode(5000)).toBeNull();
+    _resetDbEmailModeCache();
+    pool.query.mockResolvedValueOnce({ rows: [{ value: 'bogus' }] });
+    expect(await dbEmailMode(9000)).toBeNull();
+  });
+
+  test('reserved .invalid recipients (scrubbed addresses) are never sent', async () => {
+    const r = await sendEmail('user+12@example.invalid', 'Reset', '<p/>');
+    expect(r).toEqual({ skipped: 'reserved_recipient' });
+    expect(mockSend).not.toHaveBeenCalled();
   });
 });

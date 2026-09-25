@@ -5,6 +5,11 @@ import { safeSession, safeLocal } from '../utils/safeStorage';
 import { loadLanguage } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { excludeProspectVisit } from '../prospectVisit';
+import { usePushResubscribe, resetPushResubscribe } from '../hooks/usePushResubscribe';
+
+// The in-flight logout push removal, so a login right after a logout re-subscribes
+// only once the old subscription is gone (see usePushResubscribe).
+let pushRemoval = Promise.resolve();
 
 export const AuthContext = createContext(null);
 
@@ -67,6 +72,10 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!loading && user) excludeProspectVisit();
   }, [loading, user]);
+
+  // Every session start (login / MFA / token login / restored session) re-registers
+  // this device for push when permission is already granted.
+  usePushResubscribe(user, loading, () => pushRemoval);
 
   useEffect(() => {
     // sessionStorage takes precedence: impersonation tabs have their own
@@ -191,6 +200,7 @@ export function AuthProvider({ children }) {
     storeSession(safeLocal, r.data.token, r.data.user);
     await primeLanguage(r.data.user);
     setUser(r.data.user);
+    if (r.data.first_login) setFirstLogin(true);
     return r.data.user;
   };
 
@@ -200,7 +210,8 @@ export function AuthProvider({ children }) {
     // cleared below; the request + unsubscribe finish in the background. Skipped for an
     // impersonation tab (sessionStorage token): the browser's push subscription belongs to
     // the real signed-in account, not the impersonated one.
-    if (!safeSession.getItem('tc_token')) removePushSubscription(safeLocal.getItem('tc_token'));
+    if (!safeSession.getItem('tc_token')) pushRemoval = removePushSubscription(safeLocal.getItem('tc_token'));
+    resetPushResubscribe();
     clearCache();
     clearPendingSyncs();
     clearOfflineQueue();

@@ -1,14 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
+import { pushSupported, pushOptedOut, setPushOptOut, subscribePush } from '../utils/pushSubscription';
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
-}
-
+// Account-page toggle for this device's push notifications. The app-level
+// re-subscribe after login lives in hooks/usePushResubscribe.js; turning pushes
+// OFF here is remembered per device so that re-subscribe respects it.
 export default function NotificationSetup() {
   const t = useT();
   const [state, setState] = useState('idle'); // idle | subscribed | denied | unsupported | loading | error
@@ -16,7 +13,7 @@ export default function NotificationSetup() {
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    if (!pushSupported()) {
       setState('unsupported');
       return;
     }
@@ -27,9 +24,12 @@ export default function NotificationSetup() {
         setState('subscribed');
         return;
       }
-      // Auto-subscribe if permission hasn't been denied
-      if (Notification.permission !== 'denied') {
+      // Auto-subscribe if permission hasn't been denied and the user didn't turn
+      // notifications off on this device.
+      if (Notification.permission !== 'denied' && !pushOptedOut()) {
         subscribe();
+      } else if (Notification.permission === 'denied') {
+        setState('denied');
       }
     });
   }, []);
@@ -38,22 +38,17 @@ export default function NotificationSetup() {
     setState('loading');
     setErrorMsg('');
     try {
-      const keyRes = await api.get('/push/vapid-public-key');
-      if (!keyRes.data?.publicKey) throw new Error(t.pushNotConfigured);
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(keyRes.data.publicKey),
-      });
-      const { endpoint, keys } = sub.toJSON();
-      await api.post('/push/subscribe', { endpoint, p256dh: keys.p256dh, auth: keys.auth });
+      const sub = await subscribePush();
+      setPushOptOut(false);
       setSubscription(sub);
       setState('subscribed');
     } catch (err) {
       if (Notification.permission === 'denied') {
         setState('denied');
       } else {
-        const msg = err.response?.data?.error || err.message || t.failedEnableNotifications;
+        const msg = err.code === 'push_not_configured'
+          ? t.pushNotConfigured
+          : (err.response?.data?.error || err.message || t.failedEnableNotifications);
         setErrorMsg(msg);
         setState('error');
       }
@@ -66,6 +61,7 @@ export default function NotificationSetup() {
     try {
       await api.delete('/push/subscribe', { data: { endpoint: subscription.endpoint } });
       await subscription.unsubscribe();
+      setPushOptOut(true); // don't auto re-subscribe this device on the next login
       setSubscription(null);
       setState('idle');
     } catch {

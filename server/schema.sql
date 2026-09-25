@@ -621,3 +621,40 @@ CREATE TABLE IF NOT EXISTS qbo_bill_pushes (
   CONSTRAINT uq_qbo_bill_pushes_request UNIQUE (company_id, request_id)
 );
 CREATE INDEX IF NOT EXISTS idx_qbo_bill_pushes_pending ON qbo_bill_pushes (company_id) WHERE status = 'pending';
+-- Optimistic-concurrency updated_at columns are absolute instants (see migrations/0222).
+-- Guarded: a no-op where the table is absent or the column is already timestamptz.
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['daily_reports', 'punchlist_items', 'rfis'] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = t
+                  AND column_name = 'updated_at' AND data_type = 'timestamp without time zone') THEN
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE %L', t, 'UTC');
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN updated_at SET DEFAULT NOW()', t);
+    END IF;
+  END LOOP;
+END $$;
+-- 0221: public_visits.registered (visit kept + flagged on sign-up) and system_flags
+-- (DB-wide ops flags, e.g. email_mode='suppress' on a scrubbed stage copy).
+DO $$
+BEGIN
+  IF to_regclass('public_visits') IS NOT NULL THEN
+    ALTER TABLE public_visits ADD COLUMN IF NOT EXISTS registered BOOLEAN NOT NULL DEFAULT false;
+  END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS system_flags (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_system_flags_key CHECK (key IN ('email_mode')),
+  CONSTRAINT chk_system_flags_email_mode CHECK (key <> 'email_mode' OR value IN ('real', 'redirect', 'suppress'))
+);
+-- 0218: QuickBooks bill double-billing guards — frozen cutover flag on time_entries,
+-- bill outbox 'mismatch' / 'discarded' statuses + force flag (see migrations/0218).
+ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS qbo_pre_ledger_bill BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE qbo_bill_pushes ADD COLUMN IF NOT EXISTS force BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE qbo_bill_pushes DROP CONSTRAINT IF EXISTS chk_qbo_bill_pushes_status;
+ALTER TABLE qbo_bill_pushes ADD CONSTRAINT chk_qbo_bill_pushes_status CHECK (status IN ('pending', 'posted', 'mismatch', 'discarded'));
+DROP INDEX IF EXISTS idx_qbo_bill_pushes_pending;
+CREATE INDEX IF NOT EXISTS idx_qbo_bill_pushes_open ON qbo_bill_pushes (company_id) WHERE status IN ('pending', 'mismatch');

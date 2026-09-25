@@ -30,10 +30,14 @@ export default function Login() {
   const sessionExpired = searchParams.get('session') === 'expired';
   const companyInactive = searchParams.get('session') === 'inactive';
   const inviteCompany = searchParams.get('company') || '';
+  // Arriving from a confirmed sign-up email (ConfirmEmail.jsx): company + username
+  // are pre-filled and a new admin goes on to the setup questionnaire.
+  const emailConfirmed = searchParams.get('confirmed') === '1';
+  const prefillUsername = (searchParams.get('username') || '').slice(0, 50);
   const savedCompanies = getSavedCompanies();
   const [selected, setSelected] = useState(inviteCompany ? OTHER : (savedCompanies[0] || OTHER));
   const [otherText, setOtherText] = useState(inviteCompany);
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: prefillUsername, password: '' });
   const [error, setError] = useState('');
   const [unconfirmedEmail, setUnconfirmedEmail] = useState('');
   const [resentConfirmation, setResentConfirmation] = useState(false);
@@ -74,10 +78,13 @@ export default function Login() {
     // module they actually have access to (Phase D — picks the first module
     // their permissions unlock; falls back to /account if they have none).
     if (isAdmin) {
+      // Expired trial / canceled: the only useful place is Billing.
+      if (['trial_expired', 'canceled'].includes(user.subscription_status)) { navigate('/administration#billing'); return; }
       const key = `tc_visited_${user.id}`;
       const firstTime = !safeLocal.getItem(key);
       safeLocal.setItem(key, '1');
-      if (firstTime) { navigate('/administration'); return; }
+      // /administration pops the setup questionnaire until it has been completed.
+      if (firstTime || emailConfirmed) { navigate('/administration'); return; }
     }
     navigate(pickLandingPath(user));
   };
@@ -228,6 +235,9 @@ export default function Login() {
         {companyInactive && (
           <p style={styles.sessionMsg} role="alert">{t.loginCompanyInactive}</p>
         )}
+        {emailConfirmed && (
+          <p style={styles.confirmedMsg} role="status">{t.loginEmailConfirmed}</p>
+        )}
         <form onSubmit={handleSubmit} style={styles.form}>
           <label htmlFor="company" style={styles.label}>{t.loginCompanyLabel}</label>
           {savedCompanies.length > 0 ? (
@@ -325,6 +335,7 @@ const styles = {
   input: { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 15, outline: 'none' },
   error: { color: '#e53e3e', fontSize: 14 },
   sessionMsg: { background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 8 },
+  confirmedMsg: { background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#065f46', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 8 },
   button: { marginTop: 8, padding: '12px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600 },
   registerLink: { marginTop: 20, textAlign: 'center', fontSize: 13, color: '#666' },
   link: { color: 'var(--ops-page-accent)', fontWeight: 600, textDecoration: 'none' },

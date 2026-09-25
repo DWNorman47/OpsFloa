@@ -125,6 +125,52 @@ describe('POST /auth/login', () => {
     expect(res.status).toBe(200);
     expect(pool.query.mock.calls.some(([sql]) => /failed_login_attempts = 0/.test(sql))).toBe(true);
   });
+
+  // welcomed_at (the first-login welcome) is stamped only when a session is issued.
+  const stampsWelcomed = () => pool.query.mock.calls.some(([sql]) => /welcomed_at = NOW\(\)/.test(sql));
+
+  test('unconfirmed email: 403 and welcomed_at is NOT stamped', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'co-1', active: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 5, password_hash: 'h', email_confirmed: false, email: 'a@b.co', welcomed_at: null }] })
+      .mockResolvedValue({ rows: [] });
+    bcrypt.compare.mockResolvedValue(true);
+    const res = await request(makeApp()).post('/api/auth/login').send(body);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('email_not_confirmed');
+    expect(stampsWelcomed()).toBe(false);
+  });
+
+  test('MFA pending / must-change-password: welcomed_at is NOT stamped yet', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'co-1', active: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 5, password_hash: 'h', email_confirmed: true, mfa_enabled: true, welcomed_at: null }] })
+      .mockResolvedValue({ rows: [] });
+    bcrypt.compare.mockResolvedValue(true);
+    expect((await request(makeApp()).post('/api/auth/login').send(body)).body.mfa_required).toBe(true);
+    expect(stampsWelcomed()).toBe(false);
+
+    pool.query.mockReset();
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'co-1', active: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 5, password_hash: 'h', email_confirmed: true, must_change_password: true, welcomed_at: null }] })
+      .mockResolvedValue({ rows: [] });
+    expect((await request(makeApp()).post('/api/auth/login').send(body)).body.must_change_password).toBe(true);
+    expect(stampsWelcomed()).toBe(false);
+  });
+});
+
+describe('POST /auth/confirm-email', () => {
+  test('returns the company + username the link activated (for a pre-filled sign-in), no session', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5, username: 'annlee', company_name: 'NewCo' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    const res = await request(makeApp()).post('/api/auth/confirm-email').send({ token: 'abc' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, company: 'NewCo', username: 'annlee' });
+    expect(res.body.token).toBeUndefined();
+    expect(pool.query.mock.calls[1][0]).toMatch(/SET email_confirmed = true/);
+  });
 });
 
 // ── MFA confirm ────────────────────────────────────────────────────────────
@@ -331,12 +377,24 @@ describe('POST /auth/register — trial abuse limits', () => {
     expect(params).toEqual(['2001:db8:abcd:1200::/56']);
   });
 
-  test('IPv4 keeps the exact-address comparison', async () => {
-    pool.query.mockResolvedValueOnce({ rows: [{ count: '5', company_names: [] }] });
-    await request(makeApp()).post('/api/auth/register').set('X-Forwarded-For', '203.0.113.9').send(reg('ann@corp.example'));
+  test('IPv4 keeps the exact-address comparison; limit 10 per 30 days, neutral message', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ count: '10', company_names: [] }] });
+    const res = await request(makeApp()).post('/api/auth/register').set('X-Forwarded-For', '203.0.113.9').send(reg('ann@corp.example'));
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toMatch(/registration_ip = \$1/);
     expect(params).toEqual(['203.0.113.9']);
+    expect(res.status).toBe(429);
+    expect(res.body.code).toBe('trial_limit_network');
+    expect(res.body.error).not.toMatch(/suspicious|flagged|trust and safety/i);
+    expect(res.body.error).toMatch(/@/); // a support contact
+  });
+
+  test('IPv4: a shared office network under 10 is not blocked by the IP limit', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '6', company_names: [] }] })
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // the per-domain limit decides
+    const res = await request(makeApp()).post('/api/auth/register').set('X-Forwarded-For', '203.0.113.11').send(reg('ann@corp.example'));
+    expect(res.body.code).toBe('trial_limit');
   });
 
   test('corporate domain: limited per domain', async () => {

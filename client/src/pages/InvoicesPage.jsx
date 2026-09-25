@@ -593,6 +593,8 @@ function InvoiceDetail({ id, onBack, onEdit }) {
       // The server emails the client when there's an email on file; otherwise the
       // admin shares the copied link (shown in the card below).
       if (data.email?.sent) toast(`${t.invToastEmailed} ${data.email.to}`, 'success');
+      // Trial companies have a daily cap on client emails: say it was NOT emailed.
+      else if (data.email?.reason === 'trial_daily_cap') toast(t.invToastTrialCap, 'warning');
       else toast(t.invToastSent, 'success');
     } catch (err) {
       setActionError(err.response?.data?.error || t.invErrSend);
