@@ -138,13 +138,14 @@ describe('GET /admin/certified-payroll classification attribution', () => {
       overtime_hours_override: null,
       project_prevailing_wage_rate: null,
     };
+    pool.query.mockResolvedValue({ rows: [] }); // anything after the scripted calls
     pool.query
+      .mockResolvedValueOnce({ rows: [] }) // settings (read first: week_end must be the company week-end day)
       .mockResolvedValueOnce({ rows: [{ name: 'Builder Co' }] })
       .mockResolvedValueOnce({ rows: [
         { ...base, work_date: '2026-07-20', entry_classification: 'Operator' },
         { ...base, work_date: '2026-07-21', entry_classification: 'Laborer' },
       ] })
-      .mockResolvedValueOnce({ rows: [] }) // settings
       .mockResolvedValueOnce({ rows: [] }) // worker_rate_history
       .mockResolvedValueOnce({ rows: [] }) // project_prevailing_rate_history
       .mockResolvedValueOnce({ rows: [] }) // company_default_rate_history

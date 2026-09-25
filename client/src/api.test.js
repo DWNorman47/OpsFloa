@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   isSessionFailure, clearFailedSession, responseErrorInterceptor, requestInterceptor,
   resolveTimeout, isTimeoutError, setApiToastHandler, DEFAULT_TIMEOUT_MS, LONG_TIMEOUT_MS,
-  approxBodyChars, bodyIdempotencyKey,
+  approxBodyChars, bodyIdempotencyKey, errorCodeMessage,
 } from './api';
 
 const err401 = (error, config = {}, extra = {}) => ({
@@ -158,5 +158,24 @@ describe('slow endpoints + large bodies', () => {
     expect(cfg.headers['Idempotency-Key']).toBe('abc-123');
     expect(requestInterceptor({ method: 'get', url: '/x', headers: {} }).headers['Idempotency-Key']).toBeUndefined();
     expect(bodyIdempotencyKey({ client_id: '7' })).toBeNull();
+  });
+});
+
+describe('translated server error codes', () => {
+  const err409 = (code, error = 'English server text') => ({ response: { status: 409, data: { error, code } }, config: { url: '/admin/entries/4/approve' } });
+
+  test('period_locked / entry_approved / report_changed map to a translated message', () => {
+    expect(errorCodeMessage(err409('period_locked'))).toMatch(/locked pay period/i);
+    expect(errorCodeMessage(err409('entry_approved'))).toMatch(/approved/i);
+    expect(errorCodeMessage(err409('report_changed'))).toMatch(/changed/i);
+    expect(errorCodeMessage(err409('something_else'))).toBeNull();
+  });
+
+  test('the global 4xx toast shows the translated period_locked message, not the raw server text', async () => {
+    const toast = vi.fn();
+    setApiToastHandler(toast);
+    await expect(responseErrorInterceptor(err409('period_locked', 'raw'))).rejects.toBeTruthy();
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/locked pay period/i), 'error');
+    setApiToastHandler(null);
   });
 });

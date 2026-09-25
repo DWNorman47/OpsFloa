@@ -309,7 +309,7 @@ export function WorkforcePanel() {
           <Suspense fallback={<TabLoader />}>
             <h2 style={styles.heading}>{t.tabApprovals}</h2>
             <ApprovalQueue onCountChange={setPendingCount} settings={settings} />
-            {canDo('approve_entries') && <ManagePayPeriods />}
+            {canDo('manage_pay_periods') && <ManagePayPeriods />}
           </Suspense>
         ) : tab === 'reports' ? (
           <Suspense fallback={<TabLoader />}>

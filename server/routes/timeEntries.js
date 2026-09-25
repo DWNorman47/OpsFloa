@@ -14,6 +14,7 @@ const { escapeHtml } = require('../utils/htmlEscape');
 const { projectFrozen } = require('../utils/projectCost');
 const { readIdempotencyKey } = require('../utils/idempotencyKey');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
+const { lockedPeriodsCovering, periodLockedBody } = require('../utils/payPeriodLock');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 
@@ -140,6 +141,12 @@ router.post('/', requireAuth, entryWriteLimiter,
     }
     if (await projectFrozen(project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to log time to it.', code: 'project_frozen' });
     const wage_type = projectResult.rows[0].wage_type;
+    // Never add paid time to a date inside a locked pay period.
+    const lockedPeriods = await lockedPeriodsCovering(pool, companyId, [work_date]);
+    if (lockedPeriods.length) {
+      logFailure(req, 'time_entries.create', 'period_locked', { work_date });
+      return res.status(409).json(periodLockedBody(lockedPeriods));
+    }
 
     const bm = break_minutes ?? 0;
     if (bm < 0) {
@@ -216,11 +223,8 @@ router.patch('/:id', requireAuth, async (req, res) => {
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
     if (entryDate < cutoff) return res.status(403).json({ error: 'Entries older than 7 days cannot be edited' });
     if (entry.locked) return res.status(403).json({ error: 'This entry has been approved and cannot be edited' });
-    const locked = await pool.query(
-      'SELECT id FROM pay_periods WHERE company_id = $1 AND period_start <= $2 AND period_end >= $2',
-      [req.user.company_id, entry.work_date]
-    );
-    if (locked.rowCount > 0) return res.status(403).json({ error: 'This entry is in a locked pay period' });
+    const lockedPeriods = await lockedPeriodsCovering(pool, req.user.company_id, [entry.work_date]);
+    if (lockedPeriods.length) return res.status(409).json(periodLockedBody(lockedPeriods));
     const bm = parseInt(break_minutes) || 0;
     if (bm < 0) return res.status(400).json({ error: 'break_minutes must be non-negative' });
     const mileageParsed = mileage != null ? parseFloat(mileage) : null;
@@ -354,11 +358,8 @@ router.delete('/:id', requireAuth, async (req, res) => {
     }
     if (existing.rows[0].locked) return res.status(403).json({ error: 'Approved entries cannot be deleted' });
     if (await projectFrozen(existing.rows[0].project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to change its labor.', code: 'project_frozen' });
-    const locked = await pool.query(
-      'SELECT id FROM pay_periods WHERE company_id = $1 AND period_start <= $2 AND period_end >= $2',
-      [req.user.company_id, existing.rows[0].work_date]
-    );
-    if (locked.rowCount > 0) return res.status(403).json({ error: 'This entry is in a locked pay period' });
+    const lockedPeriods = await lockedPeriodsCovering(pool, req.user.company_id, [existing.rows[0].work_date]);
+    if (lockedPeriods.length) return res.status(409).json(periodLockedBody(lockedPeriods));
     const result = await pool.query(
       'DELETE FROM time_entries WHERE id = $1 AND user_id = $2 RETURNING id, work_date',
       [req.params.id, req.user.id]

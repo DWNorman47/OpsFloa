@@ -123,6 +123,12 @@ describe('Permission gate coverage', () => {
     }
   });
 
+  test('locking / unlocking a pay period requires manage_pay_periods', () => {
+    const routes = gatedRoutes(adminRouter);
+    expect(routes.find(r => r.path === '/pay-periods' && r.method === 'POST')?.key).toBe('manage_pay_periods');
+    expect(routes.find(r => r.path === '/pay-periods/:id' && r.method === 'DELETE')?.key).toBe('manage_pay_periods');
+  });
+
   test('payroll reads require both report and wage access', () => {
     const routes = gatedRoutes(adminRouter);
     for (const path of ['/payroll-run', '/payroll-runs', '/payroll-runs/:id', '/payroll-export']) {

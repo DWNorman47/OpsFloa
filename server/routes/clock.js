@@ -70,6 +70,17 @@ router.get('/status', requireAuth, async (req, res) => {
 const { validCoords } = require('../utils/geoUtils');
 const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
+const { lockedPeriodsCovering } = require('../utils/payPeriodLock');
+
+// Clock-out into a LOCKED pay period: the worker must never lose the shift, so
+// the entry is still written (status 'pending', as always) and the response is
+// flagged — { locked_period: true, locked_periods } — so the app can tell the
+// worker. The approvals queue shows it (in_locked_period) and approval is refused
+// until an admin unlocks the period. Same for /switch, the recovery path and
+// mark-day. Returns the entry with the flag merged in (unchanged when unlocked).
+function withLockFlag(entry, periods) {
+  return periods && periods.length ? { ...entry, locked_period: true, locked_periods: periods } : entry;
+}
 
 // POST /api/clock/in
 router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceBody({ int: ['project_id'] }), async (req, res) => {
@@ -448,6 +459,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
     let oldWageType = 'regular';
     let entryResult;
     let activeResult;
+    let switchLockedPeriods = [];
     try {
       await txClient.query('BEGIN');
       const clockResult = await txClient.query(
@@ -491,6 +503,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(segmentEnd, oldClock.timezone);
       // The switch instant is the old segment's clock-out: flag it if late/backdated.
       const outFlags = clockOutReviewFlags({ clockInTime, clockOutTime: segmentEnd, startTime: start_time, endTime: end_time, timezone: oldClock.timezone, now: switchNow });
+      // Locked pay period → still close the segment (never lose the shift), flag it.
+      switchLockedPeriods = await lockedPeriodsCovering(txClient, companyId, [oldClock.work_date]);
 
       entryResult = await txClient.query(
         `INSERT INTO time_entries
@@ -545,7 +559,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       ...activeClock,
       project_name: target.name,
       wage_type: target.wage_type,
-      closed_entry: { ...closedEntry, project_name: oldProjectName },
+      closed_entry: withLockFlag({ ...closedEntry, project_name: oldProjectName }, switchLockedPeriods),
     });
 
     setImmediate(async () => {
@@ -700,6 +714,8 @@ async function recoverLostClockOut(req, res) {
     // Clear any active_clock that appeared in the meantime (the queued clock-in replayed)
     // so the worker isn't left clocked in after we record the shift ourselves.
     await txClient.query('DELETE FROM active_clock WHERE user_id = $1', [req.user.id]);
+    // Locked pay period → still record the recovered shift, flagged (never lose it).
+    const recoverLocked = await lockedPeriodsCovering(txClient, companyId, [wd]);
     const ins = await txClient.query(
       `INSERT INTO time_entries
          (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
@@ -711,7 +727,7 @@ async function recoverLostClockOut(req, res) {
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
-    return res.json({ ...ins.rows[0], project_name, recovered: true });
+    return res.json(withLockFlag({ ...ins.rows[0], project_name, recovered: true }, recoverLocked));
   } catch (err) {
     await txClient.query('ROLLBACK');
     throw err;
@@ -745,6 +761,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
     let clock;
     let wage_type = 'regular';
     let project_name = null;
+    let outLockedPeriods = [];
     try {
       await txClient.query('BEGIN');
       // The active_clock SELECT above is unlocked, so two concurrent /out calls
@@ -817,6 +834,8 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       const usedClientInstant = clock_out_time != null && clockOutTime.getTime() === new Date(clock_out_time).getTime();
       const end_time   = ((usedClientInstant || clock_out_time == null) && validLocalTime(local_clock_out)) || wallClockInTZ(clockOutTime, clock.timezone);
       const outFlags = clockOutReviewFlags({ clockInTime, clockOutTime, startTime: start_time, endTime: end_time, timezone: clock.timezone, now: outNow });
+      // Locked pay period → still write the entry (never lose the shift), flag it.
+      outLockedPeriods = await lockedPeriodsCovering(txClient, companyId, [clock.work_date]);
 
       // Phase 2 dual-write: clockInTime / clockOutTime are already real UTC
       // instants, so we can write them straight to start_ts / end_ts without
@@ -848,7 +867,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
     } finally { txClient.release(); }
 
     const clockOutEntry = entryResult.rows[0];
-    res.json({ ...clockOutEntry, project_name });
+    res.json(withLockFlag({ ...clockOutEntry, project_name }, outLockedPeriods));
 
     setImmediate(async () => {
       // Overtime alert — fire-and-forget, never block the response
@@ -1034,6 +1053,16 @@ router.post('/location', requireAuth, async (req, res) => {
   }
 });
 
+// A real YYYY-MM-DD calendar date within ±1 day of the server's UTC date (any
+// worker's local "today" is in that window).
+function isNearToday(s, serverToday) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  if (isNaN(d) || d.toISOString().slice(0, 10) !== s) return false;
+  const diffDays = Math.abs(d.getTime() - new Date(`${serverToday}T00:00:00Z`).getTime()) / 86400000;
+  return diffDays <= 1;
+}
+
 // POST /api/clock/mark-day — daily-rate workers with day_mark_mode=true
 // record a single "I worked today" entry instead of clocking in/out.
 // Creates a finished time entry (start=end=now, wage_type=regular, status=pending)
@@ -1056,7 +1085,14 @@ router.post('/mark-day', requireAuth, requirePerm('clock_self'), clockLimiter, a
     }
 
     // Today's date — use client-supplied local date if provided, else server date.
-    const workDate = local_work_date || new Date().toISOString().substring(0, 10);
+    // The client's local date may differ from server UTC by at most a day (UTC-12…UTC+14),
+    // so anything else is a malformed or back/forward-dated mark → 400.
+    const serverToday = new Date().toISOString().substring(0, 10);
+    if (local_work_date != null && local_work_date !== '' && !isNearToday(local_work_date, serverToday)) {
+      logFailure(req, 'clock.mark_day', 'invalid_work_date', { local_work_date });
+      return res.status(400).json({ error: 'local_work_date must be today\'s date (YYYY-MM-DD)', code: 'invalid_work_date' });
+    }
+    const workDate = local_work_date || serverToday;
 
     // Dedup: one marked day per work_date per worker.
     const existing = await pool.query(
@@ -1079,6 +1115,8 @@ router.post('/mark-day', requireAuth, requirePerm('clock_self'), clockLimiter, a
     // we just resolved + the worker's TZ. start_ts === end_ts since mark-day
     // is a zero-duration entry.
     const ts = entryInstants(workDate, timeStr, timeStr, timezone).start_ts;
+    // Locked pay period → still record the day (never lose paid time), flagged.
+    const markLocked = await lockedPeriodsCovering(pool, req.user.company_id, [workDate]);
 
     const result = await pool.query(
       `INSERT INTO time_entries
@@ -1088,7 +1126,7 @@ router.post('/mark-day', requireAuth, requirePerm('clock_self'), clockLimiter, a
        RETURNING *`,
       [req.user.company_id, req.user.id, workDate, timeStr, ts, timezone || null]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(withLockFlag(result.rows[0], markLocked));
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import api from '../api';
+import api, { errorCodeMessage } from '../api';
+import { useToast } from '../contexts/ToastContext';
 import { getOrFetch } from '../offlineDb';
 import { SkeletonList } from './Skeleton';
 import EmptyState from './EmptyState';
@@ -343,6 +344,7 @@ function LocationHistoryModal({ seed, pendingEntries, onClose, t, locale }) {
 }
 
 export default function ApprovalQueue({ onCountChange, settings = null }) {
+  const toast = useToast();
   const { user } = useAuth();
   const t = useT();
   const locale = langToLocale(user?.language);
@@ -533,9 +535,9 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updated.data } : e));
       setEditingId(null);
     } catch (err) {
-      const msg = err.response?.status === 409
+      const msg = errorCodeMessage(err) || (err.response?.status === 409
         ? t.concurrentModification
-        : err.response?.data?.error || t.failedToSave;
+        : err.response?.data?.error || t.failedToSave);
       setEditSaveError(msg);
     } finally {
       setEditSaving(false);
@@ -579,7 +581,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       });
       setSplittingId(null);
     } catch (err) {
-      setSplitError(err.response?.data?.error || t.entryPanelFailedSplit);
+      setSplitError(errorCodeMessage(err) || err.response?.data?.error || t.entryPanelFailedSplit);
     } finally {
       setSplitSaving(false);
     }
@@ -601,7 +603,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       setRecentApproved(prev => prev.filter(e => e.id !== id));
       fetch(); // refresh pending queue
     } catch (err) {
-      setUnapproveError(err.response?.data?.error || t.failedUnapprove);
+      setUnapproveError(errorCodeMessage(err) || err.response?.data?.error || t.failedUnapprove);
     } finally { setUnapproving(null); }
   };
 
@@ -663,8 +665,15 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
     if (ids.length === 0) return;
     setApprovingSelected(true);
     try {
-      await api.post('/admin/entries/bulk-approve', { ids });
-      setEntries(prev => prev.filter(e => !selectedIds.has(e.id)));
+      const r = await api.post('/admin/entries/bulk-approve', { ids });
+      // Entries in a locked pay period are skipped (still pending) — reload rather
+      // than dropping them from the list, and say why.
+      if (r?.data?.skipped_locked > 0) {
+        toast?.(t.approvalsSkippedLocked.replace('{n}', r.data.skipped_locked), 'warning');
+        fetch();
+      } else {
+        setEntries(prev => prev.filter(e => !selectedIds.has(e.id)));
+      }
       setSelectedIds(new Set());
       fetchRecentApproved();
     } finally { setApprovingSelected(false); }
@@ -679,8 +688,13 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
         for (const e of targets) await api.patch(`/admin/entries/${e.id}/approve`);
         setEntries(prev => prev.filter(e => e.worker_name !== workerFilter || !entryHasEnded(e)));
       } else {
-        await api.post('/admin/entries/approve-all');
-        setEntries(prev => prev.filter(e => !entryHasEnded(e)));
+        const r = await api.post('/admin/entries/approve-all');
+        if (r?.data?.skipped_locked > 0) {
+          toast?.(t.approvalsSkippedLocked.replace('{n}', r.data.skipped_locked), 'warning');
+          fetch();
+        } else {
+          setEntries(prev => prev.filter(e => !entryHasEnded(e)));
+        }
       }
     } finally { setApprovingAll(false); }
   };
@@ -874,6 +888,11 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       <span style={{ ...styles.wageTag, background: e.wage_type === 'prevailing' ? '#d97706' : '#2563eb' }}>
                         {e.wage_type === 'prevailing' ? t.prevailing : t.regular}
                       </span>
+                      {e.in_locked_period && (
+                        <span style={{ ...styles.wageTag, background: '#7c2d12' }} title={t.approvalsLockedPeriodHint}>
+                          🔒 {t.approvalsLockedPeriodBadge}
+                        </span>
+                      )}
                       {e.long_shift_flagged && (
                         <span style={{ ...styles.wageTag, background: '#b91c1c' }} title={t.aqLongShiftTitle}>
                           ⚠ {t.aqLongShift}{spanHours(e) ? `: ${spanHours(e)}` : ''}

@@ -35,6 +35,7 @@ const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultiplie
 const { workerStatement, companyStatements, buildPayStatement } = require('../utils/payStatement');
 const { loadRateBook, loadRateBookForEntries, workerRateOn, prevailingRateOn, companyPrevailingRateOn, blendRate } = require('../utils/rateHistory');
 const rateStore = require('../utils/rateHistoryStore');
+const { lockedPeriodsCovering, periodLockedBody, notInLockedPeriodSql, inLockedPeriodSql } = require('../utils/payPeriodLock');
 const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
@@ -261,7 +262,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups', 'materials_cost_basis'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'onboarding_rates_confirmed_at', 'onboarding_timezone_confirmed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups', 'materials_cost_basis'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -633,7 +634,12 @@ router.post('/mark-day', requireAdmin, requirePerm('manage_workers'), async (req
         code: 'not_day_mark_worker',
       });
     }
+    if (local_work_date && !validLocalDate(local_work_date)) {
+      return res.status(400).json({ error: 'local_work_date must be YYYY-MM-DD' });
+    }
     const workDate = local_work_date || new Date().toISOString().substring(0, 10);
+    const markLocked = await lockedPeriodsCovering(pool, companyId, [workDate]);
+    if (markLocked.length) return res.status(409).json(periodLockedBody(markLocked));
     const existing = await pool.query(
       'SELECT id FROM time_entries WHERE user_id = $1 AND work_date = $2',
       [user_id, workDate]
@@ -732,6 +738,7 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
   try {
     const client = await pool.connect();
     let entryResult;
+    let clockOutLocked = [];
     try {
       await client.query('BEGIN');
       // Lock the active_clock row inside the tx and re-check it exists, so two concurrent
@@ -758,6 +765,9 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
       // that zone. start_ts / end_ts below are real UTC instants and remain correct.
       const start_time = wallClockInTZ(clockInTime,  clock.timezone);
       const end_time   = wallClockInTZ(clockOutTime, clock.timezone);
+      // Locked pay period → still close the shift (never lose it), flag the entry;
+      // approval stays blocked until the period is unlocked. Same as the worker /clock/out.
+      clockOutLocked = await lockedPeriodsCovering(client, companyId, [clock.work_date]);
       // Phase 2 dual-write: clockInTime / clockOutTime are real UTC instants
       // — write them straight to start_ts / end_ts.
       entryResult = await client.query(
@@ -784,7 +794,9 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
     } finally { client.release(); }
 
     await logAudit(companyId, req.user.id, req.user.full_name, 'worker.clocked_out_by_admin', 'user', parseInt(req.params.user_id), null);
-    res.json(entryResult.rows[0]);
+    res.json(clockOutLocked.length
+      ? { ...entryResult.rows[0], locked_period: true, locked_periods: clockOutLocked }
+      : entryResult.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -828,15 +840,21 @@ router.patch('/entries/:id/times', requireAdmin, requirePerm('manage_workers'), 
     // populate the new start_ts / end_ts columns alongside the legacy
     // start_time / end_time.
     const cur = await pool.query(
-      'SELECT work_date, timezone FROM time_entries WHERE id = $1 AND company_id = $2',
+      'SELECT work_date, timezone, status, locked FROM time_entries WHERE id = $1 AND company_id = $2',
       [req.params.id, companyId]
     );
     if (cur.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    // An approved entry is paid time of record — it must be unapproved first.
+    if (cur.rows[0].status === 'approved') {
+      return res.status(409).json({ error: 'This entry is approved. Unapprove it before editing its times.', code: 'entry_approved' });
+    }
+    const timesLocked = await lockedPeriodsCovering(pool, companyId, [cur.rows[0].work_date]);
+    if (timesLocked.length) return res.status(409).json(periodLockedBody(timesLocked));
     const workDateStr = new Date(cur.rows[0].work_date).toISOString().substring(0, 10);
     const { start_ts, end_ts } = entryInstants(workDateStr, start_time, end_time, cur.rows[0].timezone);
     const result = await pool.query(
       `UPDATE time_entries SET start_time = $1, end_time = $2, start_ts = $3, end_ts = $4
-       WHERE id = $5 AND company_id = $6
+       WHERE id = $5 AND company_id = $6 AND status <> 'approved'
        RETURNING *`,
       [start_time, end_time, start_ts, end_ts, req.params.id, companyId]
     );
@@ -889,20 +907,12 @@ router.patch('/entries/:id/edit', requireAdmin, requirePerm('approve_entries'),
     }
     const oldWorkDateStr = new Date(cur.rows[0].work_date).toISOString().substring(0, 10);
     const workDateStr = newWorkDate || oldWorkDateStr;
-    // If the date changed, ensure neither origin nor destination is locked.
-    if (newWorkDate && newWorkDate !== oldWorkDateStr) {
-      const lockCheck = await pool.query(
-        `SELECT 1 FROM pay_periods
-          WHERE company_id = $1
-            AND (period_start <= $2::date AND period_end >= $2::date)
-             OR (period_start <= $3::date AND period_end >= $3::date)
-          LIMIT 1`,
-        [companyId, oldWorkDateStr, newWorkDate]
-      );
-      if (lockCheck.rowCount > 0) {
-        return res.status(403).json({ error: 'Cannot move an entry into or out of a locked pay period' });
-      }
-    }
+    // Neither the origin date nor (when moving) the destination may be in a locked
+    // pay period. One company-scoped query — the old hand-written check read
+    // `company_id = $1 AND (A) OR (B)`, so B matched ANY company's locked period.
+    const editLocked = await lockedPeriodsCovering(pool, companyId,
+      newWorkDate && newWorkDate !== oldWorkDateStr ? [oldWorkDateStr, newWorkDate] : [oldWorkDateStr]);
+    if (editLocked.length) return res.status(409).json(periodLockedBody(editLocked));
     const { start_ts, end_ts } = entryInstants(workDateStr, start_time, end_time, cur.rows[0].timezone);
     // Derive wage_type from new project if provided
     let wage_type = 'regular';
@@ -972,6 +982,8 @@ router.post('/entries/:id/split', requireAdmin, requirePerm('approve_entries'), 
     );
     if (orig.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     const o = orig.rows[0];
+    const splitLocked = await lockedPeriodsCovering(pool, companyId, [o.work_date]);
+    if (splitLocked.length) return res.status(409).json(periodLockedBody(splitLocked));
 
     const client = await pool.connect();
     try {
@@ -1217,6 +1229,9 @@ router.post('/workers/:id/entries', requireAdmin, requirePerm('manage_workers'),
       [req.params.id, companyId]
     );
     if (workerRow.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+    if (!validLocalDate(String(work_date))) return res.status(400).json({ error: 'work_date must be YYYY-MM-DD' });
+    const addLocked = await lockedPeriodsCovering(pool, companyId, [work_date]);
+    if (addLocked.length) return res.status(409).json(periodLockedBody(addLocked));
 
     let wage_type = 'regular';
     if (project_id) {
@@ -1751,6 +1766,14 @@ router.post('/workers', requireAdmin, requirePerm('manage_workers'),
 const holdsOwnerTier = (user, perms) =>
   user.role === 'super_admin' || BUILTIN_ROLES.owner.permissions.every(p => perms.has(p));
 
+// Rank comparisons (outranks / escalation) only count ADMIN-tier and owner-only
+// permissions. Basic worker permissions are added over time (manage_haul_tickets,
+// daily_checklist_*) and every built-in Worker gets them, while a custom admin role
+// created earlier doesn't — counting them made every Worker "outrank" such an
+// admin and blocked ordinary role changes.
+const WORKER_TIER_PERMS = new Set(BUILTIN_ROLES.worker.permissions);
+const permsBeyond = (perms, holder) => [...perms].filter(p => !WORKER_TIER_PERMS.has(p) && !holder.has(p));
+
 // Assign role `roleId` to user `targetUserId` — THE role-change path, shared by
 // PATCH /workers/:id/role and the legacy `role` field of PATCH /workers/:id so
 // both enforce the same guards:
@@ -1791,9 +1814,7 @@ async function checkRoleAssignment(req, targetUserId, roleId) {
     getUserPermissions(req.user),
     pool.query('SELECT permission FROM role_permissions WHERE role_id = $1', [roleId]),
   ]);
-  const exceeded = targetRolePermsRes.rows
-    .map(r => r.permission)
-    .filter(p => !granterPerms.has(p));
+  const exceeded = permsBeyond(targetRolePermsRes.rows.map(r => r.permission), granterPerms);
   if (exceeded.length > 0) {
     return fail(403, { error: 'You cannot grant a role with more permissions than you hold.', code: 'role_exceeds_granter' });
   }
@@ -1818,7 +1839,7 @@ async function checkRoleAssignment(req, targetUserId, roleId) {
   // carries owner-level perms. Changing your own role is always a subset.
   if (String(user.id) !== String(req.user.id)) {
     const theirs = await getUserPermissions({ role: user.current_legacy_role, role_id: user.current_role_id, admin_permissions: user.admin_permissions });
-    if ([...theirs].some(p => !granterPerms.has(p))) {
+    if (permsBeyond(theirs, granterPerms).length > 0) {
       return fail(403, { error: 'You cannot change the role of a user with more permissions than you (e.g. an Owner).', code: 'owner_protected' });
     }
   }
@@ -1955,7 +1976,7 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
         : await getUserPermissions({ role: target.role, role_id: target.role_id, admin_permissions: target.admin_permissions });
       const outranks = theirs === null
         ? req.user.role !== 'super_admin'
-        : [...theirs].some(p => !mine.has(p));
+        : permsBeyond(theirs, mine).length > 0;
       if (outranks && String(target.id) !== String(req.user.id)) {
         return res.status(403).json({ error: 'You cannot change the email of a user with more permissions than you (e.g. an Owner).', code: 'email_change_forbidden' });
       }
@@ -3257,12 +3278,14 @@ router.post('/projects/:id/merge-into/:target_id', requireAdmin, requirePerm('ma
         OR EXISTS(SELECT 1 FROM invoices                  WHERE project_id = $1 AND company_id = $2)
         OR EXISTS(SELECT 1 FROM project_budget_categories WHERE project_id = $1)
         OR EXISTS(SELECT 1 FROM estimates                 WHERE converted_project_id = $1 AND company_id = $2)
+        -- signed WH-347s are legal records tied to their project (FK RESTRICT, 0220)
+        OR EXISTS(SELECT 1 FROM certified_payroll_signatures WHERE project_id = $1 AND company_id = $2)
       ) AS has_financial`,
       [sourceId, companyId]
     );
     if (fin.rows[0].has_financial) {
       return res.status(409).json({
-        error: 'This project has financial records (change orders, POs, submittals, closeouts, expenses, budgets, lien waivers, invoices, or estimates). Merging those across projects isn\'t supported yet — move or resolve them first.',
+        error: 'This project has financial records (change orders, POs, submittals, closeouts, expenses, budgets, lien waivers, invoices, estimates, or signed certified payrolls). Merging those across projects isn\'t supported yet — move or resolve them first.',
       });
     }
 
@@ -3472,7 +3495,8 @@ router.get('/entries/pending', requireAdmin, requirePerm('approve_entries'), asy
     const offsetIdx = params.length;
     const result = await pool.query(
       `SELECT te.*, COALESCE(u.invoice_name, u.full_name) as worker_name, u.email as worker_email, p.name as project_name,
-              te.clock_source, te.clocked_in_by, admin_u.full_name AS clocked_in_by_name
+              te.clock_source, te.clocked_in_by, admin_u.full_name AS clocked_in_by_name,
+              ${inLockedPeriodSql('te')} AS in_locked_period
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        LEFT JOIN projects p ON te.project_id = p.id
@@ -3654,6 +3678,21 @@ router.get('/worker-locations', requireAdmin, requirePerm('approve_entries'), as
   }
 });
 
+// Pending entries (optionally limited to `ids`) sitting in a locked pay period —
+// the ones an approve UPDATE skipped. Returns { count, dates }.
+async function pendingInLockedPeriods(companyId, ids, accessIds) {
+  const params = [companyId];
+  let where = `company_id = $1 AND status = 'pending' AND ${inLockedPeriodSql('time_entries')}`;
+  if (ids) { params.push(ids); where += ` AND id = ANY($${params.length}::int[])`; }
+  if (accessIds && accessIds.length) { params.push(accessIds); where += ` AND user_id = ANY($${params.length})`; }
+  const r = await pool.query(
+    `SELECT COUNT(*)::int AS locked_count, COALESCE(array_agg(DISTINCT work_date), '{}') AS dates
+       FROM time_entries WHERE ${where}`,
+    params
+  );
+  return { count: r.rows[0]?.locked_count || 0, dates: r.rows[0]?.dates || [] };
+}
+
 // POST /admin/entries/bulk-approve — approve a specific set of entry IDs
 router.post('/entries/bulk-approve', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
   const { ids } = req.body;
@@ -3678,12 +3717,19 @@ router.post('/entries/bulk-approve', requireAdmin, requirePerm('approve_entries'
     if ((blocked.rows[0]?.count || 0) > 0) {
       return res.status(409).json({ error: 'Time entries cannot be approved until their end time has passed.' });
     }
+    // The pay-period lock is checked INSIDE the UPDATE, so a period locked
+    // concurrently can't slip an approval through between a check and the write.
     const result = await pool.query(
       `UPDATE time_entries SET status = 'approved', locked = true, approved_by = $1, approved_at = NOW()
-       WHERE id = ANY($2::int[]) AND company_id = $3 AND status = 'pending' AND ${ENTRY_HAS_ENDED_SQL} ${accessFilter}
+       WHERE id = ANY($2::int[]) AND company_id = $3 AND status = 'pending' AND ${ENTRY_HAS_ENDED_SQL}
+         AND ${notInLockedPeriodSql('time_entries')} ${accessFilter}
        RETURNING id, user_id, work_date, start_time, end_time`,
       params
     );
+    const skipped = await pendingInLockedPeriods(companyId, ids, accessIds);
+    if (result.rowCount === 0 && skipped.count > 0) {
+      return res.status(409).json(periodLockedBody(await lockedPeriodsCovering(pool, companyId, skipped.dates)));
+    }
     // Group by worker so each gets one push (not one per entry)
     const byWorker = {};
     for (const row of result.rows) {
@@ -3699,7 +3745,7 @@ router.post('/entries/bulk-approve', requireAdmin, requirePerm('approve_entries'
       createInboxItem(parseInt(userId), companyId, 'approval', 'Time entry approved ✓', pushBody, '/timeclock');
     }
     await logAudit(companyId, req.user.id, req.user.full_name, 'entries.bulk_approved', 'time_entry', null, null, { count: result.rowCount, ids });
-    res.json({ approved: result.rowCount });
+    res.json({ approved: result.rowCount, skipped_locked: skipped.count });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -3712,11 +3758,14 @@ router.post('/entries/approve-all', requireAdmin, requirePerm('approve_entries')
     const params = accessIds && accessIds.length ? [req.user.id, companyId, accessIds] : [req.user.id, companyId];
     const result = await pool.query(
       `UPDATE time_entries SET status = 'approved', locked = true, approved_by = $1, approved_at = NOW()
-       WHERE company_id = $2 AND status = 'pending' AND ${ENTRY_HAS_ENDED_SQL} ${workerFilter} RETURNING id`,
+       WHERE company_id = $2 AND status = 'pending' AND ${ENTRY_HAS_ENDED_SQL}
+         AND ${notInLockedPeriodSql('time_entries')} ${workerFilter} RETURNING id`,
       params
     );
-    await logAudit(companyId, req.user.id, req.user.full_name, 'entries.approved_all', 'time_entry', null, null, { count: result.rowCount });
-    res.json({ approved: result.rowCount });
+    // Entries in a locked pay period stay pending — report how many were skipped.
+    const skipped = await pendingInLockedPeriods(companyId, null, accessIds);
+    await logAudit(companyId, req.user.id, req.user.full_name, 'entries.approved_all', 'time_entry', null, null, { count: result.rowCount, skipped_locked: skipped.count });
+    res.json({ approved: result.rowCount, skipped_locked: skipped.count });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -3745,13 +3794,18 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
     const params = accessIds && accessIds.length ? [...baseParams, accessIds] : baseParams;
     const result = await pool.query(
       `UPDATE time_entries SET status = 'approved', locked = true, approval_note = $1, approved_by = $2, approved_at = NOW()${setOverride}
-       WHERE id = $3 AND company_id = $4 AND status = 'pending' AND ${ENTRY_HAS_ENDED_SQL} ${workerFilter} RETURNING *`,
+       WHERE id = $3 AND company_id = $4 AND status = 'pending' AND ${ENTRY_HAS_ENDED_SQL}
+         AND ${notInLockedPeriodSql('time_entries')} ${workerFilter} RETURNING *`,
       params
     );
     if (result.rowCount === 0) {
-      const existing = await pool.query('SELECT id, status, end_ts FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+      const existing = await pool.query('SELECT id, status, end_ts, work_date FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
       if (existing.rows[0]?.status === 'pending' && (!existing.rows[0].end_ts || new Date(existing.rows[0].end_ts) > new Date())) {
         return res.status(409).json({ error: 'Time entries cannot be approved until their end time has passed.' });
+      }
+      if (existing.rows[0]?.status === 'pending') {
+        const approveLocked = await lockedPeriodsCovering(pool, companyId, [existing.rows[0].work_date]);
+        if (approveLocked.length) return res.status(409).json(periodLockedBody(approveLocked));
       }
       return res.status(404).json({ error: 'Entry not found' });
     }
@@ -3886,12 +3940,29 @@ router.patch('/entries/:id/reject', requireAdmin, requirePerm('approve_entries')
     const params = accessIds && accessIds.length
       ? [note || null, req.user.id, req.params.id, companyId, accessIds]
       : [note || null, req.user.id, req.params.id, companyId];
+    const cur = await pool.query(
+      `SELECT id, user_id, status, work_date, qbo_activity_id FROM time_entries
+        WHERE id = $1 AND company_id = $2 ${accessIds && accessIds.length ? 'AND user_id = ANY($3)' : ''}`,
+      accessIds && accessIds.length ? [req.params.id, companyId, accessIds] : [req.params.id, companyId]
+    );
+    if (cur.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    // Rejecting an APPROVED entry silently removes paid time — require an explicit
+    // unapprove first (which has its own audit + QuickBooks cleanup).
+    if (cur.rows[0].status === 'approved') {
+      return res.status(409).json({ error: 'This entry is approved. Unapprove it before rejecting it.', code: 'entry_approved' });
+    }
+    if (cur.rows[0].status !== 'pending') {
+      return res.status(409).json({ error: 'This entry is not pending.', code: 'entry_not_pending' });
+    }
+    const rejectLocked = await lockedPeriodsCovering(pool, companyId, [cur.rows[0].work_date]);
+    if (rejectLocked.length) return res.status(409).json(periodLockedBody(rejectLocked));
     const result = await pool.query(
       `UPDATE time_entries SET status = 'rejected', approval_note = $1, approved_by = $2, approved_at = NOW()
-       WHERE id = $3 AND company_id = $4 ${workerFilter} RETURNING *`,
+       WHERE id = $3 AND company_id = $4 AND status = 'pending'
+         AND ${notInLockedPeriodSql('time_entries')} ${workerFilter} RETURNING *`,
       params
     );
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    if (result.rowCount === 0) return res.status(409).json({ error: 'Entry was changed by someone else — reload and try again.', code: 'conflict' });
     await logAudit(companyId, req.user.id, req.user.full_name, 'entry.rejected', 'time_entry', parseInt(req.params.id), null, { note });
     const rejWorker = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [result.rows[0].user_id]);
     if (rejWorker.rows[0]?.email) {
@@ -3930,8 +4001,13 @@ router.patch('/entries/:id/unapprove', requireAdmin, requirePerm('approve_entrie
   const accessIds = req.user.worker_access_ids;
   try {
     // Fetch existing qbo_activity_id before clearing it
-    const existing = await pool.query('SELECT qbo_activity_id FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    const existing = await pool.query('SELECT qbo_activity_id, work_date FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     const existingActivityId = existing.rows[0]?.qbo_activity_id;
+    // Unapproving removes paid time from a date — refused inside a locked pay period.
+    if (existing.rows[0]) {
+      const unapproveLocked = await lockedPeriodsCovering(pool, companyId, [existing.rows[0].work_date]);
+      if (unapproveLocked.length) return res.status(409).json(periodLockedBody(unapproveLocked));
+    }
 
     const workerFilter = accessIds && accessIds.length ? `AND user_id = ANY($3)` : '';
     const params = accessIds && accessIds.length ? [req.params.id, companyId, accessIds] : [req.params.id, companyId];
@@ -3939,7 +4015,8 @@ router.patch('/entries/:id/unapprove', requireAdmin, requirePerm('approve_entrie
       `UPDATE time_entries
        SET status = 'pending', locked = false, approved_by = NULL, approved_at = NULL, approval_note = NULL,
            qbo_activity_id = NULL, qbo_synced_at = NULL
-       WHERE id = $1 AND company_id = $2 AND status = 'approved' ${workerFilter}
+       WHERE id = $1 AND company_id = $2 AND status = 'approved'
+         AND ${notInLockedPeriodSql('time_entries')} ${workerFilter}
        RETURNING *`,
       params
     );
@@ -3992,8 +4069,15 @@ router.patch('/entries/:id/unlock', requireAdmin, requirePerm('approve_entries')
   try {
     const workerFilter = accessIds && accessIds.length ? `AND user_id = ANY($3)` : '';
     const params = accessIds && accessIds.length ? [req.params.id, companyId, accessIds] : [req.params.id, companyId];
+    // Unlocking reopens the entry to worker edits — not inside a locked pay period.
+    const cur = await pool.query('SELECT work_date FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (cur.rows[0]) {
+      const unlockLocked = await lockedPeriodsCovering(pool, companyId, [cur.rows[0].work_date]);
+      if (unlockLocked.length) return res.status(409).json(periodLockedBody(unlockLocked));
+    }
     const result = await pool.query(
-      `UPDATE time_entries SET locked = false WHERE id = $1 AND company_id = $2 ${workerFilter} RETURNING *`,
+      `UPDATE time_entries SET locked = false WHERE id = $1 AND company_id = $2
+         AND ${notInLockedPeriodSql('time_entries')} ${workerFilter} RETURNING *`,
       params
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
@@ -4018,7 +4102,7 @@ router.get('/pay-periods', requireAdmin, async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-router.post('/pay-periods', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
+router.post('/pay-periods', requireAdmin, requirePerm('manage_pay_periods'), async (req, res) => {
   const { period_start, period_end, label } = req.body;
   if (!period_start || !period_end) return res.status(400).json({ error: 'period_start and period_end required' });
   if (period_start >= period_end) return res.status(400).json({ error: 'period_end must be after period_start' });
@@ -4037,7 +4121,7 @@ router.post('/pay-periods', requireAdmin, requirePerm('approve_entries'), async 
   }
 });
 
-router.delete('/pay-periods/:id', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
+router.delete('/pay-periods/:id', requireAdmin, requirePerm('manage_pay_periods'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
@@ -4875,10 +4959,65 @@ router.get('/certified-payroll/weeks', requireAdmin, requirePerm('view_certified
 // GET /admin/certified-payroll?week_end=YYYY-MM-DD&project_id=N
 // Returns prevailing-wage hours by worker broken down by day of week for a 7-day window
 router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payroll'), requireCertifiedPayrollAddon, async (req, res) => {
-  const { week_end, project_id } = req.query;
-  if (!week_end) return res.status(400).json({ error: 'week_end required' });
-  if (!isValidIsoDate(week_end)) return res.status(400).json({ error: 'week_end must be a valid date', code: 'invalid_date' });
-  const companyId = req.user.company_id;
+  try {
+    const out = await buildCertifiedPayrollReport(req.user.company_id, req.query.week_end, req.query.project_id);
+    if (out.error) return res.status(out.status).json(out.error);
+    const { report, reportHash } = out;
+    // Signature for this report window, if any — flagged when the data it certified
+    // (SHA-256 of the canonical report JSON, stored at signing) no longer matches.
+    const sigParams = [req.user.company_id, report.week_end];
+    let sigProjectClause = 'AND project_id IS NULL';
+    if (report.project_id) { sigParams.push(report.project_id); sigProjectClause = `AND project_id = $${sigParams.length}`; }
+    const sigRes = await pool.query(
+      `SELECT signer_name, signer_title, compliance_text, signed_at, report_hash
+         FROM certified_payroll_signatures
+        WHERE company_id = $1 AND week_ending = $2 ${sigProjectClause}
+        ORDER BY signed_at DESC LIMIT 1`,
+      sigParams
+    );
+    const sig = sigRes.rows[0] || null;
+    res.json({
+      ...report,
+      report_hash: reportHash,
+      // data_changed: null = signed before hashes were stored (0220) — unknown.
+      signature: sig ? { ...sig, data_changed: sig.report_hash ? sig.report_hash !== reportHash : null } : null,
+    });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Stable JSON (object keys sorted, recursively) → the canonical form hashed for a
+// WH-347 signature, so the same data always yields the same SHA-256.
+function canonicalJson(v) {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+function certifiedReportHash(report) {
+  // Only the certified DATA — not the signature, settings toggles or template text.
+  const { week_start, week_end, project_id, contractor, project, workers } = report;
+  return crypto.createHash('sha256').update(canonicalJson({ week_start, week_end, project_id, contractor, project, workers })).digest('hex');
+}
+
+// WH-347 column 9 splits deductions into FICA / withholding tax / other. The deductions
+// engine (utils/deductions.js) stores free-named lines, so bucket them by name.
+function wh347DeductionBucket(name) {
+  const n = String(name || '').toLowerCase();
+  if (/\bfica\b|social security|medicare|\boasdi\b/.test(n)) return 'fica';
+  if (/withhold|income tax|\bfit\b|\bsit\b|federal tax|state tax|\bpaye\b/.test(n)) return 'withholding';
+  return 'other';
+}
+
+/**
+ * Build the WH-347 report for (week_end, project_id?) — shared by the GET route and
+ * the signature POST (which hashes it server-side). Returns { report, reportHash }
+ * or { status, error } for a bad request.
+ */
+async function buildCertifiedPayrollReport(companyId, week_end, project_id) {
+  const fail = (status, error) => ({ status, error });
+  if (!week_end) return fail(400, { error: 'week_end required' });
+  if (!isValidIsoDate(week_end)) return fail(400, { error: 'week_end must be a valid date', code: 'invalid_date' });
 
   // UTC throughout: `week_end` is used verbatim as a date string, so derive weekStart in
   // UTC too. Parsing 'T00:00:00' (local) + toISOString() (UTC) would shift weekStart a day
@@ -4887,7 +5026,15 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
   weekStartDate.setUTCDate(weekStartDate.getUTCDate() - 6);
   const weekStart = weekStartDate.toISOString().substring(0, 10);
 
-  try {
+  {
+    const s0 = await getSettings(companyId);
+    // The report window must BE the company's pay week — a mid-week week_end would
+    // straddle two OT weeks and misstate straight time vs overtime.
+    const weekEndDow = (parseInt(s0.week_start ?? 1, 10) + 6) % 7;
+    if (new Date(week_end + 'T00:00:00Z').getUTCDay() !== weekEndDow) {
+      const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      return fail(400, { error: `week_end must be a ${DAY_NAMES[weekEndDow]} (the last day of your company's work week)`, code: 'invalid_week_end' });
+    }
     const companyRow = await pool.query('SELECT name FROM companies WHERE id = $1', [companyId]);
     const contractor = companyRow.rows[0]?.name || '';
 
@@ -4895,11 +5042,11 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     let projectPrevRate = null;
     const projectId = project_id == null || project_id === '' ? null : Number(project_id);
     if (project_id && (!Number.isInteger(projectId) || projectId <= 0)) {
-      return res.status(400).json({ error: 'project_id must be a positive integer', code: 'invalid_project' });
+      return fail(400, { error: 'project_id must be a positive integer', code: 'invalid_project' });
     }
     if (projectId) {
       const pr = await pool.query('SELECT name, prevailing_wage_rate FROM projects WHERE id = $1 AND company_id = $2', [projectId, companyId]);
-      if (!pr.rowCount) return res.status(404).json({ error: 'Project not found' });
+      if (!pr.rowCount) return fail(404, { error: 'Project not found' });
       projectName = pr.rows[0]?.name || null;
       projectPrevRate = pr.rows[0]?.prevailing_wage_rate != null ? parseFloat(pr.rows[0].prevailing_wage_rate) : null;
     }
@@ -4908,10 +5055,21 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // the pay engine (invoices, payroll run, pay stubs, worker reports) already counts
     // approved entries only. Without this, certified payroll silently includes pending
     // (unvetted) hours that show up nowhere else.
+    //
+    // Filtered to one project: load ALL of each listed worker's approved hours in the
+    // week (every project) — weekly/daily overtime is earned on total hours, so the OT
+    // split must be classified from everything, then only this project's rows shown.
+    // (Classifying from the project's hours alone understated OT on the WH-347.)
     const conditions = ['te.company_id = $1', 'te.work_date >= $2', 'te.work_date <= $3', "te.status = 'approved'", "u.worker_type <> 'unpaid'"];
     const values = [companyId, weekStart, week_end];
     let idx = 4;
-    if (projectId) { conditions.push(`te.project_id = $${idx++}`); values.push(projectId); }
+    if (projectId) {
+      conditions.push(`te.user_id IN (SELECT s.user_id FROM time_entries s
+                                       WHERE s.company_id = $1 AND s.work_date >= $2 AND s.work_date <= $3
+                                         AND s.status = 'approved' AND s.project_id = $${idx++})`);
+      values.push(projectId);
+    }
+    const inScope = e => !projectId || Number(e.project_id) === projectId;
 
     const result = await pool.query(
       `SELECT te.user_id, te.project_id, COALESCE(u.invoice_name, u.full_name) as worker_name,
@@ -4929,7 +5087,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
       values
     );
 
-    const s = await getSettings(companyId);
+    const s = s0;
     const defaultRate = parseFloat(s.default_hourly_rate) || 30;
     // Effective-dated rates (worker / project prevailing / company default): a WH-347
     // certifies what was PAID that week, so each day is priced at the rate in effect
@@ -4978,6 +5136,11 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         };
       }
       workerMap[row.user_id].items.push(row);
+    }
+    // Filtered to a project: list only workers with hours ON it (their other projects'
+    // hours are loaded only to classify overtime).
+    for (const id of Object.keys(workerMap)) {
+      if (!workerMap[id].items.some(inScope)) delete workerMap[id];
     }
 
     // Per worker: straight-time + overtime hours per day, split by wage type, and
@@ -5036,6 +5199,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: otThreshold(s, w.overtime_rule), weekStart: s.week_start, otMult, baseRateOf, method: otMethod, wagePriority });
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
+          if (!inScope(e)) return; // other projects' hours only feed the OT classification
           const dk = dayKeyOf(e);
           const cr = classRow(e);
           if (p.ot) ot_days[dk] = +(ot_days[dk] + p.ot).toFixed(2);
@@ -5062,7 +5226,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         const blendedOtRate = overtime_total > 0 ? overtime_cost / overtime_total : 0;
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
-          if (!p.ot) return;
+          if (!p.ot || !inScope(e)) return;
           classRow(e).overtime_cost += p.ot * (
             otMethod === 'weighted_average' ? blendedOtRate : p.baseRate * otMult
           );
@@ -5078,6 +5242,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         const { regularHours: rh, overtimeHours: oh, otBands, floorDetail: floorDet } = computeOT(reg, w.overtime_rule, threshold, s.week_start, otConfig);
         annotateEntryOvertime(reg, w.overtime_rule, threshold, s.week_start, otConfig);
         for (const e of reg) {
+          if (!inScope(e)) continue; // other projects' hours only feed the OT classification
           const h = dur(e), dk = dayKeyOf(e);
           const otH = Math.min(Math.max(0, e.overtime_hours || 0), h);
           const cr = classRow(e);
@@ -5099,7 +5264,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
           const dk = DAY_KEYS[new Date(f.date + 'T00:00:00Z').getUTCDay()];
           regular_days[dk] = +(regular_days[dk] + f.hours).toFixed(2);
           const source = reg.find(e => e.work_date === f.date) || reg[0];
-          if (source) {
+          if (source && inScope(source)) {
             const cr = classRow(source);
             cr.regular_days[dk] = +(cr.regular_days[dk] + f.hours).toFixed(2);
             cr.regular_total += f.hours;
@@ -5126,14 +5291,15 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
             if (r.rateType === 'daily') continue; // daily-rate days carry no night premium
             const np = nightPremiumCost([e], otConfig.nightDifferential, r.rate);
             night_premium += np;
-            classRow(e).night_premium += np;
+            if (inScope(e)) classRow(e).night_premium += np;
           }
         }
         for (const e of w.items.filter(e => e.wage_type === 'prevailing')) {
           const h = dur(e), dk = dayKeyOf(e);
-          const cr = classRow(e);
           prevailing_days[dk] = +(prevailing_days[dk] + h).toFixed(2);
           prevailing_total += h; prevailing_cost += h * prevailingRateOf(e);
+          if (!inScope(e)) continue;
+          const cr = classRow(e);
           cr.prevailing_days[dk] = +(cr.prevailing_days[dk] + h).toFixed(2);
           cr.prevailing_total += h;
           cr.prevailing_cost += h * prevailingRateOf(e);
@@ -5156,6 +5322,8 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         regular_cost: +regular_cost.toFixed(2), prevailing_cost: +prevailing_cost.toFixed(2), overtime_cost: +overtime_cost.toFixed(2),
         night_premium: +night_premium.toFixed(2),
         prevailing_rate: prevailing_total > 0 ? +(prevailing_cost / prevailing_total).toFixed(4) : prevRate,
+        // Every project's hours this week (the OT basis) — fallback "gross for all work".
+        all_work_gross: +(regular_cost + prevailing_cost + overtime_cost + night_premium).toFixed(2),
         classifications,
       };
     };
@@ -5173,10 +5341,41 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
       (fringesByUser[r.user_id] ||= {})[r.category] = parseFloat(r.rate_per_hour);
     }
 
+    // WH-347 column 9/10 (29 CFR 5.5(a)(3)(i)): deductions and net wages for the week,
+    // and gross earned for ALL work — from the ONE pay engine (the week's pay statement,
+    // all projects), so the WH-347 agrees with the pay stub. FICA / withholding / other
+    // are bucketed by the deduction's name (wh347DeductionBucket).
+    const workerRows = userIds.length
+      ? (await pool.query(
+          `SELECT id, full_name, invoice_name, hourly_rate, rate_type, overtime_rule, role_id, guaranteed_weekly_hours, worker_type
+             FROM users WHERE id = ANY($1::int[]) AND company_id = $2`,
+          [userIds, companyId])).rows
+      : [];
+    const statements = workerRows.length
+      ? await companyStatements({ companyId, workers: workerRows, settings: s, from: weekStart, to: week_end })
+      : new Map();
+    const round2 = x => Math.round((Number(x) || 0) * 100) / 100;
+
     const workers = Object.values(workerMap).flatMap(w => {
       const c = computeWorker(w);
       const fringes = fringesByUser[w.worker_id] || {};
       const fringeTotalPerHour = Object.values(fringes).reduce((a, b) => a + b, 0);
+      const grossOf = cr => +(cr.regular_cost + cr.prevailing_cost + cr.overtime_cost + (cr.night_premium || 0)).toFixed(2);
+      const st = statements.get(w.worker_id) || statements.get(String(w.worker_id));
+      const ded = { fica: 0, withholding: 0, other: 0, total: 0, lines: [] };
+      for (const l of (st && st.deductions) || []) {
+        const amt = round2(l.amount);
+        ded[wh347DeductionBucket(l.name)] = round2(ded[wh347DeductionBucket(l.name)] + amt);
+        ded.lines.push({ name: l.name, amount: amt });
+      }
+      ded.total = st ? round2(st.totals.deductionsTotal) : round2(ded.fica + ded.withholding + ded.other);
+      const grossAllWork = st ? round2(st.totals.grossWages) : round2(c.all_work_gross);
+      const worker_summary = {
+        gross_this_project: round2(c.classifications.reduce((a, cr) => a + grossOf(cr), 0)),
+        gross_all_work: grossAllWork,
+        deductions: ded,
+        net_wages: st ? round2(st.totals.netWages != null ? st.totals.netWages : grossAllWork - ded.total) : round2(grossAllWork - ded.total),
+      };
       return c.classifications.map((cr, classificationIndex) => ({
           worker_id: w.worker_id,
           worker_key: `${w.worker_id}:${cr.classification}`,
@@ -5191,30 +5390,19 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
           ssn_last4: ssnMap[w.worker_id] || null,
           fringes,
           fringe_total_per_hour: +fringeTotalPerHour.toFixed(4),
-          gross_pay: +(cr.regular_cost + cr.prevailing_cost + cr.overtime_cost + (cr.night_premium || 0)).toFixed(2),
+          gross_pay: grossOf(cr),
+          // Worker-level (once per worker, on the first classification row).
+          worker_summary: classificationIndex === 0 ? worker_summary : null,
         }));
     });
 
-    // Pull the signature for this report window, if any.
-    const sigParams = [companyId, week_end];
-    let sigProjectClause = 'AND project_id IS NULL';
-    if (project_id) { sigParams.push(project_id); sigProjectClause = `AND project_id = $${sigParams.length}`; }
-    const sigRes = await pool.query(
-      `SELECT signer_name, signer_title, compliance_text, signed_at
-         FROM certified_payroll_signatures
-        WHERE company_id = $1 AND week_ending = $2 ${sigProjectClause}
-        ORDER BY signed_at DESC LIMIT 1`,
-      sigParams
-    );
-
-    res.json({
+    const report = {
       week_start: weekStart,
       week_end,
       project_id: projectId,
       contractor,
       project: projectName,
       workers,
-      signature: sigRes.rows[0] || null,
       // The PDF renders the signed compliance_text when present, else this template —
       // one source of truth so the printed statement is exactly the text that gets signed.
       default_compliance_text: DEFAULT_COMPLIANCE_TEXT,
@@ -5225,9 +5413,10 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         cp_require_signature:     s.cp_require_signature !== false,
         cp_wh347_format:          s.cp_wh347_format !== false,
       },
-    });
-  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
-});
+    };
+    return { report, reportHash: certifiedReportHash(report) };
+  }
+}
 
 router.post('/support', requireAdmin, async (req, res) => {
   const { subject, message } = req.body;
@@ -5261,15 +5450,26 @@ router.post('/projects/:id/rfis', requireAdmin, async (req, res) => {
     const today = new Date().toLocaleDateString('en-CA');
     // rfi_number is unique per COMPANY (uq_rfis_company_number), not per project — so number
     // company-wide, matching POST /rfis. A per-project MAX made every 2nd+ project's first RFI
-    // collide on rfi_number=1 and 500. The inline subquery also makes it atomic against
-    // concurrent creates (read-then-insert could otherwise duplicate a number).
-    const result = await pool.query(
-      `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to, submitted_by, date_submitted, date_due, status)
-       VALUES ($1, $2, (SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1), $3, $4, $5, $6, $7, $8, 'open')
-       RETURNING id, rfi_number, subject, status, directed_to, date_submitted, date_due`,
-      [companyId, req.params.id, subject.trim(), description || null,
-       directed_to || null, req.user.full_name, date_submitted || today, date_due || null]
-    );
+    // collide on rfi_number=1 and 500. A MAX()+1 subquery alone is NOT atomic (two concurrent
+    // inserts read the same MAX), so serialize numbering per company with the same
+    // transaction-scoped advisory lock as routes/rfis.js — released at COMMIT/ROLLBACK.
+    let result;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rfi_number:${companyId}`]);
+      result = await client.query(
+        `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to, submitted_by, date_submitted, date_due, status)
+         VALUES ($1, $2, (SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1), $3, $4, $5, $6, $7, $8, 'open')
+         RETURNING id, rfi_number, subject, status, directed_to, date_submitted, date_due`,
+        [companyId, req.params.id, subject.trim(), description || null,
+         directed_to || null, req.user.full_name, date_submitted || today, date_due || null]
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { client.release(); }
     res.status(201).json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -5801,3 +6001,4 @@ router.patch('/workers/:id/role', requireAdmin, requirePerm('assign_roles'), asy
 module.exports = router;
 module.exports.getAdvancedSettings = getAdvancedSettings;
 module.exports.ADVANCED_DEFAULTS = ADVANCED_DEFAULTS;
+module.exports.buildCertifiedPayrollReport = buildCertifiedPayrollReport;

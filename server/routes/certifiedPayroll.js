@@ -203,7 +203,7 @@ router.get('/signatures', requireAdmin, requirePerm('view_certified_payroll'), r
     let projectClause = 'AND project_id IS NULL';
     if (projectId) { params.push(projectId); projectClause = `AND project_id = $${params.length}`; }
     const { rows } = await pool.query(
-      `SELECT id, signer_user_id, signer_name, signer_title, compliance_text, signed_at
+      `SELECT id, signer_user_id, signer_name, signer_title, compliance_text, signed_at, report_hash, project_name
          FROM certified_payroll_signatures
         WHERE company_id = $1 AND week_ending = $2 ${projectClause}
         ORDER BY signed_at DESC
@@ -220,6 +220,8 @@ router.get('/signatures', requireAdmin, requirePerm('view_certified_payroll'), r
 // POST /api/certified-payroll/signatures { project_id?, week_ending, signer_name, signer_title?, signature_data }
 router.post('/signatures', requireAdmin, requirePerm('manage_pay_periods'), requireCertifiedPayrollAddon, async (req, res) => {
   const { project_id, week_ending, signer_name, signer_title, signature_data } = req.body;
+  const clientHash = typeof req.body.report_hash === 'string' ? req.body.report_hash.trim().toLowerCase() : null;
+  if (clientHash && !/^[0-9a-f]{64}$/.test(clientHash)) return res.status(400).json({ error: 'report_hash must be a SHA-256 hex digest' });
   if (!isValidIsoDate(week_ending)) {
     return res.status(400).json({ error: 'week_ending (YYYY-MM-DD) is required' });
   }
@@ -237,47 +239,70 @@ router.post('/signatures', requireAdmin, requirePerm('manage_pay_periods'), requ
   try {
     // A signature scoped to a project must reference one this company owns (the GET,
     // fringes and SSN paths all validate ownership; keep this consistent).
+    let projectName = null;
     if (projectId) {
-      const proj = await pool.query('SELECT 1 FROM projects WHERE id = $1 AND company_id = $2', [projectId, req.user.company_id]);
+      const proj = await pool.query('SELECT name FROM projects WHERE id = $1 AND company_id = $2', [projectId, req.user.company_id]);
       if (!proj.rowCount) return res.status(404).json({ error: 'Project not found' });
+      projectName = proj.rows[0]?.name ?? null;
+    }
+
+    // Hash the report being certified SERVER-side (SHA-256 of the canonical report JSON,
+    // same builder as GET /admin/certified-payroll) and store it with the signature, so
+    // a later change to the underlying hours/pay shows as "data changed since signed".
+    // If the client says which report it looked at and the data has moved since, refuse:
+    // the signer must certify what they actually reviewed.
+    const built = await require('./admin').buildCertifiedPayrollReport(req.user.company_id, week_ending, projectId);
+    if (built.error) return res.status(built.status).json(built.error);
+    const reportHash = built.reportHash;
+    if (clientHash && clientHash !== reportHash) {
+      return res.status(409).json({ error: 'The payroll data changed since you opened this report. Regenerate it, review it, then sign.', code: 'report_changed' });
     }
 
     // A WH-347 signature is a legal record. Re-signing replaces the row in place, so
     // BEFORE overwriting, snapshot the prior signer/signature/compliance text into the
     // audit trail — otherwise the originally certified artifact is unrecoverable.
     const prior = await pool.query(
-      `SELECT signer_name, signer_title, signature_data, compliance_text, signed_at
+      `SELECT signer_name, signer_title, signature_data, compliance_text, signed_at, report_hash
          FROM certified_payroll_signatures
-        WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND week_ending = $3`,
+        WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND week_ending = $3
+          AND superseded_at IS NULL
+        ORDER BY signed_at DESC LIMIT 1`,
       [req.user.company_id, projectId, week_ending]
     );
 
     // Upsert — one CURRENT signature per (company, project, week); replaced ones live in
-    // the audit log (logged below).
+    // the audit log (logged below). A NULL project_id (all-projects report) never
+    // conflicts on the (company_id, project_id, week_ending) constraint, so it upserts on
+    // the partial unique index uq_cp_signatures_all_projects (0220) instead.
     const ip = req.ip || req.headers['x-forwarded-for'] || null;
+    const conflictTarget = projectId
+      ? '(company_id, project_id, week_ending)'
+      : '(company_id, week_ending) WHERE project_id IS NULL AND superseded_at IS NULL';
     const { rows } = await pool.query(
       `INSERT INTO certified_payroll_signatures
-         (company_id, project_id, week_ending, signer_user_id, signer_name, signer_title, signature_data, compliance_text, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (company_id, project_id, week_ending) DO UPDATE
+         (company_id, project_id, week_ending, signer_user_id, signer_name, signer_title, signature_data, compliance_text, ip_address, report_hash, project_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT ${conflictTarget} DO UPDATE
          SET signer_user_id = EXCLUDED.signer_user_id,
              signer_name    = EXCLUDED.signer_name,
              signer_title   = EXCLUDED.signer_title,
              signature_data = EXCLUDED.signature_data,
              compliance_text = EXCLUDED.compliance_text,
              ip_address     = EXCLUDED.ip_address,
+             report_hash    = EXCLUDED.report_hash,
+             project_name   = EXCLUDED.project_name,
              signed_at      = NOW()
-       RETURNING id, signer_user_id, signer_name, signer_title, compliance_text, signed_at`,
-      [req.user.company_id, projectId, week_ending, req.user.id, name, title, sig, DEFAULT_COMPLIANCE_TEXT, ip]
+       RETURNING id, signer_user_id, signer_name, signer_title, compliance_text, signed_at, report_hash, project_name`,
+      [req.user.company_id, projectId, week_ending, req.user.id, name, title, sig, DEFAULT_COMPLIANCE_TEXT, ip, reportHash, projectName]
     );
     await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signed', 'signature', rows[0].id, `${name} · ${week_ending}`, { project_id: projectId });
     // Preserve the replaced certification as its own audit record (full snapshot).
     if (prior.rowCount) {
       const p = prior.rows[0];
       await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signature_replaced', 'signature', rows[0].id, `${p.signer_name} · ${week_ending}`,
-        { project_id: projectId, replaced: { signer_name: p.signer_name, signer_title: p.signer_title, signature_data: p.signature_data, compliance_text: p.compliance_text, signed_at: p.signed_at } });
+        { project_id: projectId, replaced: { signer_name: p.signer_name, signer_title: p.signer_title, signature_data: p.signature_data, compliance_text: p.compliance_text, signed_at: p.signed_at, report_hash: p.report_hash || null } });
     }
-    res.json({ signature: rows[0] });
+    res.json({ signature: { ...rows[0], data_changed: false } });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

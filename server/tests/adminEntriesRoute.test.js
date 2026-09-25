@@ -81,6 +81,7 @@ describe('PATCH /admin/entries/:id/edit — optimistic lock', () => {
   test('accepts edit when client updated_at matches DB', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [FETCH_ROW] })                          // entry fetch
+      .mockResolvedValueOnce({ rows: [] })                                   // locked pay periods: none
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })            // UPDATE
       .mockResolvedValueOnce({ rows: [{ id: 42, worker_name: 'X', project_name: 'P' }] }); // joined return
 
@@ -130,6 +131,7 @@ describe('PATCH /admin/entries/:id/edit — optimistic lock', () => {
     // dual-write).
     pool.query
       .mockResolvedValueOnce({ rows: [FETCH_ROW] })                          // entry fetch
+      .mockResolvedValueOnce({ rows: [] })                                   // locked pay periods: none
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })            // UPDATE
       .mockResolvedValueOnce({ rows: [{ id: 42, worker_name: 'X', project_name: 'P' }] });
 
@@ -145,6 +147,7 @@ describe('PATCH /admin/entries/:id/edit — optimistic lock', () => {
     // normalize via .getTime() to the same millisecond value.
     pool.query
       .mockResolvedValueOnce({ rows: [FETCH_ROW] })
+      .mockResolvedValueOnce({ rows: [] })                                   // locked pay periods: none
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })
       .mockResolvedValueOnce({ rows: [{ id: 42, worker_name: 'X', project_name: 'P' }] });
 

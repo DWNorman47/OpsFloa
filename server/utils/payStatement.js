@@ -946,8 +946,12 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
  *     OR still active with a weekly-hours guarantee (owed a top-up with no time);
  *   - never worker_type 'owner' / 'unpaid';
  *   - there is no "salaried" flag, so role admin / super_admin only when they have
- *     their own rate (users.hourly_rate > 0): an owner-operator logging time for
- *     job cost is not put on payroll at the company default rate.
+ *     their own rate DURING THE RANGE (rates are effective-dated): a
+ *     worker_rate_history row with a rate > 0 in effect at some point in [$2,$3]
+ *     — effective on/before $3 and not superseded on/before $2. No history at all
+ *     (pre-0209 data) → the current users.hourly_rate. An owner-operator logging
+ *     time for job cost is not put on payroll at the company default rate, and a
+ *     re-run of an old range isn't changed by today's rate.
  * Params: $1 company_id, $2 from, $3 to. Rows carry what companyStatements needs.
  */
 const PAYROLL_WORKERS_SQL = `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule,
@@ -955,7 +959,15 @@ const PAYROLL_WORKERS_SQL = `SELECT u.id, u.full_name, u.invoice_name, u.hourly_
   FROM users u
  WHERE u.company_id = $1
    AND COALESCE(u.worker_type, 'employee') NOT IN ('owner', 'unpaid')
-   AND (u.role NOT IN ('admin', 'super_admin') OR COALESCE(u.hourly_rate, 0) > 0)
+   AND (u.role NOT IN ('admin', 'super_admin')
+        OR EXISTS (SELECT 1 FROM worker_rate_history h
+                    WHERE h.user_id = u.id AND h.company_id = $1 AND h.hourly_rate > 0
+                      AND h.effective_date <= $3::date
+                      AND NOT EXISTS (SELECT 1 FROM worker_rate_history h2
+                                       WHERE h2.user_id = u.id AND h2.company_id = $1
+                                         AND h2.effective_date > h.effective_date AND h2.effective_date <= $2::date))
+        OR (NOT EXISTS (SELECT 1 FROM worker_rate_history h3 WHERE h3.user_id = u.id AND h3.company_id = $1)
+            AND COALESCE(u.hourly_rate, 0) > 0))
    AND (EXISTS (SELECT 1 FROM time_entries te
                  WHERE te.user_id = u.id AND te.company_id = $1 AND te.status = 'approved'
                    AND te.work_date >= $2::date AND te.work_date <= $3::date)

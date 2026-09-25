@@ -8,7 +8,10 @@
  *
  *   Page 1 — Payroll table
  *     Row block per worker: name, SSN last-4, classification, daily hours
- *       (straight / OT sub-rows), weekly total, pay rate, gross, fringes.
+ *       (straight / OT sub-rows), weekly total, pay rate, gross (this project),
+ *       fringes, and — once per worker — gross for ALL work, deductions (FICA /
+ *       withholding / other / total) and net wages paid (29 CFR 5.5(a)(3)(i)).
+ *       Deductions and net come from the week's pay statement (all projects).
  *   Page 2 — Statement of Compliance
  *     Full WH-347 declaration text + signer name/title/date.
  */
@@ -25,6 +28,19 @@ function fmtHours(h) {
 }
 function fmtMoney(n) {
   return n == null ? '' : n.toFixed(2);
+}
+// Worker-level WH-347 cells (gross for all work, deductions, net). Present on the
+// worker's FIRST classification row only (worker_summary); blank otherwise.
+export function wh347SummaryCells(w) {
+  const sm = w?.worker_summary;
+  const m = n => (n == null || !Number.isFinite(Number(n)) ? '' : Number(n).toFixed(2));
+  if (!sm) return { grossAll: '', fica: '', withholding: '', other: '', totalDed: '', net: '' };
+  const d = sm.deductions || {};
+  return {
+    grossAll: m(sm.gross_all_work),
+    fica: m(d.fica), withholding: m(d.withholding), other: m(d.other), totalDed: m(d.total),
+    net: m(sm.net_wages),
+  };
 }
 export function overtimeDisplayRate(worker) {
   const hours = Number(worker?.overtime_total);
@@ -64,6 +80,7 @@ const styles = StyleSheet.create({
   cellTotal: { width: 28, padding: 2, borderRightWidth: 0.7, borderColor: '#333', fontSize: 7, textAlign: 'center' },
   cellRate:  { width: 28, padding: 2, borderRightWidth: 0.7, borderColor: '#333', fontSize: 7, textAlign: 'right' },
   cellGross: { width: 40, padding: 2, borderRightWidth: 0.7, borderColor: '#333', fontSize: 7, textAlign: 'right' },
+  cellDed:   { width: 33, padding: 2, borderRightWidth: 0.7, borderColor: '#333', fontSize: 7, textAlign: 'right' },
   workerRow: { flexDirection: 'row', borderBottomWidth: 0.7, borderColor: '#333', backgroundColor: '#fff' },
   workerRowAlt: { flexDirection: 'row', borderBottomWidth: 0.7, borderColor: '#333', backgroundColor: '#f8fafc' },
   compliance: { marginTop: 24 },
@@ -120,7 +137,13 @@ export default function CertifiedPayrollPDF({ report, settings }) {
             {DAY_LABELS.map(l => <Text key={l} style={styles.cellDay}>{l}</Text>)}
             <Text style={styles.cellTotal}>TOTAL</Text>
             <Text style={styles.cellRate}>RATE</Text>
-            <Text style={styles.cellGross}>GROSS</Text>
+            <Text style={styles.cellGross}>GROSS THIS PROJECT</Text>
+            <Text style={styles.cellGross}>GROSS ALL WORK</Text>
+            <Text style={styles.cellDed}>FICA</Text>
+            <Text style={styles.cellDed}>W/H TAX</Text>
+            <Text style={styles.cellDed}>OTHER</Text>
+            <Text style={styles.cellDed}>TOTAL DED.</Text>
+            <Text style={styles.cellGross}>NET WAGES PAID</Text>
           </View>
 
           {/* Worker rows — straight / OT sub-rows */}
@@ -164,6 +187,12 @@ export default function CertifiedPayrollPDF({ report, settings }) {
           </View>
         </View>
 
+        {signature?.data_changed && (
+          <Text style={{ ...styles.complianceP, marginTop: 24, fontStyle: 'italic', color: '#b91c1c' }}>
+            The payroll data changed after this report was signed. Review it and sign again before filing.
+          </Text>
+        )}
+
         {!signature && (
           <Text style={{ ...styles.complianceP, marginTop: 24, fontStyle: 'italic', color: '#b91c1c' }}>
             Not yet signed. Sign the Statement of Compliance in OpsFloa before filing this report.
@@ -188,6 +217,8 @@ function WorkerBlock({ w, alt }) {
   if ((w.prevailing_total || 0) > 0) rows.push({ tag: 'S', days: w.prevailing_days || {}, total: w.prevailing_total, rate: w.prevailing_rate });
   if ((w.overtime_total || 0) > 0) rows.push({ tag: 'O', days: w.ot_days || {}, total: w.overtime_total, rate: overtimeDisplayRate(w) });
   if (rows.length === 0) rows.push({ tag: 'S', days: {}, total: 0, rate: w.rate });
+  const sum = wh347SummaryCells(w);
+  const money = v => (v ? `$${v}` : ' ');
   return (
     <>
       {rows.map((r, i) => (
@@ -209,6 +240,12 @@ function WorkerBlock({ w, alt }) {
           <Text style={styles.cellTotal}>{fmtHours(r.total)}</Text>
           <Text style={styles.cellRate}>${fmtMoney(r.rate)}</Text>
           <Text style={styles.cellGross}>{i === 0 ? `$${fmtMoney(w.gross_pay)}` : ' '}</Text>
+          <Text style={styles.cellGross}>{i === 0 ? money(sum.grossAll) : ' '}</Text>
+          <Text style={styles.cellDed}>{i === 0 ? money(sum.fica) : ' '}</Text>
+          <Text style={styles.cellDed}>{i === 0 ? money(sum.withholding) : ' '}</Text>
+          <Text style={styles.cellDed}>{i === 0 ? money(sum.other) : ' '}</Text>
+          <Text style={styles.cellDed}>{i === 0 ? money(sum.totalDed) : ' '}</Text>
+          <Text style={styles.cellGross}>{i === 0 ? money(sum.net) : ' '}</Text>
         </View>
       ))}
     </>

@@ -1,10 +1,10 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import ApprovalQueue from './ApprovalQueue';
 import api from '../api';
 
-vi.mock('../api', () => ({ default: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }));
+vi.mock('../api', () => ({ default: { get: vi.fn(), post: vi.fn(), patch: vi.fn() }, errorCodeMessage: vi.fn(() => null) }));
 vi.mock('../offlineDb', () => ({ getOrFetch: (_k, fn) => fn() }));
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: 'admin', language: 'English' } }) }));
 vi.mock('../hooks/useT', () => ({
@@ -45,5 +45,29 @@ describe('ApprovalQueue — late clock-out badge', () => {
     render(<ApprovalQueue />);
     await screen.findByText('Ana');
     expect(screen.queryByText(/aqLateClockOut/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ApprovalQueue — locked pay period', () => {
+  beforeEach(() => { api.get.mockReset(); api.post.mockReset(); });
+
+  test('an entry in a locked pay period is badged', async () => {
+    mockEntries([entry({ in_locked_period: true })]);
+    render(<ApprovalQueue />);
+    const badge = await screen.findByText(/approvalsLockedPeriodBadge/);
+    expect(badge).toHaveAttribute('title', 'approvalsLockedPeriodHint');
+  });
+
+  test('approve-all that skipped locked entries reloads the queue instead of dropping them', async () => {
+    mockEntries([entry({ in_locked_period: true }), entry({ id: 2, worker_name: 'Ben' })]);
+    api.post.mockResolvedValue({ data: { approved: 1, skipped_locked: 1 } });
+    render(<ApprovalQueue />);
+    await screen.findByText('Ana');
+    const pendingCalls = () => api.get.mock.calls.filter(c => c[0] === '/admin/entries/pending').length;
+    const before = pendingCalls();
+    fireEvent.click(screen.getByText('aqApproveAll'));
+    fireEvent.click(await screen.findByText('confirm'));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/admin/entries/approve-all'));
+    await waitFor(() => expect(pendingCalls()).toBeGreaterThan(before));
   });
 });

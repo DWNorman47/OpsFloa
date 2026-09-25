@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import api from '../api';
+import api, { errorCodeMessage } from '../api';
 import ModalShell from './ModalShell';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
@@ -22,6 +22,7 @@ export default function CertifiedPayrollSignature({
   onSigned,
   defaultName = '',
   defaultTitle = '',
+  reportHash = null,      // SHA-256 of the report the signer reviewed — the server refuses if the data moved
 }) {
   const t = useT();
   const { user } = useAuth();
@@ -56,11 +57,12 @@ export default function CertifiedPayrollSignature({
         signer_name: name.trim(),
         signer_title: title.trim(),
         signature_data: signature.trim(),
+        ...(reportHash ? { report_hash: reportHash } : {}),
       });
       onSigned?.(r.data.signature);
       onClose?.();
     } catch (err) {
-      setError(err.response?.data?.error || t.cpsErrSave);
+      setError(errorCodeMessage(err) || err.response?.data?.error || t.cpsErrSave);
     } finally {
       setSaving(false);
     }

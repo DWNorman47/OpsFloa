@@ -236,10 +236,15 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
             <CertifiedPayrollSignature
               projectId={data.project_id || null}
               weekEnding={data.week_end}
+              reportHash={data.report_hash || null}
               defaultName={user?.full_name || ''}
               onClose={() => setShowSignModal(false)}
               onSigned={signature => setData(current => current ? { ...current, signature } : current)}
             />
+          )}
+
+          {data.signature?.data_changed && (
+            <p role="alert" style={styles.error}>{t.cpDataChangedSinceSigned}</p>
           )}
 
           {data.workers.length === 0 ? (

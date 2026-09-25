@@ -308,3 +308,49 @@ describe('PATCH /admin/workers/:id — rate + rejected role change', () => {
     expect(sqlCalls(/^UPDATE users/)).toHaveLength(0);
   });
 });
+
+describe('PATCH /admin/workers/:id/role — worker-tier perms added later do not "outrank"', () => {
+  // A custom admin role created before manage_haul_tickets / daily_checklist_* existed
+  // lacks them; every built-in Worker has them. Only admin-tier / owner-only perms
+  // count for the outranks + escalation subset tests.
+  const LATER_WORKER_PERMS = ['manage_haul_tickets', 'daily_checklist_start_day', 'daily_checklist_check_items'];
+  const OLD_CUSTOM_ADMIN = new Set([...ADMIN_PERMS].filter(p => !LATER_WORKER_PERMS.includes(p)));
+
+  test('can move a Worker to a custom Foreman role', async () => {
+    mockPerms = OLD_CUSTOM_ADMIN;
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 400, name: 'Foreman', parent_role: 'worker', is_builtin: false }] })
+      .mockResolvedValueOnce({ rows: [{ permission: 'clock_self' }, { permission: 'view_projects' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, current_legacy_role: 'worker', current_role_id: 75, current_role_name: 'Worker', current_role_builtin: true }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });
+    const res = await request(makeApp()).patch('/api/admin/workers/9/role').send({ role_id: 400 });
+    expect(res.status).toBe(200);
+    expect(sqlCalls(/^UPDATE users SET role_id/)).toHaveLength(1);
+  });
+
+  test('can assign the built-in Worker role (its later-added worker perms are not escalation)', async () => {
+    mockPerms = OLD_CUSTOM_ADMIN;
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, name: 'Worker', parent_role: 'worker', is_builtin: true }] })
+      .mockResolvedValueOnce({ rows: BUILTIN_ROLES.worker.permissions.map(permission => ({ permission })) })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, current_legacy_role: 'worker', current_role_id: 400, current_role_name: 'Foreman', current_role_builtin: false }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });
+    const res = await request(makeApp()).patch('/api/admin/workers/9/role').send({ role_id: 50 });
+    expect(res.status).toBe(200);
+  });
+
+  test('an admin-tier perm the caller lacks still outranks', async () => {
+    mockPerms = new Set([...OLD_CUSTOM_ADMIN].filter(p => p !== 'manage_pay_periods'));
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 400, name: 'Foreman', parent_role: 'worker', is_builtin: false }] })
+      .mockResolvedValueOnce({ rows: [{ permission: 'clock_self' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 4, current_legacy_role: 'admin', current_role_id: 100, current_role_name: 'Admin', current_role_builtin: true }] });
+    // target resolves to the worker set by default — give it the admin set:
+    const perms = require('../permissions');
+    perms.getUserPermissions.mockImplementationOnce(async () => mockPerms)                      // caller
+      .mockImplementationOnce(async () => new Set(BUILTIN_ROLES.admin.permissions));            // target
+    const res = await request(makeApp()).patch('/api/admin/workers/4/role').send({ role_id: 400 });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('owner_protected');
+  });
+});

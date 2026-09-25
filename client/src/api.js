@@ -163,7 +163,24 @@ const PRELOAD_FALLBACK = {
   apiConflict: 'Conflict — please refresh and try again.',
   apiRequestFailed: 'Request failed ({status}).',
   apiDemoEmailSuppressed: 'This is a demo account — the email was not sent. (It would have been delivered on a live account.)',
+  apiPeriodLocked: 'That date is in a locked pay period. An admin with pay-period access must unlock it first.',
+  apiEntryApproved: 'This entry is already approved. Unapprove it first.',
+  apiReportChanged: 'The payroll data changed since you opened this report. Regenerate it, review it, then sign.',
+  apiShiftInLockedPeriod: 'The shift was saved, but its date is in a locked pay period. An admin must unlock the period before it can be approved.',
 };
+
+// Server error codes with a translated message (the server's `error` text is English).
+const ERROR_CODE_KEYS = {
+  period_locked: 'apiPeriodLocked',
+  entry_approved: 'apiEntryApproved',
+  report_changed: 'apiReportChanged',
+};
+
+/** Translated message for a known server error `code`, else null (exported for callers + tests). */
+export function errorCodeMessage(err) {
+  const key = ERROR_CODE_KEYS[err?.response?.data?.code];
+  return key ? currentT()[key] || null : null;
+}
 
 // Static tool-apps (e.g. Plan Room) share this origin's
 // localStorage but not the Vite build env, so they can't see VITE_API_URL.
@@ -256,7 +273,8 @@ export function responseErrorInterceptor(err) {
     // the error themselves should pass { suppressToast: true } to avoid
     // double-notifying.
     const t = currentT();
-    const msg = err.response?.data?.error
+    const msg = errorCodeMessage(err)
+      || err.response?.data?.error
       || (status === 403 ? t.apiForbidden :
           status === 404 ? t.apiNotFound :
           status === 409 ? t.apiConflict :
@@ -286,6 +304,11 @@ api.interceptors.response.use(
     // have been sent for this action. Let the user know it didn't go out.
     if (r.data && r.data.demoEmailSuppressed) {
       throttledToast('demo-email', currentT().apiDemoEmailSuppressed, 'warning');
+    }
+    // Clock-out / switch / mark-day into a LOCKED pay period: the shift is saved but
+    // flagged (the server never drops it) — tell the worker it needs an admin.
+    if (r.data && (r.data.locked_period || r.data.closed_entry?.locked_period)) {
+      throttledToast('locked-period', currentT().apiShiftInLockedPeriod, 'warning');
     }
     return r;
   },

@@ -84,6 +84,7 @@ describe('POST /api/clock/out — recover a shift whose offline clock-in never s
         .mockResolvedValueOnce({})                                    // advisory lock
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })             // dedup: no existing entry
         .mockResolvedValueOnce({})                                    // DELETE any stray active_clock
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })             // locked pay periods: none
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 99, start_ts: '2026-08-05T14:00:00.000Z' }] }) // INSERT time_entries
         .mockResolvedValueOnce({}),                                   // COMMIT
       release: jest.fn(),
