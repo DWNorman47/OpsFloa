@@ -6,13 +6,36 @@ import { useToast } from '../contexts/ToastContext';
 import { SkeletonList } from './Skeleton';
 import { langToLocale } from '../utils';
 import EmptyState from './EmptyState';
+import { useConfirm } from './ConfirmDialog';
 
 const TYPE_COLORS = { vacation: '#1d4ed8', sick: '#dc2626', personal: '#8b5cf6', other: '#6b7280' };
-const STATUS_COLORS = { pending: '#d97706', approved: '#059669', denied: '#ef4444' };
+const STATUS_COLORS = { pending: '#d97706', approved: '#059669', denied: '#ef4444', revoked: '#6b7280' };
 
 function fmt(d, locale = 'en-US') {
   if (!d) return '';
   return new Date(d.toString().substring(0, 10) + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Company working weekdays (0=Sun…6=Sat) from the Hours & Rules standard hours;
+// Mon–Fri when none — mirrors the server (hoursRules.workDaysFromPolicy).
+function workDaysFrom(settings) {
+  try {
+    const raw = settings?.hours_rules;
+    const pol = typeof raw === 'string' && raw ? JSON.parse(raw) : (raw || {});
+    const sh = pol?.standardHours || {};
+    const d = Object.keys(sh).filter(k => sh[k] && sh[k].start && sh[k].end).map(Number).filter(n => n >= 0 && n <= 6);
+    if (d.length) return new Set(d);
+  } catch { /* fall through */ }
+  return new Set([1, 2, 3, 4, 5]);
+}
+
+// Working days of [start,end] inside calendar year `year` (what the allowance counts).
+function workingDaysInYear(start, end, year, workDays) {
+  const lo = new Date(Math.max(Date.parse(start.substring(0, 10) + 'T00:00:00Z'), Date.UTC(year, 0, 1)));
+  const hi = new Date(Math.min(Date.parse(end.substring(0, 10) + 'T00:00:00Z'), Date.UTC(year, 11, 31)));
+  let n = 0;
+  for (let d = lo; d <= hi; d = new Date(d.getTime() + 86400000)) if (workDays.has(d.getUTCDay())) n++;
+  return n;
 }
 
 function days(start, end) {
@@ -33,6 +56,7 @@ export default function AdminTimeOff({ settings }) {
   const [reviewNote, setReviewNote] = useState({});
   const [acting, setActing] = useState(null);
   const [actError, setActError] = useState('');
+  const { confirm, dialog: confirmDialogEl } = useConfirm();
   // Per-employee sections default collapsed; track which are expanded.
   const [expanded, setExpanded] = useState(() => new Set());
   const toggleWorker = name => setExpanded(prev => {
@@ -43,15 +67,19 @@ export default function AdminTimeOff({ settings }) {
 
   const annualDays = settings?.pto_annual_days || 0;
 
-  // Compute used days per worker from approved requests in current year
+  // Used PTO per worker this year — approved VACATION only, working days only,
+  // any request overlapping the year (same rule as the server's /balance).
   const currentYear = new Date().getFullYear();
+  const workDays = workDaysFrom(settings);
+  const dayHours = parseFloat(settings?.regular_shift_hours) > 0 ? parseFloat(settings.regular_shift_hours) : 8;
   const usedByWorker = {};
   requests.forEach(r => {
-    if (r.status !== 'approved') return;
-    const year = new Date(r.start_date.toString().substring(0, 10) + 'T00:00:00').getFullYear();
-    if (year !== currentYear) return;
-    const d = days(r.start_date.toString(), r.end_date.toString());
-    usedByWorker[r.worker_name] = (usedByWorker[r.worker_name] || 0) + d;
+    if (r.status !== 'approved' || r.type !== 'vacation') return;
+    const s0 = r.start_date.toString().substring(0, 10), e0 = r.end_date.toString().substring(0, 10);
+    const d = (r.hours != null && s0 === e0)
+      ? (Number(s0.substring(0, 4)) === currentYear ? (+r.hours) / dayHours : 0)
+      : workingDaysInYear(s0, e0, currentYear, workDays);
+    usedByWorker[r.worker_name] = Math.round(((usedByWorker[r.worker_name] || 0) + d) * 100) / 100;
   });
 
   const load = (status) => {
@@ -66,15 +94,33 @@ export default function AdminTimeOff({ settings }) {
 
   useEffect(() => { load(filter); }, [filter]);
 
-  const act = async (id, action) => {
+  const act = async (id, action, extra = {}) => {
+    if (action === 'revoke' && !(reviewNote[id] || '').trim()) { setActError(t.timeOffRevokeReasonRequired); return; }
     setActing(id + action);
     try {
-      const r = await api.patch(`/time-off/${id}/${action}`, { review_note: reviewNote[id] || null });
-      setRequests(prev => prev.map(x => x.id === id ? r.data : x));
+      const body = action === 'revoke'
+        ? { reason: reviewNote[id].trim() }
+        : { review_note: reviewNote[id] || null, ...extra };
+      const r = await api.patch(`/time-off/${id}/${action}`, body);
+      setRequests(prev => prev.map(x => x.id === id ? { ...x, ...r.data } : x));
       setReviewNote(prev => { const n = { ...prev }; delete n[id]; return n; });
-      toast(action === 'approve' ? t.requestApproved : t.requestDenied, 'success');
+      toast(action === 'approve' ? t.requestApproved : action === 'revoke' ? t.timeOffRevokedToast : t.requestDenied, 'success');
     } catch (err) {
-      setActError(err.response?.data?.error || t.actionFailed);
+      const data = err.response?.data || {};
+      if (err.response?.status === 409 && data.code === 'exceeds_allowance' && action === 'approve' && !extra.confirm) {
+        setActing(null);
+        const ok = await confirm({
+          title: t.timeOffExceedsTitle,
+          body: t.timeOffExceedsBody
+            .replace('{request}', data.request_days).replace('{used}', data.used_days)
+            .replace('{annual}', data.annual_days).replace('{year}', data.year),
+          confirmLabel: t.timeOffApproveAnyway,
+          tone: 'danger',
+        });
+        if (ok) return act(id, action, { confirm: true });
+        return;
+      }
+      setActError(data.code === 'overlap' ? t.timeOffOverlapError : (data.error || t.actionFailed));
     } finally { setActing(null); }
   };
 
@@ -88,6 +134,7 @@ export default function AdminTimeOff({ settings }) {
     pending: t.filterPending,
     approved: t.filterApproved,
     denied: t.filterDenied,
+    revoked: t.timeOffStatusRevoked,
   };
   const FILTER_LABELS = {
     pending: t.filterPending,
@@ -213,8 +260,31 @@ export default function AdminTimeOff({ settings }) {
                       </div>
                     )}
 
+                    {r.status === 'approved' && (
+                      <div style={s.actionRow}>
+                        <input
+                          style={s.noteInput}
+                          placeholder={t.timeOffRevokeReasonPlaceholder}
+                          maxLength={500}
+                          value={reviewNote[r.id] || ''}
+                          onChange={e => setReviewNote(prev => ({ ...prev, [r.id]: e.target.value }))}
+                        />
+                        <button
+                          style={{ ...s.revokeBtn, ...(acting === r.id + 'revoke' ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                          disabled={acting === r.id + 'revoke'}
+                          onClick={() => { setActError(''); act(r.id, 'revoke'); }}
+                        >
+                          {acting === r.id + 'revoke' ? t.saving : t.timeOffRevoke}
+                        </button>
+                        {actError && <span style={s.actError}>{actError}</span>}
+                      </div>
+                    )}
+
                     {r.review_note && (
                       <p style={{ ...s.note, color: STATUS_COLORS[r.status] }}>{r.review_note}</p>
+                    )}
+                    {r.status === 'revoked' && r.revoke_reason && (
+                      <p style={{ ...s.note, color: STATUS_COLORS.revoked }}>{t.timeOffStatusRevoked}: {r.revoke_reason}</p>
                     )}
 
                     <div style={s.meta}>
@@ -231,6 +301,7 @@ export default function AdminTimeOff({ settings }) {
           })}
         </div>
       )}
+      {confirmDialogEl}
     </div>
   );
 }
@@ -262,6 +333,7 @@ const s = {
   actionRow: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' },
   noteInput: { flex: 1, minWidth: 160, padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13 },
   approveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' },
+  revokeBtn: { background: '#fff', color: '#b91c1c', border: '1px solid #fecaca', padding: '7px 16px', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' },
   denyBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' },
   actError: { fontSize: 12, color: '#ef4444' },
   meta: { fontSize: 12, color: '#6b7280', marginTop: 8 },

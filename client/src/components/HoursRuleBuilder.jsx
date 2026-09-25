@@ -655,7 +655,7 @@ export default function HoursRuleBuilder({ rules, onChange, title, help, highlig
                 </select>
               </Field>
               <Field label={t.hrSickValue}>
-                <input style={s.input} type="number" min="0.5" step="0.5" value={draft.sickHours} onChange={e => setD('sickHours', e.target.value)} />
+                <input style={s.input} type="number" min="0" step="0.5" value={draft.sickHours} onChange={e => setD('sickHours', e.target.value)} />
               </Field>
               <p style={s.hint}>{t.hrSickRuleHint}</p>
             </>

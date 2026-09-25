@@ -456,8 +456,10 @@ function parseRule(raw, index) {
       // worth on the days `when` selects (e.g. Mon+Thu = 9h, Fri = 8h). `applies`
       // picks which leave it values — sick, vacation, or both. Sourced from
       // approved time-off requests and paid as its own category — never worked hours.
+      // 0 is allowed: it's how an admin says "a leave day on these days is worth
+      // nothing" (e.g. weekends) — it overrides the Regular Shift default.
       const hours = Number(raw.hours);
-      if (!Number.isFinite(hours) || hours <= 0) return null;
+      if (raw.hours == null || raw.hours === '' || !Number.isFinite(hours) || hours < 0) return null;
       const applies = ['sick', 'vacation', 'both'].includes(raw.applies) ? raw.applies : 'both';
       return { ...base, hours, applies };
     }
@@ -721,10 +723,46 @@ function effectiveRulesForWorker(policy, roleId, userId = null) {
 // the internal type id; each rule's `applies` picks sick/vacation/both). Used to
 // price approved time-off into its own paid category. Empty when the policy is
 // off or has no such rules → no leave pay, behaviour unchanged.
+//
+// The returned array also carries a non-enumerable `workDays` (Set of weekdays
+// 0=Sun…6=Sat, see workDaysFromPolicy): the company working days, so
+// computeLeaveHours can fall back to the Regular Shift default ONLY on working
+// days without every caller having to thread the setting through.
+const DEFAULT_WORK_DAYS = Object.freeze([1, 2, 3, 4, 5]); // Mon–Fri
+
+/**
+ * Company working weekdays (0=Sun…6=Sat) from the policy's standard hours (the
+ * Hours & Rules "work days"); Mon–Fri when none are configured. Read even when the
+ * policy is disabled — the standard hours are still the company's work week.
+ */
+function workDaysFromPolicy(policy) {
+  const sh = policy && policy.standardHours;
+  const days = [];
+  if (sh && typeof sh === 'object') {
+    for (const [k, v] of Object.entries(sh)) {
+      const d = Number(k);
+      if (Number.isInteger(d) && d >= 0 && d <= 6 && v && v.start && v.end) days.push(d);
+    }
+  }
+  return new Set(days.length ? days : DEFAULT_WORK_DAYS);
+}
+
+/** Same, straight off a company `settings` object. */
+function workDaysFromSettings(settings) {
+  return workDaysFromPolicy(parsePolicy(settings && settings.hours_rules));
+}
+
+function withWorkDays(rules, workDays) {
+  const out = rules.slice();
+  Object.defineProperty(out, 'workDays', { value: workDays, enumerable: false });
+  return out;
+}
+
 function sickRulesFromSettings(settings, roleId = null, userId = null) {
   const p = parsePolicy(settings && settings.hours_rules);
-  if (!p.enabled) return [];
-  return effectiveRulesForWorker(p, roleId, userId).filter(r => r.type === 'sick_value');
+  const workDays = workDaysFromPolicy(p);
+  if (!p.enabled) return withWorkDays([], workDays);
+  return withWorkDays(effectiveRulesForWorker(p, roleId, userId).filter(r => r.type === 'sick_value'), workDays);
 }
 
 // Memoized Time Off Value rules — parse the policy once, cache per (role, user).
@@ -732,12 +770,13 @@ function sickRulesFromSettings(settings, roleId = null, userId = null) {
 function sickRulesByRoleFactory(settings) {
   const p = parsePolicy(settings && settings.hours_rules);
   const enabled = !!p.enabled;
+  const workDays = workDaysFromPolicy(p);
   const cache = new Map();
   return function sickRulesByRole(roleId = null, userId = null) {
-    if (!enabled) return [];
+    if (!enabled) return withWorkDays([], workDays);
     const key = `${roleId == null ? '_' : roleId}|${userId == null ? '_' : userId}`;
     if (cache.has(key)) return cache.get(key);
-    const rules = effectiveRulesForWorker(p, roleId, userId).filter(r => r.type === 'sick_value');
+    const rules = withWorkDays(effectiveRulesForWorker(p, roleId, userId).filter(r => r.type === 'sick_value'), workDays);
     cache.set(key, rules);
     return rules;
   };
@@ -1027,8 +1066,12 @@ function roundEdge(rawMin, expectedMin, cfg, edge) {
       return expectedMin;
     }
     // toward_worker: reward an early arrival by paying from the rounded-earlier
-    // grid; lateness is forgiven back to the expected start (never docked).
+    // grid. Lateness WITHIN the grace is forgiven back to the expected start;
+    // lateness beyond it is real — the actual punch is rounded (in the worker's
+    // favor, down to the interval), never snapped all the way back to the
+    // schedule (arriving at 12:00 on an 08:00 schedule is not paid from 08:00).
     if (late < 0) return expectedMin + floorTo(late, I);
+    if (late > G) return expectedMin + floorTo(late, I);
     return expectedMin;
   }
 
@@ -1039,6 +1082,12 @@ function roundEdge(rawMin, expectedMin, cfg, edge) {
     // interval boundary (the Honduran "30 min over ⇒ full extra hour"). Otherwise
     // paid end = expected end; a small overage isn't paid.
     if (over >= G && over > 0) return expectedMin + ceilTo(over, I);
+    // Leaving early WITHIN the grace counts as the scheduled end. Leaving early
+    // beyond it is a short day: round the actual punch up to the interval (the
+    // worker's favor) — never pay to the scheduled end for hours not worked
+    // (the Honduras preset used to pay a 07:00–11:00 punch as 07:00–16:00).
+    const earlyOut = -over;
+    if (earlyOut > G) return expectedMin - floorTo(earlyOut, I);
     return expectedMin;
   }
   // against_worker: leaving early by MORE than the grace docks down to the interval
@@ -1062,6 +1111,10 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
 
   const es = expected ? expected.startMin : null;
   let ee = expected ? expected.endMin : null;
+  // Overnight SCHEDULE (e.g. 22:00–06:00): its end is always next-day, whatever the
+  // punch looks like. A same-day punch (22:00–23:30) used to measure its clock-out
+  // against 06:00 of the SAME day, so an against-worker clock-out collapsed to 0h.
+  if (es != null && ee != null && ee < es) ee += 1440;
 
   // Overnight punch (end wall-clock before start = next day): carry the end as
   // extended minutes so rounding + the non-inversion clamp below don't collapse
@@ -1182,6 +1235,57 @@ function adjustFiredRuleIds(rules, edge, punchMin, anchorBase, dayStart = null) 
   return ids;
 }
 
+// Minutes of automatic break the auto_break rules expect for `workedHours` on the
+// clock (each rule fires unless its after_hours trigger isn't reached).
+function autoBreakMinutes(rules, workedHours) {
+  let expected = 0;
+  for (const r of rules) {
+    if (r.type !== 'auto_break') continue;
+    if (r.trigger.kind === 'after_hours' && workedHours < r.trigger.hours) continue;
+    expected += r.minutes;
+  }
+  return expected;
+}
+
+/**
+ * Auto-break for ONE worker-day made of several entries (a /switch-split day, a
+ * lunch clock-out/in). The expected break is computed from the DAY's total worked
+ * minutes — so an "after 6h" rule sees a 5h+5h day as 10h — and the day gets it
+ * once: max(expected, sum of logged breaks), never once per entry.
+ *
+ * Allocation: each entry keeps its own logged break; the shortfall (expected −
+ * logged total) goes to the entry with the most room left (worked − its break),
+ * spilling to the next-roomiest only if one entry can't absorb it. Deterministic
+ * (ties → earlier index).
+ *
+ * @param items [{ workedMin, loggedBreak }]  in entry order
+ * @param rules the day's rules (already date-filtered)
+ * @returns { breaks: number[] (per item), expectedBreak, loggedTotal, extra }
+ */
+function autoBreakForDay(items, rules) {
+  const logged = items.map(it => Number(it.loggedBreak) || 0);
+  const loggedTotal = logged.reduce((a, b) => a + b, 0);
+  const workedMin = items.reduce((a, it) => a + Math.max(0, it.workedMin || 0), 0);
+  const expectedBreak = autoBreakMinutes(rules, workedMin / 60);
+  const breaks = logged.slice();
+  let extra = Math.max(0, expectedBreak - loggedTotal);
+  const total = extra;
+  if (extra > 0) {
+    const order = items.map((it, i) => ({ i, room: Math.max(0, (it.workedMin || 0) - logged[i]) }))
+      .sort((a, b) => (b.room - a.room) || (a.i - b.i));
+    for (const o of order) {
+      if (extra <= 0) break;
+      const take = Math.min(extra, o.room);
+      breaks[o.i] += take;
+      extra -= take;
+    }
+    // Every entry full (break ≥ worked) — park the remainder on the roomiest one;
+    // entryDuration clamps a break larger than the span to 0h.
+    if (extra > 0 && order.length) breaks[order[0].i] += extra;
+  }
+  return { breaks, expectedBreak, loggedTotal, extra: total };
+}
+
 /**
  * Run the rule list against one already-rounded punch.
  *
@@ -1195,7 +1299,7 @@ function adjustFiredRuleIds(rules, edge, punchMin, anchorBase, dayStart = null) 
  *                         default) → no notes and identical behaviour/cost.
  * @returns {{startMin, endMin, breakMin}}
  */
-function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, trace = null) {
+function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, trace = null, opts = null) {
   // The punch as it arrived. Rung thresholds are ALWAYS judged against this,
   // never against the clipped value — an End Time rule at 5:00 would otherwise
   // pull every punch back to 5:00 and no rung could ever fire.
@@ -1251,8 +1355,9 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // requires the rule (see validatePolicy), so this only catches a policy
   // written straight into the DB.
   if (baseEnd == null && expected) {
-    // Match the punch's extended frame for an overnight expected shift.
-    baseEnd = (overnight && expected.endMin != null && expected.startMin != null && expected.endMin < expected.startMin)
+    // An overnight expected shift's end is always next-day (extended frame) — also
+    // for a same-day punch on that shift, or the end would sit before the punch.
+    baseEnd = (expected.endMin != null && expected.startMin != null && expected.endMin < expected.startMin)
       ? expected.endMin + 1440 : expected.endMin;
   }
   if (baseStart == null && expected) baseStart = expected.startMin;
@@ -1320,14 +1425,14 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // is not knowable. It gives the right answer anyway — two of three expected
   // 30-min breaks logged is 60 against 90 expected, so max() supplies the
   // missing 30 without needing to count anything.
+  //
+  // opts.skipAutoBreak: the batch path (roundEntriesForPay) evaluates auto_break
+  // once per WORKER-DAY across all that day's entries (autoBreakForDay) instead,
+  // so a /switch-split day gets one break, judged on the day's total hours. Then
+  // this returns the logged break untouched.
   const workedHours = (e - s) / 60;
-  let expectedBreak = 0;
-  for (const r of rules) {
-    if (r.type !== 'auto_break') continue;
-    if (r.trigger.kind === 'after_hours' && workedHours < r.trigger.hours) continue;
-    expectedBreak += r.minutes;
-  }
   const loggedBreak = Number(loggedBreakMin) || 0;
+  const expectedBreak = (opts && opts.skipAutoBreak) ? 0 : autoBreakMinutes(rules, workedHours);
   const breakMin = Math.max(expectedBreak, loggedBreak);
 
   if (trace) {
@@ -1378,8 +1483,10 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   // Whether to surface the original punch alongside the paid time. When a company
   // opts for "paid only", we still round but don't expose the raw punch.
   const showRaw = policy.display?.showActualAndPaid !== false;
-  return entries.map(e => {
-    if (!e.start_time || !e.end_time) return e;
+
+  // Pass 1 — per entry: rounding + clip/adjust (auto_break deferred to the day).
+  const staged = entries.map(e => {
+    if (!e.start_time || !e.end_time) return null;
     // pg returns a DATE as a JS Date (local midnight); the date-scoped helpers
     // below key off a 'YYYY-MM-DD' string. Normalize once, locally — don't mutate
     // e.work_date, so a caller still holding the row sees it unchanged.
@@ -1411,14 +1518,57 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     const { start, end } = applyRounding(e.start_time, e.end_time, expected, { clockIn: cfgIn, clockOut: cfgOut });
     let finalStart = start;
     let finalEnd = end;
-    let breakMin = e.break_minutes;
+    let workedMin = null;
 
     const trace = explain ? [] : null;
+    const hasBreakRule = dayRules.some(r => r.type === 'auto_break');
     if (dayRules.length) {
-      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules, expected, trace);
+      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules, expected, trace, { skipAutoBreak: true });
       finalStart = toHHMMSS(out.startMin);
       finalEnd = toHHMMSS(out.endMin);
-      breakMin = out.breakMin;
+      workedMin = out.endMin - out.startMin;
+    }
+    return {
+      start, end, finalStart, finalEnd, trace, roundRuleIn, roundRuleOut,
+      dayRules: hasBreakRule ? dayRules : null,
+      dayKey: hasBreakRule ? `${e.user_id}|${dateStr}` : null,
+      workedMin,
+    };
+  });
+
+  // Pass 2 — auto_break once per WORKER-DAY (the day's total hours decide the
+  // trigger; the break is allocated across the day's entries, see autoBreakForDay).
+  const breakByIndex = new Map();
+  const byDay = new Map();
+  staged.forEach((st, i) => {
+    if (!st || !st.dayKey) return;
+    if (!byDay.has(st.dayKey)) byDay.set(st.dayKey, []);
+    byDay.get(st.dayKey).push(i);
+  });
+  for (const idxs of byDay.values()) {
+    const rulesForDay = staged[idxs[0]].dayRules;
+    const r = autoBreakForDay(idxs.map(i => ({ workedMin: staged[i].workedMin, loggedBreak: entries[i].break_minutes })), rulesForDay);
+    idxs.forEach((i, k) => breakByIndex.set(i, r.breaks[k]));
+    if (r.extra > 0 && explain) {
+      const workedHours = idxs.reduce((a, i) => a + Math.max(0, staged[i].workedMin || 0), 0) / 60;
+      const ruleIds = rulesForDay.filter(x => x.type === 'auto_break' && !(x.trigger.kind === 'after_hours' && workedHours < x.trigger.hours)).map(x => x.id);
+      idxs.forEach((i, k) => {
+        const logged = Number(entries[i].break_minutes) || 0;
+        if (r.breaks[k] > logged && staged[i].trace) staged[i].trace.push({ code: 'auto_break', breakMin: r.breaks[k], addedMin: r.breaks[k] - logged, ruleIds });
+      });
+    }
+  }
+
+  return entries.map((e, i) => {
+    const st = staged[i];
+    if (!st) return e;
+    const { start, end, finalStart, finalEnd, trace, roundRuleIn, roundRuleOut } = st;
+    let breakMin = e.break_minutes;
+    if (breakByIndex.has(i)) {
+      const b = breakByIndex.get(i);
+      // Only a real change moves the value (keeps an untouched entry byte-identical,
+      // e.g. a null break_minutes stays null).
+      if (b !== (Number(e.break_minutes) || 0)) breakMin = b;
     }
 
     const breakChanged = breakMin !== e.break_minutes;
@@ -1476,6 +1626,10 @@ module.exports = {
   effectiveRulesForWorker,
   sickRulesFromSettings,
   sickRulesByRoleFactory,
+  workDaysFromPolicy,
+  workDaysFromSettings,
+  DEFAULT_WORK_DAYS,
+  autoBreakForDay,
   parseRoleRules,
   parseUserRules,
   migrateFixedSlots,

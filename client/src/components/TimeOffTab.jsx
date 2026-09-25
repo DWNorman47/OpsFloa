@@ -8,7 +8,7 @@ import { langToLocale } from '../utils';
 
 const TYPE_LABELS_EN = { vacation: 'Vacation', sick: 'Sick', personal: 'Personal', other: 'Other' };
 const TYPE_COLORS = { vacation: '#1d4ed8', sick: '#dc2626', personal: '#8b5cf6', other: '#6b7280' };
-const STATUS_COLORS = { pending: '#d97706', approved: '#059669', denied: '#ef4444' };
+const STATUS_COLORS = { pending: '#d97706', approved: '#059669', denied: '#ef4444', revoked: '#6b7280' };
 
 function fmt(d, locale = 'en-US') {
   if (!d) return '';
@@ -69,7 +69,7 @@ export default function TimeOffTab() {
       setShowForm(false);
       toast(t.requestSubmitted, 'success');
     } catch (err) {
-      setError(err.response?.data?.error || t.failedSubmitRequest);
+      setError(err.response?.data?.code === 'overlap' ? t.timeOffOverlapMine : (err.response?.data?.error || t.failedSubmitRequest));
     } finally { setSaving(false); }
   };
 
@@ -160,7 +160,7 @@ export default function TimeOffTab() {
                   {TYPE_LABELS[r.type] || r.type}
                 </span>
                 <span style={{ ...s.statusBadge, color: STATUS_COLORS[r.status] || '#6b7280' }}>
-                  {({ pending: t.pending, approved: t.approved, denied: t.filterDenied }[r.status] || r.status)}
+                  {({ pending: t.pending, approved: t.approved, denied: t.filterDenied, revoked: t.timeOffStatusRevoked }[r.status] || r.status)}
                 </span>
               </div>
               <div style={s.dates}>
@@ -173,6 +173,11 @@ export default function TimeOffTab() {
               {r.review_note && (
                 <p style={{ ...s.note, color: STATUS_COLORS[r.status] || '#6b7280' }}>
                   {t.adminNotePrefix}{r.review_note}
+                </p>
+              )}
+              {r.status === 'revoked' && r.revoke_reason && (
+                <p style={{ ...s.note, color: STATUS_COLORS.revoked }}>
+                  {t.adminNotePrefix}{r.revoke_reason}
                 </p>
               )}
               <div style={s.meta}>

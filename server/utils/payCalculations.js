@@ -226,17 +226,28 @@ function shiftHoursByDate(shifts) {
  * APPROVED sick/vacation request:
  *   - `hours` set (a partial day) → pay exactly that many hours;
  *   - otherwise (a full day) each day is worth, in order: the worker's SCHEDULED
- *     shift hours that day → the weekday leave-value rule → the company Regular
- *     Shift default. Days are clipped to [from,to] and de-duped per type.
+ *     shift hours that day → the Time Off Value rule matching the day (0 allowed —
+ *     an explicit "worth nothing") → the company Regular Shift default, but ONLY
+ *     on a company working day (weekends / unscheduled days are worth 0).
+ *     Days are clipped to [from,to] and de-duped per type.
+ * Then each DAY's total leave (sick + vacation, full + partial) is capped at that
+ * day's value: overlapping requests (sick + vacation, or a full day plus
+ * partials) never pay more than one day. Full days fill the cap first, then
+ * partials, in request order. A partial on a day worth 0 (unscheduled, non-working)
+ * still pays as logged, but only the largest one (no stacking).
  * Returns { sick, vacation } totals; no requests / no range → { 0, 0 }.
  *
  * @param requests       [{ type:'sick'|'vacation', hours:number|null, start_date, end_date }]
  * @param shiftsByDate   Map(YYYY-MM-DD → scheduled hours) from shiftHoursByDate
  * @param leaveRules     the Time Off Value rules; each carries `applies`
- *                       ('sick' | 'vacation' | 'both') selecting which leave it values
+ *                       ('sick' | 'vacation' | 'both') selecting which leave it values.
+ *                       sickRulesFromSettings attaches the company working days as a
+ *                       non-enumerable `workDays` Set, read when opts.workDays is absent.
  * @param regularShiftHours  company Regular Shift default (last-resort hours)
+ * @param opts           { workDays?: Set|number[] } weekdays (0=Sun…6=Sat) that are
+ *                       working days; default leaveRules.workDays, else Mon–Fri.
  */
-function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
+function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null, opts = null) {
   // `leaveByDate` maps every YMD → paid-leave hours that day (sick + vacation),
   // always and cheaply, so a no-clock-in daily guarantee only tops the day UP TO its
   // floor counting the leave already paid — never double-paying it. See computeOT.
@@ -254,17 +265,27 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
   const rules = Array.isArray(leaveRules) ? leaveRules : [];
   const def = parseFloat(regularShiftHours) || 0;
+  const wdSrc = (opts && opts.workDays) || (leaveRules && leaveRules.workDays) || [1, 2, 3, 4, 5];
+  const workDays = wdSrc instanceof Set ? wdSrc : new Set(Array.from(wdSrc, Number));
   const seen = { sick: new Set(), vacation: new Set() }; // full-day de-dup, per type
   const ruleAppliesTo = (r, type) => { const a = r.applies || 'both'; return a === 'both' || a === type; };
   // How a full day is valued, plus WHY (for the explain trace).
   const dayValue = (dk, type) => {
     const sched = (shiftsByDate && shiftsByDate.get(dk)) || 0;
     if (sched > 0) return { hours: sched, source: 'schedule' };            // 1) scheduled shift hours
-    let best = 0, bestRule = null;
-    for (const r of rules) if (ruleAppliesTo(r, type) && ruleMatchesDate(r, dk)) { const h = parseFloat(r.hours) || 0; if (h > best) { best = h; bestRule = r.id; } }
-    if (best > 0) return { hours: best, source: 'rule', ruleId: bestRule };  // 2) Time Off Value rule
+    let best = null, bestRule = null;
+    for (const r of rules) {
+      if (!ruleAppliesTo(r, type) || !ruleMatchesDate(r, dk)) continue;
+      const h = Math.max(0, parseFloat(r.hours) || 0);
+      if (best == null || h > best) { best = h; bestRule = r.id; }
+    }
+    if (best != null) return { hours: best, source: 'rule', ruleId: bestRule }; // 2) Time Off Value rule (0 allowed)
+    if (!workDays.has(weekdayOfDate(dk))) return { hours: 0, source: 'non_working' }; // weekend / day off
     return { hours: def, source: 'default' };                               // 3) Regular Shift default
   };
+  // Collect every contribution first, then cap per day.
+  const full = [];     // { dk, type, hours, source, ruleId }
+  const partial = [];  // { dk, type, hours }
   for (const req of requests || []) {
     if (!req) continue;
     const type = req.type === 'vacation' ? 'vacation' : 'sick';
@@ -275,10 +296,8 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       // periods (this loader runs once per period for per-worker pay stubs).
       const anchor = req.start_date != null ? ymd(req.start_date) : null;
       if (anchor != null && (anchor < f || anchor > t)) continue;
-      const h = parseFloat(req.hours) || 0;
-      totals[type] += h;
-      addLeaveDay(anchor, h, type);
-      if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
+      const h = Math.max(0, parseFloat(req.hours) || 0);
+      partial.push({ dk: anchor, type, hours: h });
       continue;
     }
     if (req.start_date == null || req.end_date == null) continue;
@@ -287,11 +306,42 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       if (seen[type].has(dk)) continue;                    // dedup overlapping requests
       seen[type].add(dk);
       const v = dayValue(dk, type);
-      totals[type] += v.hours;
-      addLeaveDay(dk, v.hours, type);
-      if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
+      full.push({ dk, type, hours: v.hours, source: v.source, ruleId: v.ruleId });
     }
   }
+  // Per-day cap = the day's full-day value (the larger across the leave types
+  // present that day). A day worth 0 lets only its single largest partial through.
+  const capByDay = new Map();
+  const noteCap = (dk, type) => {
+    if (dk == null) return;
+    const v = dayValue(dk, type).hours;
+    const cur = capByDay.get(dk);
+    if (cur == null || v > cur) capByDay.set(dk, v);
+  };
+  for (const c of full) noteCap(c.dk, c.type);
+  for (const c of partial) noteCap(c.dk, c.type);
+  const maxPartial = new Map();
+  for (const c of partial) if (c.dk != null) maxPartial.set(c.dk, Math.max(maxPartial.get(c.dk) || 0, c.hours));
+  const used = new Map();
+  const take = (dk, want) => {
+    if (dk == null) return want;
+    let cap = capByDay.get(dk) || 0;
+    if (cap <= 0) cap = maxPartial.get(dk) || 0;
+    const u = used.get(dk) || 0;
+    const got = Math.max(0, Math.min(want, cap - u));
+    used.set(dk, u + got);
+    return got;
+  };
+  const book = (c, source) => {
+    const h = take(c.dk, c.hours);
+    totals[c.type] += h;
+    addLeaveDay(c.dk, h, c.type);
+    if (detail && h > 0) {
+      detail.push({ type: c.type, date: c.dk, hours: h, source, ...(c.ruleId ? { ruleId: c.ruleId } : {}), ...(h < c.hours ? { capped: true } : {}) });
+    }
+  };
+  for (const c of full) book(c, c.source);
+  for (const c of partial) book(c, 'partial');
   return totals;
 }
 

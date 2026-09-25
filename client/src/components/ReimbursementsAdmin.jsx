@@ -49,9 +49,12 @@ export function ReimbursementRow({ item, onUpdate, knownCategories = DEFAULT_CAT
       onUpdate(r.data);
       setExpanded(false);
     } catch (err) {
-      const msg = err.response?.status === 409
+      // 409 without a code = optimistic-lock conflict; with a code = a refused
+      // status change (invalid transition / in QuickBooks / locked period).
+      const data = err.response?.data || {};
+      const msg = err.response?.status === 409 && !data.code
         ? t.concurrentModification
-        : err.response?.data?.error || t.failedSave;
+        : data.error || t.failedSave;
       setError(msg);
     } finally {
       setSaving(false);
@@ -106,17 +109,17 @@ export function ReimbursementRow({ item, onUpdate, knownCategories = DEFAULT_CAT
           </div>
           {error && <div role="alert" style={s.error}>{error}</div>}
           <div style={s.actions}>
-            {item.status !== 'approved' && (
+            {item.status === 'pending' && (
               <button style={{ ...s.approveBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => act('approved')} disabled={saving}>
                 {saving ? t.saving : t.approveBtn}
               </button>
             )}
-            {item.status !== 'rejected' && (
+            {item.status === 'pending' && (
               <button style={{ ...s.rejectBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => act('rejected')} disabled={saving}>
                 {saving ? t.saving : t.rejectBtn}
               </button>
             )}
-            {item.status !== 'pending' && (
+            {(item.status === 'rejected' || (item.status === 'approved' && !item.qbo_purchase_id && !item.qbo_bill_id)) && (
               <button style={{ ...s.actionResetBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => act('pending')} disabled={saving}>
                 {t.resetPending}
               </button>

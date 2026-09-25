@@ -36,6 +36,59 @@ async function uploadBase64(dataUrl, folder = 'photos') {
   return { url: `${process.env.R2_PUBLIC_URL}/${key}`, sizeBytes: buffer.length };
 }
 
+// Expense receipts land on the PUBLIC R2 origin with the Content-Type we store, so
+// only these types are accepted (no text/html, image/svg+xml … which would render
+// as active content on our origin). Maps MIME → the key's extension.
+const RECEIPT_MIME_EXT = Object.freeze({
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'application/pdf': 'pdf',
+});
+
+/** MIME type of a base64 data URL, lowercased, or null. */
+function dataUrlMime(dataUrl) {
+  if (typeof dataUrl !== 'string') return null;
+  const m = dataUrl.match(/^data:([^;,]+)[;,]/);
+  return m ? m[1].trim().toLowerCase() : null;
+}
+
+/** True when `dataUrl` is a base64 data URL of an allow-listed receipt type. */
+function isAllowedReceiptDataUrl(dataUrl) {
+  if (typeof dataUrl !== 'string' || !/^data:[^;,]+;base64,/.test(dataUrl)) return false;
+  return Object.prototype.hasOwnProperty.call(RECEIPT_MIME_EXT, dataUrlMime(dataUrl));
+}
+
+/**
+ * Upload an expense receipt (base64 data URL) under a company-scoped key:
+ * `receipts/<companyId>/<uuid>.<ext>` (ext from the allow-list, never from the
+ * client). Throws a 400-style error (err.status = 400, err.code) for anything else,
+ * including a non-data URL — a receipt must be uploaded, not pointed at. Receipts
+ * stored before this under the flat `receipts/<uuid>.<ext>` keys stay readable:
+ * their public URLs are unchanged and deleteByUrl/keyFromPublicUrl accept them.
+ * Returns { url, sizeBytes, key }.
+ */
+async function uploadReceiptBase64(dataUrl, companyId) {
+  const bad = (msg, code) => Object.assign(new Error(msg), { status: 400, code });
+  if (!companyId || !/^[A-Za-z0-9-]{1,64}$/.test(String(companyId))) throw bad('Invalid company', 'invalid_company');
+  if (!isAllowedReceiptDataUrl(dataUrl)) throw bad('Receipt must be a JPEG, PNG, WebP, HEIC or PDF file', 'receipt_type_not_allowed');
+  const mimeType = dataUrlMime(dataUrl);
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const buffer = Buffer.from(b64, 'base64');
+  if (!buffer.length) throw bad('Receipt file is empty', 'receipt_empty');
+  const key = `receipts/${companyId}/${randomUUID()}.${RECEIPT_MIME_EXT[mimeType]}`;
+  await client.send(new PutObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: key,
+    Body: buffer,
+    ContentType: mimeType === 'image/jpg' ? 'image/jpeg' : mimeType,
+  }));
+  return { url: `${process.env.R2_PUBLIC_URL}/${key}`, sizeBytes: buffer.length, key };
+}
+
 /**
  * Generate a short-lived presigned PUT URL for direct browser→R2 uploads.
  * Returns { uploadUrl, publicUrl, key }.
@@ -158,4 +211,5 @@ module.exports = {
   uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl, getBytesByUrl,
   getObjectStreamByUrl, keyFromPublicUrl, listByPrefix, deleteByKey,
   safeKeyFromPublicUrl, keyBelongsTo,
+  RECEIPT_MIME_EXT, isAllowedReceiptDataUrl, uploadReceiptBase64,
 };

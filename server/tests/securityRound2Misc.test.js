@@ -113,6 +113,8 @@ describe('routes/timeOff emails', () => {
   test.each([['approve'], ['deny']])('%s: worker name + review note escaped', async (action) => {
     pool.query.mockImplementation(async (sql) => {
       if (/UPDATE time_off_requests/.test(sql)) return { rowCount: 1, rows: [{ id: 9, user_id: 5, start_date: '2026-10-01', end_date: '2026-10-02' }] };
+      // approve/deny first load the request (scope + overlap/allowance checks)
+      if (/SELECT \* FROM time_off_requests WHERE id/.test(sql)) return { rowCount: 1, rows: [{ id: 9, user_id: 5, type: 'sick', status: 'pending', start_date: '2026-10-01', end_date: '2026-10-02' }] };
       if (/SELECT email, full_name FROM users/.test(sql)) return { rows: [{ email: 'w@x.co', full_name: 'Wendy <script>' }] };
       return { rowCount: 0, rows: [] };
     });
