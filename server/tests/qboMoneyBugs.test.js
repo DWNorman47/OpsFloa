@@ -23,8 +23,18 @@ jest.mock('../middleware/auth', () => ({
   requirePerm: () => (_req, _res, next) => next(),
 }));
 
-// connect(): push-bills records each bill (stamps + ledger + outbox) in one transaction.
-jest.mock('../db', () => { const m = { query: jest.fn() }; m.connect = jest.fn(async () => ({ query: (...a) => m.query(...a), release: () => {} })); return m; });
+// connect(): the per-company bill lock (always granted here) and the transaction that
+// records each bill (stamps + ledger + outbox); transaction control isn't sent to m.query.
+jest.mock('../db', () => {
+  const m = { query: jest.fn() };
+  const tx = /^\s*(BEGIN|COMMIT|ROLLBACK|SET LOCAL)\b/;
+  m.connect = jest.fn(async () => ({
+    query: (sql, ...a) => (/pg_try_advisory_xact_lock/.test(String(sql)) ? Promise.resolve({ rows: [{ locked: true }] })
+      : tx.test(String(sql)) ? Promise.resolve({ rows: [] }) : m.query(sql, ...a)),
+    release: () => {},
+  }));
+  return m;
+});
 
 jest.mock('../services/qbo', () => {
   const actual = jest.requireActual('../services/qbo');
@@ -267,7 +277,11 @@ describe('bill idempotency keys', () => {
     const res = await request(makeApp()).post('/api/qbo/push-bills').send({ from: '2026-04-01', to: '2026-04-07' });
     expect(res.body.pushed).toEqual([]);
     expect(res.body.skipped).toHaveLength(1);
-    expect(writes.filter(w => /qbo_bill_id/.test(w.sql))).toHaveLength(0);
+    expect(writes.filter(w => /UPDATE (time_entries|reimbursements) SET qbo_bill_id/.test(w.sql))).toHaveLength(0);
+    // The bill EXISTS in QuickBooks: its outbox row is kept as 'mismatch' (with the
+    // returned id) for an admin to resolve — not deleted (0218).
+    expect(pool.query.mock.calls.some(c => /DELETE FROM qbo_bill_pushes/.test(String(c[0])))).toBe(false);
+    expect(writes.find(w => /status = 'mismatch'/.test(w.sql)).params[0]).toBe('B-OLD');
   });
 });
 

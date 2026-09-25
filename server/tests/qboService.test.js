@@ -65,6 +65,14 @@ describe('createBill exact line amounts', () => {
     const l = await post({ qty: 8, unitPrice: 45 });
     expect(l).toMatchObject({ Amount: 360, ItemBasedExpenseLineDetail: { Qty: 8, UnitPrice: 45 } });
   });
+
+  test('DocNumber + PrivateNote carry the request id so an unconfirmed bill can be found', async () => {
+    await qbo.createBill('c1', { vendorId: 'V', memo: 'OpsFloa bill · ref ops-bill-abc', docNumber: 'OF-0123456789abcdef01XYZ', requestId: 'ops-bill-abc',
+      lines: [{ type: 'item', itemId: 'I', qty: 1, unitPrice: 1 }] });
+    const body = axios.post.mock.calls[axios.post.mock.calls.length - 1][1];
+    expect(body.DocNumber).toBe('OF-0123456789abcdef01'); // QuickBooks caps DocNumber at 21
+    expect(body.PrivateNote).toContain('ops-bill-abc');
+  });
 });
 
 describe('timeActivityHours', () => {

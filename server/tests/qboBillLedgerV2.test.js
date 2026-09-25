@@ -85,6 +85,7 @@ function install(world) {
     if (/^SELECT key, value FROM settings WHERE company_id = \$1$/.test(s.trim())) return { rows: world.settings };
     if (/FROM time_entries te/.test(s) && /qbo_vendor_id/.test(s)) return { rows: clone(world.timeRows) };
     if (/FROM reimbursements r/.test(s)) return { rows: clone(world.reimb) };
+    if (/FROM users u/.test(s) && /qbo_vendor_id IS NOT NULL/.test(s)) return { rows: [] }; // leave/guarantee-only contractors
     if (/FROM time_off_requests/.test(s)) return { rows: world.leaveRequests.map(r => ({ user_id: 10, hours: null, ...r })) };
     if (/FROM shifts/.test(s)) return { rows: [] };
     if (/FROM worker_rate_history/.test(s)) return { rows: world.rateRows };
@@ -146,6 +147,8 @@ function install(world) {
     return {
       query: async (sql, params) => {
         const t = String(sql).trim();
+        if (/pg_try_advisory_xact_lock/.test(t)) return { rows: [{ locked: true }] }; // the per-company bill lock
+        if (/^SET LOCAL/.test(t)) return { rows: [] };
         if (t === 'BEGIN') { snap = clone({ timeRows: world.timeRows, ledger: world.ledger, pushes: world.pushes, reimb: world.reimb }); return { rows: [] }; }
         if (t === 'ROLLBACK') { Object.assign(world, snap); return { rows: [] }; }
         return handle(sql, params);

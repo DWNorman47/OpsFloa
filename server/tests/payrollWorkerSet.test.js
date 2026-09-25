@@ -84,7 +84,9 @@ test('the shared worker-set SQL: any active flag, approved time/leave, no owner/
   expect(s).not.toMatch(/u\.active = true AND u\.role = 'worker'/);
   expect(s).not.toMatch(/u\.role = 'worker'/);
   expect(s).toMatch(/NOT IN \('owner', 'unpaid'\)/);
-  expect(s).toMatch(/u\.role NOT IN \('admin', 'super_admin'\) OR COALESCE\(u\.hourly_rate, 0\) > 0/);
+  // Admins: a rate > 0 in effect during the range (rate history), not today's rate.
+  expect(s).toMatch(/u\.role NOT IN \('admin', 'super_admin'\)\s+OR EXISTS \(SELECT 1 FROM worker_rate_history h/);
+  expect(s).toMatch(/h\.hourly_rate > 0\s+AND h\.effective_date <= \$3::date/);
   expect(s).toMatch(/FROM time_entries te[\s\S]*te\.status = 'approved'/);
   expect(s).toMatch(/FROM time_off_requests r[\s\S]*r\.status = 'approved'/);
 });

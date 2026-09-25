@@ -271,7 +271,9 @@ async function createPurchase(companyId, { bankAccountId, expenseAccountId, vend
  *   | { type: 'account', accountId, amount,                 description, customerId?, classId? }
  * >
  */
-async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines, requestId }) {
+// docNumber (<= 21 chars) / memo carry the Intuit request id, so an admin can find
+// a bill whose outcome OpsFloa never saw (see POST /api/qbo/bill-outbox/:id/resolve).
+async function createBill(companyId, { vendorId, txnDate, dueDate, memo, docNumber, lines, requestId }) {
   const qboLines = lines.map(l => {
     if (l.type === 'item') {
       // Derive Amount from the ROUNDED qty/unitPrice we actually send — QBO recomputes the
@@ -323,7 +325,8 @@ async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines, 
     VendorRef: { value: String(vendorId) },
     TxnDate: txnDate || new Date().toLocaleDateString('en-CA'),
     ...(dueDate ? { DueDate: dueDate } : {}),
-    ...(memo ? { PrivateNote: memo } : {}),
+    ...(docNumber ? { DocNumber: String(docNumber).slice(0, 21) } : {}),
+    ...(memo ? { PrivateNote: String(memo).slice(0, 4000) } : {}),
     Line: qboLines,
   };
   const data = await qboPost(companyId, '/bill?minorversion=65', body, requestId);

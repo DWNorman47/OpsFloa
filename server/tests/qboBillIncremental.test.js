@@ -24,8 +24,18 @@ jest.mock('../middleware/auth', () => ({
   requireAdmin: (req, _res, next) => { req.user = mockUser; next(); },
   requirePerm: () => (_req, _res, next) => next(),
 }));
-// connect(): push-bills records each bill (stamps + ledger + outbox) in one transaction.
-jest.mock('../db', () => { const m = { query: jest.fn() }; m.connect = jest.fn(async () => ({ query: (...a) => m.query(...a), release: () => {} })); return m; });
+// connect(): the per-company bill lock (always granted here) and the transaction that
+// records each bill (stamps + ledger + outbox); transaction control isn't sent to m.query.
+jest.mock('../db', () => {
+  const m = { query: jest.fn() };
+  const tx = /^\s*(BEGIN|COMMIT|ROLLBACK|SET LOCAL)\b/;
+  m.connect = jest.fn(async () => ({
+    query: (sql, ...a) => (/pg_try_advisory_xact_lock/.test(String(sql)) ? Promise.resolve({ rows: [{ locked: true }] })
+      : tx.test(String(sql)) ? Promise.resolve({ rows: [] }) : m.query(sql, ...a)),
+    release: () => {},
+  }));
+  return m;
+});
 jest.mock('../services/qbo', () => {
   const actual = jest.requireActual('../services/qbo');
   return {
@@ -93,6 +103,7 @@ function installDb({ settings = OT_OFF, timeRows = [], leaveRequests = [], ledge
     if (/^SELECT key, value FROM settings WHERE company_id = \$1$/.test(s.trim())) return { rows: settings };
     if (/FROM time_entries te/.test(s) && /qbo_vendor_id/.test(s)) return { rows: timeRows.map(r => ({ ...r })) };
     if (/FROM reimbursements r/.test(s)) return { rows: [] };
+    if (/FROM users u/.test(s) && /qbo_vendor_id IS NOT NULL/.test(s)) return { rows: [] }; // leave/guarantee-only contractors
     if (/FROM time_off_requests/.test(s)) return { rows: leaveRequests.map(r => ({ user_id: 10, hours: null, ...r })) };
     if (/FROM shifts/.test(s)) return { rows: [] };
     if (/FROM qbo_bill_range_pay/.test(s)) return { rows: ledger.map(r => ({ ...r })) };

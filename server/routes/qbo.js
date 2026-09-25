@@ -7,7 +7,7 @@ const { requireAuth, requireAdmin, requirePerm } = require('../middleware/auth')
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
 const { USER_WORKER_TYPES } = require('../constants/userEnums');
-const { QBO_BILL_RANGE_PAY_KINDS } = require('../constants/qboEnums');
+const { QBO_BILL_RANGE_PAY_KINDS, QBO_BILL_PUSH_OPEN_STATUSES } = require('../constants/qboEnums');
 // Every punch this file bills or syncs is the PAID punch (hours-rules rounding),
 // and every labor dollar on a bill comes from the pay engine (buildPayStatement),
 // so OpsFloa's own pay surfaces and QuickBooks can't disagree about the same day.
@@ -819,7 +819,7 @@ router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), 
 // re-push re-bills the full current amounts.
 //
 // Cutover: pay billed BEFORE the ledger existed (entries stamped before 0211 was
-// applied — pre_ledger_bill) has no ledger rows. The first bill that meets such a
+// applied — time_entries.qbo_pre_ledger_bill, frozen once by 0218) has no ledger rows. The first bill that meets such a
 // day records the amount computed then as a 'baseline' (already billed) instead
 // of billing it again. Leave / guarantee / floors on a week that held no
 // pre-ledger bill still bill normally.
@@ -829,12 +829,19 @@ router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), 
 // + ledger rows + outbox 'posted' commit in ONE transaction after it. A push that
 // fails in between stays 'pending' and is replayed with the SAME requestid on the
 // next push (Intuit returns the bill it already has) and then finalized; that
-// worker isn't billed again until it is.
+// worker isn't billed again until it is. A failed REPLAY never drops the row (the
+// first send may have created the bill); a bill QuickBooks returns with another
+// total is kept as 'mismatch'. Both block the worker until a replay succeeds or an
+// admin resolves them (GET /bill-outbox, POST /bill-outbox/:id/resolve). Bills
+// carry their request id in PrivateNote + DocNumber so they can be found. Pushes,
+// credit records and resolves hold a per-company lock (withBillLock) — one at a
+// time; a later bill never reuses an earlier bill's request id (billRequestId).
 //
 // A bill that would net NEGATIVE (pay already billed was reduced) bills its
 // positive items and HOLDS the negative adjustments as credits (credit_cents):
-// they net against the worker's next positive bill, or an admin records a manual
-// vendor credit (POST /bill-credits/record).
+// they net against the worker's next positive bill whatever its range ("credit
+// applied" lines — so do billed worked days whose entries were since rejected), or
+// an admin records a manual vendor credit (POST /bill-credits/record).
 
 const toCents = n => Math.round((Number(n) || 0) * 100);
 const RANGE_LEVEL_KINDS = new Set(['weekly_guarantee', 'sick', 'vacation']);
@@ -917,20 +924,32 @@ function leaveBetween(days, a, b) {
   return out;
 }
 
-// What's already on a bill: Map('uid|kind|date' → { amountC, hours, status, creditC }).
+// What's already on a bill: Map('uid|kind|date' → { amountC, hours, status, creditC, orphan }).
+// Every row in [from,to], plus — at ANY date — the worker's rows carrying a held
+// credit and 'worked' days billed whose entries are no longer approved (`orphan`:
+// rejected / unapproved after billing). Those two are netted on the next bill
+// whatever its range (billLabor "carried credits"), instead of only when a later
+// push happens to cover that date.
 async function loadRangePayLedger(companyId, userIds, from, to) {
   const out = new Map();
   if (!userIds.length || !from || !to) return out;
+  const orphan = `(l.kind = 'worked' AND l.amount_cents <> 0 AND NOT EXISTS (
+                     SELECT 1 FROM time_entries te
+                      WHERE te.company_id = l.company_id AND te.user_id = l.user_id
+                        AND te.work_date = l.pay_date AND te.status = 'approved'))`;
   const r = await pool.query(
-    `SELECT user_id, kind, to_char(pay_date, 'YYYY-MM-DD') AS pay_date, amount_cents, hours, status, credit_cents
-       FROM qbo_bill_range_pay
-      WHERE company_id = $1 AND user_id = ANY($2::int[]) AND pay_date >= $3::date AND pay_date <= $4::date`,
+    `SELECT l.user_id, l.kind, to_char(l.pay_date, 'YYYY-MM-DD') AS pay_date, l.amount_cents, l.hours, l.status, l.credit_cents,
+            ${orphan} AS orphan
+       FROM qbo_bill_range_pay l
+      WHERE l.company_id = $1 AND l.user_id = ANY($2::int[])
+        AND ((l.pay_date >= $3::date AND l.pay_date <= $4::date) OR l.credit_cents <> 0 OR ${orphan})`,
     [companyId, userIds, from, to]
   );
   for (const row of r.rows || []) {
     out.set(`${row.user_id}|${row.kind}|${isoDate(row.pay_date)}`, {
       amountC: Number(row.amount_cents) || 0, hours: parseFloat(row.hours) || 0,
       status: row.status || 'billed', creditC: Number(row.credit_cents) || 0,
+      orphan: row.orphan === true,
     });
   }
   return out;
@@ -973,14 +992,21 @@ async function inTransaction(fn) {
 }
 
 // Record a bill QuickBooks holds: stamp its rows, write its ledger rows, mark the
-// outbox row posted — all or nothing.
+// outbox row posted — all or nothing. Stamping CLAIMS rows: only those no bill
+// holds yet (a forced re-push restamps its own), company-scoped.
 function finalizeBill(companyId, p, billId) {
   return inTransaction(async (db) => {
     if (p.timeIds.length) {
-      await db.query("UPDATE time_entries SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])", [billId, p.timeIds]);
+      await db.query(
+        "UPDATE time_entries SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[]) AND (qbo_bill_id IS NULL OR $3::boolean) AND company_id = $4",
+        [billId, p.timeIds, !!p.force, companyId]
+      );
     }
     if (p.reimbIds.length) {
-      await db.query("UPDATE reimbursements SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[])", [billId, p.reimbIds]);
+      await db.query(
+        "UPDATE reimbursements SET qbo_bill_id = $1, qbo_synced_at = NOW() WHERE id = ANY($2::int[]) AND (qbo_bill_id IS NULL OR $3::boolean) AND company_id = $4",
+        [billId, p.reimbIds, !!p.force, companyId]
+      );
     }
     await writeLedger(db, companyId, p.userId, p.ledger, billId);
     await db.query(
@@ -1001,39 +1027,53 @@ const qboOutcomeUnknown = err => {
 };
 const qboErrorText = err => err?.response?.data?.Fault?.Error?.[0]?.Detail || err?.message || 'QuickBooks error';
 
-// Replay every pending outbox bill with its own requestid, then finalize it.
-// → { reconciled: [...], blocked: Map(userId → reason) }
+// Outbox row → the shape finalizeBill takes.
+const outboxToPush = row => ({
+  userId: row.user_id, requestId: row.request_id, force: !!row.force,
+  timeIds: row.time_entry_ids || [], reimbIds: row.reimbursement_ids || [],
+  ledger: typeof row.ledger === 'string' ? JSON.parse(row.ledger) : (row.ledger || []),
+});
+
+const RESOLVE_HINT = 'Find it in QuickBooks (Bills — its memo / bill no. carries the reference) and resolve it: POST /api/qbo/bill-outbox/:id/resolve with {action:"confirm", qbo_bill_id} if QuickBooks has it, or {action:"discard"} if it does not.';
+
+// Replay every open outbox bill with its own requestid, then finalize it.
+// → { reconciled: [...], blocked: Map(userId → { reason, outboxId }) }
+//
+// A pending row is NEVER dropped here, whatever the replay's error: the first
+// send may have created the bill (that's why the row is pending), so a failure
+// now — not connected, expired auth, a 4xx on a since-deactivated vendor — says
+// nothing about whether QuickBooks has it. The row stays and blocks its worker
+// until a replay succeeds (Intuit's requestid dedupe hands back the bill) or an
+// admin resolves it. A 'mismatch' row (QuickBooks returned a bill with another
+// total) isn't replayed — only an admin can say which bill is right.
 async function reconcilePendingBills(companyId) {
   const reconciled = [];
   const blocked = new Map();
+  const block = (row, reason) => { if (!blocked.has(row.user_id)) blocked.set(row.user_id, { reason, outboxId: row.id }); };
   const r = await pool.query(
-    `SELECT user_id, request_id, bill, total_cents, time_entry_ids, reimbursement_ids, ledger
-       FROM qbo_bill_pushes WHERE company_id = $1 AND status = 'pending' ORDER BY id`,
-    [companyId]
+    `SELECT id, user_id, request_id, status, bill, total_cents, time_entry_ids, reimbursement_ids, ledger, force, qbo_bill_id
+       FROM qbo_bill_pushes WHERE company_id = $1 AND status = ANY($2::text[]) ORDER BY id`,
+    [companyId, QBO_BILL_PUSH_OPEN_STATUSES]
   );
   for (const row of r.rows || []) {
-    const p = {
-      userId: row.user_id, requestId: row.request_id,
-      timeIds: row.time_entry_ids || [], reimbIds: row.reimbursement_ids || [],
-      ledger: typeof row.ledger === 'string' ? JSON.parse(row.ledger) : (row.ledger || []),
-    };
-    const payload = typeof row.bill === 'string' ? JSON.parse(row.bill) : row.bill;
     const totalC = Number(row.total_cents) || 0;
+    if (row.status === 'mismatch') {
+      block(row, `QuickBooks returned bill ${row.qbo_bill_id || '?'} for an earlier bill of $${(totalC / 100).toFixed(2)} (reference ${row.request_id}) with a different total. This worker isn't billed again until it's resolved. ${RESOLVE_HINT}`);
+      continue;
+    }
+    if (blocked.has(row.user_id)) continue; // one open bill at a time per worker, oldest first
+    const p = outboxToPush(row);
+    const payload = typeof row.bill === 'string' ? JSON.parse(row.bill) : row.bill;
     let bill;
     try {
       bill = await qbo.createBill(companyId, { ...payload, requestId: p.requestId });
     } catch (err) {
-      if (!qboOutcomeUnknown(err)) {
-        // QuickBooks refused it → it never existed. Drop the outbox row; the
-        // content bills fresh below.
-        await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, p.requestId]).catch(() => {});
-        continue;
-      }
-      blocked.set(p.userId, `An earlier bill (request ${p.requestId}) couldn't be confirmed with QuickBooks yet: ${qboErrorText(err)}. It's retried on the next push; this worker isn't billed again until it is.`);
+      block(row, `An earlier bill (reference ${p.requestId}) couldn't be confirmed with QuickBooks yet: ${qboErrorText(err)}. It's retried on the next push; this worker isn't billed again until it is. If it keeps failing: ${RESOLVE_HINT}`);
       continue;
     }
     if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
-      blocked.set(p.userId, `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)} for an earlier pending bill of $${(totalC / 100).toFixed(2)} — check QuickBooks; the pending bill was left unconfirmed.`);
+      await markMismatch(companyId, p.requestId, bill.Id);
+      block(row, `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)} for an earlier bill of $${(totalC / 100).toFixed(2)} (reference ${p.requestId}). This worker isn't billed again until it's resolved. ${RESOLVE_HINT}`);
       continue;
     }
     const billId = bill?.Id || 'synced';
@@ -1042,29 +1082,62 @@ async function reconcilePendingBills(companyId) {
       reconciled.push({ user_id: p.userId, bill_id: billId, total: totalC / 100 });
     } catch (err) {
       logger.error({ err, billId, userId: p.userId }, 'push-bills: reconcile finalize failed');
-      blocked.set(p.userId, `Bill ${billId} is in QuickBooks but OpsFloa still couldn't record it — it's retried on the next push. Don't re-create it by hand.`);
+      block(row, `Bill ${billId} is in QuickBooks but OpsFloa still couldn't record it — it's retried on the next push. Don't re-create it by hand.`);
     }
   }
   return { reconciled, blocked };
 }
 
+// QuickBooks holds a bill for this request with another total: keep the row (the
+// bill exists) with the bill's id; an admin resolves it.
+async function markMismatch(companyId, requestId, billId) {
+  await pool.query(
+    "UPDATE qbo_bill_pushes SET status = 'mismatch', qbo_bill_id = $1, updated_at = NOW() WHERE company_id = $2 AND request_id = $3 AND status = 'pending'",
+    [billId || null, companyId, requestId]
+  );
+}
+
+// Per-company bill lock: push-bills, bill-credits/record and the outbox resolve
+// must never run concurrently (two pushes both billed the same entry; a credit
+// recorded mid-push was undone by the push's ledger write). A transaction-scoped
+// advisory lock held on a dedicated client for the whole run — session locks
+// don't survive Neon's transaction-mode pooler; a transaction pins the backend.
+// → { busy: true } when another run holds it; otherwise { value: fn() }.
+const QBO_BILL_LOCK_NS = 20218; // advisory-lock namespace (int4) for QuickBooks bills
+async function withBillLock(companyId, fn) {
+  const client = await pool.connect();
+  let broken = null;
+  try {
+    await client.query('BEGIN');
+    // A push can idle this transaction for minutes while QuickBooks answers.
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '30min'");
+    const r = await client.query('SELECT pg_try_advisory_xact_lock($1, hashtext($2)) AS locked', [QBO_BILL_LOCK_NS, String(companyId)]);
+    if (!(r && r.rows && r.rows[0] && r.rows[0].locked === true)) return { busy: true };
+    return { value: await fn() };
+  } finally {
+    // Ends the transaction → releases the lock (it wrote nothing).
+    try { await client.query('COMMIT'); } catch (err) { broken = err; }
+    client.release(broken || undefined);
+  }
+}
+const BILL_LOCK_BUSY = { error: 'A bill push is already running for this company. Try again when it finishes.', code: 'bill_push_running' };
+
 async function gatherBillData(companyId, { from, to, workerIds, force }, settings) {
   const ids = Array.isArray(workerIds) && workerIds.length ? workerIds : null;
   const span = billWeekSpan(from, to, settings.week_start);
-  const [timeRows, reimbRows] = await Promise.all([
+  const [timeRows, reimbRows, seedRows] = await Promise.all([
     pool.query(
       // work_date as 'YYYY-MM-DD' text: the rules engine keys on the string (a
       // Date silently no-ops date-scoped rules). Fetches the full weeks touching
       // the range — out-of-range rows are weekly-OT context only, never billed.
-      // pre_ledger_bill: stamped on a bill before the range-pay ledger existed
-      // (0211 applied) — see "Cutover" above.
+      // pre_ledger_bill: stamped on a bill before the range-pay ledger existed —
+      // the FROZEN flag 0218 computed once (qbo_synced_at is rewritten by other
+      // flows, so it can't be read here) — see "Cutover" above.
       `SELECT te.id, te.user_id, te.project_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date,
               te.start_time, te.end_time, te.notes, te.qbo_bill_id, te.qbo_activity_id, te.wage_type,
               te.break_minutes, te.mileage, te.overtime_hours_override,
               te.start_ts, te.end_ts, te.timezone,
-              (te.qbo_bill_id IS NOT NULL AND (te.qbo_synced_at IS NULL OR te.qbo_synced_at <
-                 COALESCE((SELECT applied_at FROM schema_migrations WHERE filename = '0211_qbo_bill_range_pay.sql'), 'infinity'::timestamp)))
-                AS pre_ledger_bill,
+              te.qbo_pre_ledger_bill AS pre_ledger_bill,
               u.full_name, u.qbo_vendor_id, u.hourly_rate, u.rate_type, u.worker_type, u.overtime_rule,
               u.role_id, u.guaranteed_weekly_hours,
               p.qbo_class_id, p.qbo_customer_id, p.name AS project_name, p.prevailing_wage_rate
@@ -1097,6 +1170,24 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
           AND u.qbo_vendor_id IS NOT NULL`,
       [companyId, from || null, to || null, ids]
     ),
+    // Contractors owed range pay with NO approved time in the span: approved
+    // leave in it, or active with a weekly guarantee (the same people payroll
+    // pays — payrollWorkers). Without this they got no bill at all.
+    span ? pool.query(
+      `SELECT u.id AS user_id, u.full_name, u.qbo_vendor_id, u.hourly_rate, u.rate_type, u.worker_type, u.overtime_rule,
+              u.role_id, u.guaranteed_weekly_hours
+         FROM users u
+        WHERE u.company_id = $1
+          AND u.qbo_vendor_id IS NOT NULL
+          AND u.worker_type <> 'unpaid'
+          AND ($4::int[] IS NULL OR u.id = ANY($4::int[]))
+          AND (EXISTS (SELECT 1 FROM time_off_requests r
+                        WHERE r.user_id = u.id AND r.company_id = $1 AND r.status = 'approved'
+                          AND r.type IN ('sick','vacation')
+                          AND r.start_date <= $3::date AND r.end_date >= $2::date)
+               OR (u.active = true AND COALESCE(u.guaranteed_weekly_hours, 0) > 0))`,
+      [companyId, span.from, span.to, ids]
+    ) : { rows: [] },
   ]);
 
   const roleById = {};
@@ -1110,7 +1201,9 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
   }
   // Effective-dated rates: a re-push after a raise must bill last month's hours at
   // last month's rate. One batched load for every worker / project on the bill.
-  const rateBook = paidRows.length ? await loadRateBookForEntries(companyId, paidRows) : null;
+  const seeds = ((seedRows && seedRows.rows) || []).filter(u => u && u.user_id != null);
+  const rateRows = [...paidRows, ...seeds.map(u => ({ user_id: u.user_id, project_id: null, work_date: span.to }))];
+  const rateBook = rateRows.length ? await loadRateBookForEntries(companyId, rateRows) : null;
 
   const byUser = new Map();
   const get = (uid, row) => {
@@ -1141,6 +1234,14 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     if (te.qbo_bill_id && !force) { g.billed.push(te); continue; }
     g.billable.push(te);
   }
+  for (const u of seeds) {
+    const g = get(u.user_id, u);
+    g.worker = g.worker || {
+      id: u.user_id, full_name: u.full_name, hourly_rate: u.hourly_rate, rate_type: u.rate_type || 'hourly',
+      overtime_rule: u.overtime_rule, role_id: u.role_id, worker_type: u.worker_type,
+      guaranteed_weekly_hours: u.guaranteed_weekly_hours || 0,
+    };
+  }
   for (const r of reimbRows.rows) {
     if (r.qbo_bill_id && !force) continue;
     const g = get(r.user_id, r);
@@ -1164,13 +1265,13 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
   ]);
 
   for (const g of byUser.values()) {
-    const opts = { settings, projectRateMap, rateBook, from, to, span, leaveDays, ledger, force };
+    const reimbC = g.reimbursements.reduce((s, r) => s + toCents(r.amount), 0);
+    const opts = { settings, projectRateMap, rateBook, from, to, span, leaveDays, ledger, force, otherC: reimbC };
     let L = g.worker ? billLabor(g, opts) : null;
     // A bill can't go negative: bill the positive items, hold the negative
     // adjustments as carried-forward credits.
-    const reimbC = g.reimbursements.reduce((s, r) => s + toCents(r.amount), 0);
     if (L && L.totalC + reimbC < 0) L = billLabor(g, { ...opts, hold: true });
-    g.labor = L && (g.billable.length || L.rangeLines.length || L.trueUpLines.length || L.ledgerWrites.length) ? L : null;
+    g.labor = L && (g.billable.length || L.rangeLines.length || L.trueUpLines.length || L.creditLines.length || L.ledgerWrites.length) ? L : null;
   }
   return Array.from(byUser.values()).filter(g => g.billable.length || g.reimbursements.length || g.labor);
 }
@@ -1196,7 +1297,7 @@ function splitCents(amountC, weights) {
  * every line === totalC. `hold`: negative ledger deltas are not billed — they're
  * written as held credits instead (the bill would otherwise net negative).
  */
-function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, span = null, leaveDays = null, ledger = new Map(), force = false, hold = false }) {
+function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, span = null, leaveDays = null, ledger = new Map(), force = false, hold = false, otherC = 0 }) {
   // The weekly guarantee is priced per week below, not in the worked statements.
   const worker = { ...g.worker, guaranteed_weekly_hours: 0 };
   const otConfig = otConfigFromSettings(settings, worker.role_id ?? null, worker.id);
@@ -1461,6 +1562,41 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
     });
   }
 
+  // ── Carried credits: the worker's ledger rows OUTSIDE this bill's scope that
+  // owe money back — a held credit (credit_cents), or a billed worked day whose
+  // entries are no longer approved (rejected / unapproved after billing: current
+  // pay 0). Netted on this bill as explicit "credit applied" lines, oldest first,
+  // as far as the bill stays >= 0 (otherC = the bill's other money, e.g.
+  // reimbursements); the rest stays held. Before, they only netted when a later
+  // push happened to cover that date.
+  const creditLines = [];
+  if (!force) {
+    let room = workedDays.reduce((s, w) => s + w.newPart + w.trueUp, 0) + rangeLines.reduce((s, l) => s + l.amountC, 0) + (otherC || 0);
+    const carried = [];
+    for (const [k, stored] of ledger) {
+      if (!k.startsWith(prefix)) continue;
+      const [kind, date] = k.slice(prefix.length).split('|');
+      if (keys.has(`${kind}|${date}`)) continue; // priced above
+      const creditC = stored.orphan && stored.amountC > 0 ? -stored.amountC : stored.creditC;
+      if (creditC < 0) carried.push({ kind, date, stored, creditC });
+    }
+    carried.sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
+    for (const { kind, date, stored, creditC } of carried) {
+      if (room + creditC < 0) {
+        // No room on this bill: hold it (newly found reversals are recorded as held).
+        if (creditC !== stored.creditC) {
+          heldCredits.push({ kind, date, amountC: creditC - stored.creditC });
+          ledgerWrites.push({ kind, date, amountC: stored.amountC, hours: stored.hours, status: stored.status, creditC, noBill: true });
+        }
+        continue;
+      }
+      room += creditC;
+      creditLines.push({ kind, date, amountC: creditC });
+      ledgerWrites.push({ kind, date, amountC: stored.amountC + creditC, hours: stored.orphan ? 0 : stored.hours, status: stored.status, creditC: 0 });
+    }
+  }
+  const creditC = creditLines.reduce((s, l) => s + l.amountC, 0);
+
   const nightC = toCents(stmt.cost.night) - (prev ? toCents(prev.cost.night) : 0);
   const nightHours = (stmt.hours.night || 0) - (prev ? (prev.hours.night || 0) : 0);
   const newWorkC = workedDays.reduce((s, w) => s + w.newPart, 0);
@@ -1480,6 +1616,7 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
     resplitLines,
     trueUpLines,
     rangeLines,
+    creditLines,
     ledgerWrites,
     heldCredits,
     workedKeys: workedDays.filter(w => w.newPart + w.trueUp !== 0).map(w => `${w.date}:${w.newPart + w.trueUp}`),
@@ -1493,8 +1630,8 @@ function billLabor(g, { settings, projectRateMap, rateBook = null, from, to, spa
     night: { hours: nightHours, amountC: nightC },
     hours: entryLines.reduce((s, l) => s + l.hours, 0),
     rate,
-    adjustmentsC: trueUpC + resplitLines.reduce((s, l) => s + l.amountC, 0),
-    totalC: newWorkC + trueUpC + rangeC,
+    adjustmentsC: trueUpC + resplitLines.reduce((s, l) => s + l.amountC, 0) + creditC,
+    totalC: newWorkC + trueUpC + rangeC + creditC,
     includeRangeLevel: rangeLines.length > 0,
   };
 }
@@ -1541,6 +1678,10 @@ function billLinesFor(g, { laborItemId, expenseAccountId }) {
       const h = L.premium.hours;
       lines.push({ type: 'item', itemId: laborItemId, qty: h > 0 ? h : 1, unitPrice: h > 0 ? L.premium.amountC / 100 / h : L.premium.amountC / 100, amount: L.premium.amountC / 100, description: L.premium.description });
     }
+    for (const l of L.creditLines || []) {
+      const what = { worked: 'worked pay', daily_floor: 'minimum daily hours', weekly_guarantee: 'weekly guarantee (week of)', sick: 'paid sick leave', vacation: 'paid vacation' }[l.kind] || l.kind;
+      lines.push({ type: 'item', itemId: laborItemId, qty: 1, unitPrice: l.amountC / 100, amount: l.amountC / 100, description: `Credit applied — ${what} ${l.date} (pay already billed was reduced)` });
+    }
     if (L.night.amountC !== 0) {
       const h = L.night.hours;
       lines.push({ type: 'item', itemId: laborItemId, qty: h > 0 ? h : 1, unitPrice: h > 0 ? L.night.amountC / 100 / h : L.night.amountC / 100, amount: L.night.amountC / 100, description: `Night differential premium on ${h.toFixed(2)} h` });
@@ -1565,15 +1706,36 @@ function billLinesFor(g, { laborItemId, expenseAccountId }) {
 // Intuit's dedupe and stamped the new entries with it, so they were never billed.
 // A force re-push is versioned by the bill(s) it replaces, so it creates a new
 // bill but a double-click still dedupes.
-function billRequestId(companyId, g, { from, to, force, totalC }) {
+//
+// Content alone can repeat: sick day billed (X), revoked (Y nets it off), re-approved
+// (Z) — Z's content is X's, Intuit handed back X's bill and Z's money was ledgered
+// as billed but never billed. So the id also carries `seq` — the worker's count of
+// POSTED outbox bills, which grows with every bill — and push-bills never reuses an
+// id already on a closed outbox row (it bumps `salt`). A retry of the SAME push
+// still dedupes: an unconfirmed bill stays pending (seq unchanged) and is replayed
+// with its stored id.
+function billRequestId(companyId, g, { from, to, force, totalC, seq = 0, salt = 0 }) {
   const te = (g.labor ? g.labor.entryLines : []).map(l => `${l.entry.id}:${l.amountC}`).sort().join(',');
   const rb = g.reimbursements.map(r => `${r.id}:${toCents(r.amount)}`).sort().join(',');
   const rl = (g.labor ? g.labor.rangeLines : []).map(l => `${l.key}:${l.amountC}`).sort().join(',');
+  const cr = (g.labor ? g.labor.creditLines || [] : []).map(l => `${l.kind}|${l.date}:${l.amountC}`).sort().join(',');
   const wk = (g.labor ? g.labor.workedKeys : []).join(',');
   const prior = force
     ? [...new Set([...g.billable.map(e => e.qbo_bill_id), ...g.reimbursements.map(r => r.qboBillId)].filter(Boolean))].sort().join(',')
     : '';
-  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, ...(rl ? [`rl:${rl}`] : []), ...(wk ? [`w:${wk}`] : []), `t:${totalC}`, force ? `f:${prior}` : ''].join('|'))}`;
+  return `ops-bill-${sha([companyId, g.vendorId, from || '', to || '', `te:${te}`, `r:${rb}`, ...(rl ? [`rl:${rl}`] : []), ...(cr ? [`cr:${cr}`] : []), ...(wk ? [`w:${wk}`] : []), `t:${totalC}`, force ? `f:${prior}` : '', `seq:${seq}`, ...(salt ? [`salt:${salt}`] : [])].join('|'))}`;
+}
+
+// QuickBooks bill no. (DocNumber, max 21 chars) for a request id: 'OF-' + 18 hex.
+const billDocNumber = requestId => `OF-${String(requestId || '').replace(/^ops-bill-/, '').slice(0, 18)}`;
+
+// Worker → number of POSTED outbox bills (billRequestId's seq).
+async function loadPushSeq(companyId) {
+  const r = await pool.query(
+    "SELECT user_id, COUNT(*)::int AS n FROM qbo_bill_pushes WHERE company_id = $1 AND status = 'posted' GROUP BY user_id",
+    [companyId]
+  );
+  return new Map(((r && r.rows) || []).map(row => [row.user_id, Number(row.n) || 0]));
 }
 
 const heldTotal = g => (g.labor ? g.labor.heldCredits.reduce((s, c) => s + c.amountC, 0) : 0);
@@ -1588,7 +1750,7 @@ router.post('/push-bills-preview', requireAdmin, requirePerm('manage_integration
     const settings = await loadSettings(req.user.company_id);
     const [groups, pendingR] = await Promise.all([
       gatherBillData(req.user.company_id, { from, to, workerIds: worker_ids, force }, settings),
-      pool.query("SELECT DISTINCT user_id FROM qbo_bill_pushes WHERE company_id = $1 AND status = 'pending'", [req.user.company_id]),
+      pool.query('SELECT DISTINCT user_id FROM qbo_bill_pushes WHERE company_id = $1 AND status = ANY($2::text[])', [req.user.company_id, QBO_BILL_PUSH_OPEN_STATUSES]),
     ]);
     const pendingUsers = new Set(((pendingR && pendingR.rows) || []).map(r => r.user_id));
     const result = groups.filter(g => g.billable.length || g.reimbursements.length || (g.labor && (g.labor.totalC !== 0 || g.labor.heldCredits.length))).map(g => {
@@ -1662,132 +1824,243 @@ router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), asy
     const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
-    // Bills an earlier push left unconfirmed first — they're in QuickBooks (or
-    // not); either way this push must see them before pricing anything.
-    const { reconciled, blocked } = await reconcilePendingBills(companyId);
-
-    const settings = await loadSettings(companyId);
-    const groups = await gatherBillData(companyId, { from, to, workerIds: worker_ids, force }, settings);
-
-    // Only require the expense account when we actually need it (any reimbursement
-    // line in this push). Contractors paid for time only don't need it.
-    const anyReimbursements = groups.some(g => g.reimbursements.length > 0 && !blocked.has(g.userId));
-    if (anyReimbursements && !expenseAccountId) {
-      return res.status(400).json({ error: 'Some contractors have reimbursements — set a Reimbursement Expense Account before pushing.' });
-    }
-
-    const today = new Date().toLocaleDateString('en-CA');
-    const dueDate = (() => {
-      if (!termsDays) return null;
-      const d = new Date(); d.setDate(d.getDate() + termsDays);
-      return d.toLocaleDateString('en-CA');
-    })();
-
-    const pushed = [];
-    const skipped = [];
-    const creditsHeld = [];
-    // Rows that don't ride on a bill: baselines (already billed before the
-    // ledger) and held credits.
-    const writeUnbilled = async (g) => {
-      const w = (g.labor ? g.labor.ledgerWrites : []).filter(x => x.noBill);
-      if (w.length) await writeLedger(pool, companyId, g.userId, w, null);
-    };
-
-    for (const g of groups) {
-      if (blocked.has(g.userId)) {
-        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: blocked.get(g.userId) });
-        continue;
-      }
-      const lines = billLinesFor(g, { laborItemId, expenseAccountId });
-      const totalC = lines.reduce((s, l) => s + toCents(l.amount != null ? l.amount : l.qty * l.unitPrice), 0);
-      const held = heldTotal(g);
-      if (held) {
-        creditsHeld.push({
-          user_id: g.userId, full_name: g.fullName, amount: held / 100,
-          reason: `−$${(-held / 100).toFixed(2)} of pay already billed was reduced. It's held as a credit and comes off this worker's next bill — or record a vendor credit in QuickBooks and mark it recorded (Bill credits).`,
-        });
-      }
-      const hasMoney = lines.some(l => toCents(l.amount != null ? l.amount : l.qty * l.unitPrice) !== 0);
-      if (!hasMoney && !g.billable.length && !g.reimbursements.length) {
-        try { await writeUnbilled(g); } catch (err) { logger.error({ err, userId: g.userId }, 'push-bills: baseline/credit ledger write failed'); }
-        continue;
-      }
-
-      const requestId = billRequestId(companyId, g, { from, to, force, totalC });
-      const payload = {
-        vendorId: g.vendorId,
-        txnDate: today,
-        dueDate,
-        memo: `OpsFloa bill ${from || ''}–${to || ''} for ${g.fullName}`.trim(),
-        lines,
-      };
-      const p = {
-        userId: g.userId, requestId,
-        timeIds: g.billable.map(t => t.id),
-        reimbIds: g.reimbursements.map(r => r.id),
-        ledger: g.labor ? g.labor.ledgerWrites : [],
-      };
-      // Outbox FIRST: if this fails, no bill is created.
-      try {
-        await pool.query(
-          `INSERT INTO qbo_bill_pushes (company_id, user_id, request_id, bill, total_cents, time_entry_ids, reimbursement_ids, ledger, created_by)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6::int[], $7::int[], $8::jsonb, $9)
-           ON CONFLICT (company_id, request_id) DO UPDATE SET updated_at = NOW()`,
-          [companyId, g.userId, requestId, JSON.stringify(payload), totalC, p.timeIds, p.reimbIds, JSON.stringify(p.ledger), req.user.id]
-        );
-      } catch (err) {
-        logger.error({ err, userId: g.userId }, 'push-bills: outbox write failed');
-        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: 'Could not record the bill before sending it — nothing was sent to QuickBooks. Try again.' });
-        continue;
-      }
-
-      let bill;
-      try {
-        bill = await qbo.createBill(companyId, { ...payload, requestId });
-      } catch (pushErr) {
-        if (!qboOutcomeUnknown(pushErr)) {
-          await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, requestId]).catch(() => {});
-          skipped.push({ user_id: g.userId, full_name: g.fullName, reason: qboErrorText(pushErr) });
-        } else {
-          skipped.push({ user_id: g.userId, full_name: g.fullName, reason: `QuickBooks didn't answer (${qboErrorText(pushErr)}). The bill is pending and is confirmed on the next push — it won't be created twice.` });
-        }
-        continue;
-      }
-      // Defensive: if Intuit hands back a bill that isn't this content (a dedupe
-      // hit on some other bill), don't stamp these rows with it — they'd never bill.
-      if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
-        await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, requestId]).catch(() => {});
-        skipped.push({
-          user_id: g.userId, full_name: g.fullName,
-          reason: `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)}, expected $${(totalC / 100).toFixed(2)} — rows were not marked billed.`,
-        });
-        continue;
-      }
-      const billId = bill?.Id || 'synced';
-      try {
-        await finalizeBill(companyId, p, billId);
-      } catch (err) {
-        // The bill exists; its stamps + ledger rolled back together. The outbox
-        // row stays pending → the next push replays it (same requestid) and records it.
-        logger.error({ err, billId, userId: g.userId }, 'push-bills: recording the bill failed');
-        skipped.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, reason: `Bill ${billId} was created in QuickBooks but OpsFloa couldn't record it. It's confirmed on the next push — don't re-create it by hand.` });
-        continue;
-      }
-      pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: p.timeIds.length, reimbursements: p.reimbIds.length, total: totalC / 100 });
-    }
-
-    logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.bills_pushed', null, null, null,
-      { pushed: pushed.length, skipped: skipped.length, reconciled: reconciled.length, credits_held: creditsHeld.length, from, to });
-    res.json({ pushed, skipped, reconciled, credits_held: creditsHeld });
+    // One push per company at a time (see withBillLock).
+    const run = await withBillLock(companyId, () => pushBills(req, { from, to, worker_ids, force, expenseAccountId, laborItemId, termsDays }));
+    if (run.busy) return res.status(409).json(BILL_LOCK_BUSY);
+    const out = run.value;
+    if (out.status) return res.status(out.status).json(out.body);
+    res.json(out);
   } catch (err) {
     logger.error({ err }, 'push-bills error');
     res.status(500).json({ error: 'Server error' });
   }
 });
 
+async function pushBills(req, { from, to, worker_ids, force, expenseAccountId, laborItemId, termsDays }) {
+  const companyId = req.user.company_id;
+  // Bills an earlier push left unconfirmed first — they're in QuickBooks (or
+  // not); either way this push must see them before pricing anything.
+  const { reconciled, blocked } = await reconcilePendingBills(companyId);
+
+  const settings = await loadSettings(companyId);
+  const groups = await gatherBillData(companyId, { from, to, workerIds: worker_ids, force }, settings);
+
+  // Only require the expense account when we actually need it (any reimbursement
+  // line in this push). Contractors paid for time only don't need it.
+  const anyReimbursements = groups.some(g => g.reimbursements.length > 0 && !blocked.has(g.userId));
+  if (anyReimbursements && !expenseAccountId) {
+    return { status: 400, body: { error: 'Some contractors have reimbursements — set a Reimbursement Expense Account before pushing.' } };
+  }
+  const seqByUser = await loadPushSeq(companyId);
+
+  const today = new Date().toLocaleDateString('en-CA');
+  const dueDate = (() => {
+    if (!termsDays) return null;
+    const d = new Date(); d.setDate(d.getDate() + termsDays);
+    return d.toLocaleDateString('en-CA');
+  })();
+
+  const pushed = [];
+  const skipped = [];
+  const creditsHeld = [];
+  // Rows that don't ride on a bill: baselines (already billed before the
+  // ledger) and held credits.
+  const writeUnbilled = async (g) => {
+    const w = (g.labor ? g.labor.ledgerWrites : []).filter(x => x.noBill);
+    if (w.length) await writeLedger(pool, companyId, g.userId, w, null);
+  };
+
+  // Every blocked worker is reported, whether or not this range has anything for them.
+  const names = new Map(groups.map(g => [g.userId, g.fullName]));
+  for (const [userId, b] of blocked) {
+    skipped.push({ user_id: userId, full_name: names.get(userId) || null, outbox_id: b.outboxId, reason: b.reason });
+  }
+
+  for (const g of groups) {
+    if (blocked.has(g.userId)) continue;
+    const lines = billLinesFor(g, { laborItemId, expenseAccountId });
+    const totalC = lines.reduce((s, l) => s + toCents(l.amount != null ? l.amount : l.qty * l.unitPrice), 0);
+    const held = heldTotal(g);
+    if (held) {
+      creditsHeld.push({
+        user_id: g.userId, full_name: g.fullName, amount: held / 100,
+        reason: `−$${(-held / 100).toFixed(2)} of pay already billed was reduced. It's held as a credit and comes off this worker's next bill — or record a vendor credit in QuickBooks and mark it recorded (Bill credits).`,
+      });
+    }
+    const hasMoney = lines.some(l => toCents(l.amount != null ? l.amount : l.qty * l.unitPrice) !== 0);
+    if (!hasMoney && !g.billable.length && !g.reimbursements.length) {
+      try { await writeUnbilled(g); } catch (err) { logger.error({ err, userId: g.userId }, 'push-bills: baseline/credit ledger write failed'); }
+      continue;
+    }
+
+    const p = {
+      userId: g.userId, requestId: null, force: !!force,
+      timeIds: g.billable.map(t => t.id),
+      reimbIds: g.reimbursements.map(r => r.id),
+      ledger: g.labor ? g.labor.ledgerWrites : [],
+    };
+    const payloadFor = requestId => ({
+      vendorId: g.vendorId,
+      txnDate: today,
+      dueDate,
+      // The request id rides on the bill so an admin can find a bill whose
+      // outcome OpsFloa never saw (bill-outbox resolve).
+      memo: `OpsFloa bill ${from || ''}–${to || ''} for ${g.fullName} · ref ${requestId}`.trim(),
+      docNumber: billDocNumber(requestId),
+      lines,
+    });
+    // Outbox FIRST: if this fails, no bill is created. The upsert returns the row
+    // holding this id; a CLOSED row (posted / mismatch / discarded) means the id
+    // is taken by another bill — Intuit would hand that bill back — so mint a new one.
+    let payload = null;
+    let outboxId = null;
+    try {
+      for (let salt = 0; salt < 5 && !payload; salt++) {
+        const requestId = billRequestId(companyId, g, { from, to, force, totalC, seq: seqByUser.get(g.userId) || 0, salt });
+        const pl = payloadFor(requestId);
+        const ins = await pool.query(
+          `INSERT INTO qbo_bill_pushes (company_id, user_id, request_id, bill, total_cents, time_entry_ids, reimbursement_ids, ledger, created_by, force)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6::int[], $7::int[], $8::jsonb, $9, $10)
+           ON CONFLICT (company_id, request_id) DO UPDATE SET updated_at = NOW()
+           RETURNING id, status, user_id`,
+          [companyId, g.userId, requestId, JSON.stringify(pl), totalC, p.timeIds, p.reimbIds, JSON.stringify(p.ledger), req.user.id, !!force]
+        );
+        const row = ins && ins.rows && ins.rows[0];
+        if (row && (row.status !== 'pending' || row.user_id !== g.userId)) continue; // taken → next salt
+        payload = pl; p.requestId = requestId; outboxId = row ? row.id : null;
+      }
+    } catch (err) {
+      logger.error({ err, userId: g.userId }, 'push-bills: outbox write failed');
+      skipped.push({ user_id: g.userId, full_name: g.fullName, reason: 'Could not record the bill before sending it — nothing was sent to QuickBooks. Try again.' });
+      continue;
+    }
+    if (!payload) {
+      skipped.push({ user_id: g.userId, full_name: g.fullName, reason: 'Could not get a fresh QuickBooks request id for this bill — nothing was sent. Try again.' });
+      continue;
+    }
+    const requestId = p.requestId;
+
+    let bill;
+    try {
+      bill = await qbo.createBill(companyId, { ...payload, requestId });
+    } catch (pushErr) {
+      // First send: the request is new, so a definite answer (4xx) or a failure
+      // before it went out means QuickBooks has no bill for it → drop the row.
+      // (A REPLAY never drops its row — see reconcilePendingBills.)
+      if (!qboOutcomeUnknown(pushErr)) {
+        await pool.query("DELETE FROM qbo_bill_pushes WHERE company_id = $1 AND request_id = $2 AND status = 'pending'", [companyId, requestId]).catch(() => {});
+        skipped.push({ user_id: g.userId, full_name: g.fullName, reason: qboErrorText(pushErr) });
+      } else {
+        skipped.push({ user_id: g.userId, full_name: g.fullName, outbox_id: outboxId, reason: `QuickBooks didn't answer (${qboErrorText(pushErr)}). The bill is pending and is confirmed on the next push — it won't be created twice.` });
+      }
+      continue;
+    }
+    // Defensive: if Intuit hands back a bill that isn't this content (a dedupe
+    // hit on some other bill), don't stamp these rows with it — they'd never
+    // bill. The bill EXISTS, so the outbox row is kept ('mismatch', with its id)
+    // and blocks the worker until an admin resolves it.
+    if (bill && bill.TotalAmt != null && toCents(bill.TotalAmt) !== totalC) {
+      await markMismatch(companyId, requestId, bill.Id).catch(err => logger.error({ err, userId: g.userId }, 'push-bills: mark mismatch failed'));
+      skipped.push({
+        user_id: g.userId, full_name: g.fullName, outbox_id: outboxId, bill_id: bill.Id,
+        reason: `QuickBooks returned bill ${bill.Id} for $${Number(bill.TotalAmt).toFixed(2)}, expected $${(totalC / 100).toFixed(2)} — rows were not marked billed. ${RESOLVE_HINT}`,
+      });
+      continue;
+    }
+    const billId = bill?.Id || 'synced';
+    try {
+      await finalizeBill(companyId, p, billId);
+    } catch (err) {
+      // The bill exists; its stamps + ledger rolled back together. The outbox
+      // row stays pending → the next push replays it (same requestid) and records it.
+      logger.error({ err, billId, userId: g.userId }, 'push-bills: recording the bill failed');
+      skipped.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, outbox_id: outboxId, reason: `Bill ${billId} was created in QuickBooks but OpsFloa couldn't record it. It's confirmed on the next push — don't re-create it by hand.` });
+      continue;
+    }
+    pushed.push({ user_id: g.userId, full_name: g.fullName, bill_id: billId, time_entries: p.timeIds.length, reimbursements: p.reimbIds.length, total: totalC / 100 });
+  }
+
+  logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.bills_pushed', null, null, null,
+    { pushed: pushed.length, skipped: skipped.length, reconciled: reconciled.length, credits_held: creditsHeld.length, from, to });
+  return { pushed, skipped, reconciled, credits_held: creditsHeld };
+}
+
+// GET /api/qbo/bill-outbox — bills OpsFloa couldn't confirm: 'pending' (sent, no
+// answer / not recorded yet) and 'mismatch' (QuickBooks returned a bill with
+// another total). Each blocks its worker until resolved.
+router.get('/bill-outbox', requireAdmin, requirePerm('manage_integrations'), requirePerm('view_worker_wages'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT b.id, b.user_id, u.full_name, b.request_id, b.status, b.total_cents, b.qbo_bill_id,
+              b.time_entry_ids, b.reimbursement_ids, b.created_at, b.updated_at
+         FROM qbo_bill_pushes b LEFT JOIN users u ON u.id = b.user_id
+        WHERE b.company_id = $1 AND b.status = ANY($2::text[])
+        ORDER BY b.id`,
+      [req.user.company_id, QBO_BILL_PUSH_OPEN_STATUSES]
+    );
+    res.json((r.rows || []).map(row => ({
+      id: row.id, user_id: row.user_id, full_name: row.full_name || null,
+      reference: row.request_id, doc_number: billDocNumber(row.request_id),
+      status: row.status, total: (Number(row.total_cents) || 0) / 100, qbo_bill_id: row.qbo_bill_id || null,
+      time_entries: (row.time_entry_ids || []).length, reimbursements: (row.reimbursement_ids || []).length,
+      created_at: row.created_at || null, updated_at: row.updated_at || null,
+    })));
+  } catch (err) {
+    logger.error({ err }, 'bill-outbox error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/qbo/bill-outbox/:id/resolve — an admin settles an unconfirmed bill
+// after checking QuickBooks (its memo / bill no. carries the reference):
+//   { action: 'confirm', qbo_bill_id } — QuickBooks has it: stamp its entries,
+//     write its ledger rows, mark it posted (exactly what a successful replay does).
+//   { action: 'discard' } — QuickBooks has NO such bill: close the row; the
+//     content bills afresh on the next push under a new request id.
+router.post('/bill-outbox/:id/resolve', requireAdmin, requirePerm('manage_integrations'), requirePerm('view_worker_wages'), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { action } = req.body || {};
+  const qboBillId = req.body && req.body.qbo_bill_id != null ? String(req.body.qbo_bill_id).trim() : '';
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+  if (action !== 'confirm' && action !== 'discard') return res.status(400).json({ error: "action must be 'confirm' or 'discard'" });
+  if (action === 'confirm' && (!qboBillId || qboBillId.length > 64)) return res.status(400).json({ error: 'qbo_bill_id is required to confirm' });
+  const companyId = req.user.company_id;
+  try {
+    const run = await withBillLock(companyId, async () => {
+      const r = await pool.query(
+        `SELECT id, user_id, request_id, status, total_cents, time_entry_ids, reimbursement_ids, ledger, force, qbo_bill_id
+           FROM qbo_bill_pushes WHERE id = $1 AND company_id = $2`,
+        [id, companyId]
+      );
+      const row = r.rows && r.rows[0];
+      if (!row) return { status: 404, body: { error: 'Not found' } };
+      if (!QBO_BILL_PUSH_OPEN_STATUSES.includes(row.status)) return { status: 409, body: { error: `This bill is already ${row.status}.` } };
+      if (action === 'confirm') {
+        await finalizeBill(companyId, outboxToPush(row), qboBillId);
+      } else {
+        await pool.query(
+          "UPDATE qbo_bill_pushes SET status = 'discarded', updated_at = NOW() WHERE id = $1 AND company_id = $2 AND status = ANY($3::text[])",
+          [id, companyId, QBO_BILL_PUSH_OPEN_STATUSES]
+        );
+      }
+      logAudit(companyId, req.user.id, req.user.full_name, 'qbo.bill_outbox_resolved', 'qbo_bill_push', id, null, {
+        action, qbo_bill_id: action === 'confirm' ? qboBillId : null, returned_bill_id: row.qbo_bill_id || null,
+        was: row.status, user_id: row.user_id, reference: row.request_id, total: (Number(row.total_cents) || 0) / 100,
+      });
+      return { status: 200, body: { id, status: action === 'confirm' ? 'posted' : 'discarded', qbo_bill_id: action === 'confirm' ? qboBillId : null } };
+    });
+    if (run.busy) return res.status(409).json(BILL_LOCK_BUSY);
+    res.status(run.value.status).json(run.value.body);
+  } catch (err) {
+    logger.error({ err }, 'bill-outbox resolve error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /api/qbo/bill-credits — negative adjustments held back per worker (a bill
 // that would have netted negative). Each nets against the worker's next bill.
-router.get('/bill-credits', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
+// Shows pay → view_worker_wages too (as push-payroll).
+router.get('/bill-credits', requireAdmin, requirePerm('manage_integrations'), requirePerm('view_worker_wages'), async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT l.user_id, u.full_name, l.kind, to_char(l.pay_date, 'YYYY-MM-DD') AS pay_date, l.credit_cents
@@ -1818,8 +2091,10 @@ router.post('/bill-credits/record', requireAdmin, requirePerm('manage_integratio
   if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'user_id is required' });
   const companyId = req.user.company_id;
   try {
+    // Under the bill lock: a push running now would rewrite these ledger rows
+    // from what it read before this and undo the recorded credit.
     // RETURNING the credit each row carried (o.credit — the pre-update value).
-    const r = await pool.query(
+    const run = await withBillLock(companyId, () => pool.query(
       `UPDATE qbo_bill_range_pay l
           SET amount_cents = l.amount_cents + o.credit, credit_cents = 0, updated_at = NOW()
          FROM (SELECT id, credit_cents AS credit FROM qbo_bill_range_pay
@@ -1827,7 +2102,9 @@ router.post('/bill-credits/record', requireAdmin, requirePerm('manage_integratio
         WHERE l.id = o.id
         RETURNING l.kind, to_char(l.pay_date, 'YYYY-MM-DD') AS pay_date, l.amount_cents, o.credit AS credit_cents`,
       [companyId, userId]
-    );
+    ));
+    if (run.busy) return res.status(409).json(BILL_LOCK_BUSY);
+    const r = run.value;
     if (!r.rowCount) return res.status(404).json({ error: 'No held credit for this worker' });
     const fromSum = (r.rows || []).reduce((sum, row) => sum + (Number(row.credit_cents) || 0), 0);
     logAudit(companyId, req.user.id, req.user.full_name, 'qbo.bill_credit_recorded', 'user', userId, null, { amount: fromSum / 100, rows: r.rowCount });

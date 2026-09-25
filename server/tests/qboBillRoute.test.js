@@ -20,8 +20,18 @@ jest.mock('../middleware/auth', () => {
   };
 });
 
-// connect(): push-bills records each bill (stamps + ledger + outbox) in one transaction.
-jest.mock('../db', () => { const m = { query: jest.fn() }; m.connect = jest.fn(async () => ({ query: (...a) => m.query(...a), release: () => {} })); return m; });
+// connect(): the per-company bill lock (always granted here) and the transaction that
+// records each bill (stamps + ledger + outbox); transaction control isn't sent to m.query.
+jest.mock('../db', () => {
+  const m = { query: jest.fn() };
+  const tx = /^\s*(BEGIN|COMMIT|ROLLBACK|SET LOCAL)\b/;
+  m.connect = jest.fn(async () => ({
+    query: (sql, ...a) => (/pg_try_advisory_xact_lock/.test(String(sql)) ? Promise.resolve({ rows: [{ locked: true }] })
+      : tx.test(String(sql)) ? Promise.resolve({ rows: [] }) : m.query(sql, ...a)),
+    release: () => {},
+  }));
+  return m;
+});
 
 jest.mock('../services/qbo', () => ({
   createBill: jest.fn(),
@@ -440,13 +450,14 @@ describe('POST /api/qbo/push-bills', () => {
     expect(res.body.pushed).toEqual([]);
     expect(res.body.skipped).toHaveLength(1);
     expect(res.body.skipped[0].reason).toMatch(/Item inactive/);
-    // 9 reads (settings, realm, pending bills, ot settings, time, reimb, leave requests,
-    // leave shifts, range-pay ledger) + the bill outbox row written before createBill
-    // and deleted when QuickBooks refused it — no stamps, no ledger.
-    expect(pool.query).toHaveBeenCalledTimes(11);
+    // 11 reads (settings, realm, pending bills, ot settings, time, reimb, leave/guarantee-only
+    // contractors, leave requests, leave shifts, range-pay ledger, per-worker bill seq) + the
+    // bill outbox row written before createBill and deleted when QuickBooks refused it on
+    // the FIRST send — no stamps, no ledger. (The bill lock runs on its own client.)
+    expect(pool.query).toHaveBeenCalledTimes(13);
     const sqls = pool.query.mock.calls.map(c => String(c[0]));
     expect(sqls.some(x => /UPDATE time_entries|INSERT INTO qbo_bill_range_pay/.test(x))).toBe(false);
-    expect(sqls.filter(x => /qbo_bill_pushes/.test(x)).map(x => x.trim().split(/\s+/)[0])).toEqual(['SELECT', 'INSERT', 'DELETE']);
+    expect(sqls.filter(x => /qbo_bill_pushes/.test(x)).map(x => x.trim().split(/\s+/)[0])).toEqual(['SELECT', 'SELECT', 'INSERT', 'DELETE']);
   });
 
   test('pushes an overtime premium line for OT hours', async () => {
