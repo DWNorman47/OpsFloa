@@ -144,6 +144,12 @@
 .app-assistant-confirmation ul { margin: 8px 0 0; padding-left: 18px; }
 .app-assistant-confirmation li { margin: 3px 0; color: #334155; font-size: 12px; }
 .app-assistant-confirmation .app-assistant-reason { margin-top: 8px; color: #334155; }
+.app-assistant-changes { display: grid; gap: 6px; margin: 9px 0 0; }
+.app-assistant-changes > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.app-assistant-changes dt { color: #64748b; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.app-assistant-changes dd { display: flex; min-width: 0; margin: 0; gap: 6px; align-items: baseline; flex-wrap: wrap; color: #475569; font-size: 12px; }
+.app-assistant-changes dd strong { color: #172033; }
+.app-assistant-change-to { color: #94a3b8; font-size: 11px; }
 .app-assistant-confirm-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .app-assistant-confirm,
 .app-assistant-cancel {

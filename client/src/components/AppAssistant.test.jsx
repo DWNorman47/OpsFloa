@@ -169,6 +169,54 @@ describe('AppAssistant', () => {
     expect(await screen.findByText('Approval undone.')).toBeInTheDocument();
   });
 
+  test('shows exact changes and requires confirmation before editing an entry', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        message: 'Please confirm these time-entry changes.',
+        actions: [{
+          type: 'confirm_api',
+          kind: 'time_entry_edit',
+          title: 'Edit time entry?',
+          summary: 'Review each change before saving.',
+          confirm_label: 'Save changes',
+          cancel_label: 'Cancel',
+          success_message: 'Time entry updated.',
+          details: [{ worker: 'Jordan Lee', date: '2026-09-14', time: '08:00:00-16:00:00', project: 'Main Street' }],
+          changes: [
+            { label: 'End', before: '16:00', after: '16:30' },
+            { label: 'Project', before: 'Main Street', after: 'Oak Ridge' },
+          ],
+          method: 'patch',
+          endpoint: '/admin/entries/91/edit',
+          body: {
+            start_time: '08:00',
+            end_time: '16:30',
+            updated_at: '2026-09-16T01:02:03.000Z',
+            project_id: 44,
+          },
+        }],
+      },
+    });
+    api.patch.mockResolvedValue({ data: { id: 91, end_time: '16:30:00', project_id: 44 } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: 'Move Jordan end time to 4:30 and use Oak Ridge' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Edit time entry?')).toBeInTheDocument();
+    expect(screen.getByText('16:30')).toBeInTheDocument();
+    expect(screen.getByText('Oak Ridge')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/admin/entries/91/edit', {
+      start_time: '08:00',
+      end_time: '16:30',
+      updated_at: '2026-09-16T01:02:03.000Z',
+      project_id: 44,
+    }));
+    expect(await screen.findByText('Time entry updated.')).toBeInTheDocument();
+  });
+
   test('confirmation allowlist rejects arbitrary endpoints', () => {
     expect(isAllowedAssistantAction({
       type: 'confirm_api',
@@ -214,6 +262,29 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...unapprove, body: { force: true } })).toBe(false);
     expect(isAllowedAssistantAction({ ...restore, endpoint: '/admin/entries/92/reject' })).toBe(false);
     expect(isAllowedAssistantAction({ ...restore, kind: 'time_entry_unapproval' })).toBe(false);
+  });
+
+  test('confirmation allowlist validates every time-entry edit field', () => {
+    const valid = {
+      type: 'confirm_api',
+      kind: 'time_entry_edit',
+      method: 'patch',
+      endpoint: '/admin/entries/91/edit',
+      body: {
+        start_time: '08:00',
+        end_time: '16:30',
+        updated_at: '2026-09-16T01:02:03.000Z',
+        work_date: '2026-09-15',
+        project_id: null,
+      },
+    };
+    expect(isAllowedAssistantAction(valid)).toBe(true);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, end_time: '25:00' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, work_date: '2026-02-30' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, project_id: -1 } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, updated_at: '2026-09-16' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, overtime_hours_override: 2 } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, endpoint: '/admin/entries/91/times' })).toBe(false);
   });
 
   test('provides the compact Spanish interface copy', () => {

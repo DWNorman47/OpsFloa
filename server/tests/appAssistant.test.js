@@ -75,6 +75,17 @@ describe('app assistant service', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
+  test('rejects date strings with trailing content instead of truncating them', async () => {
+    const output = await executeAssistantTool(
+      req,
+      new Set(['view_own_entries']),
+      'find_time_entries',
+      { from: '2026-09-01-extra', to: '2026-09-14' }
+    );
+    expect(output.result).toEqual(expect.objectContaining({ ok: false, error: 'invalid_date' }));
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
   test('delegated admin time searches stay inside worker scope', async () => {
     const scopedReq = {
       ...req,
@@ -383,6 +394,127 @@ describe('app assistant service', () => {
       endpoint: '/admin/entries/97/unreject',
       body: {},
     }));
+  });
+
+  test('prepares an exact, concurrency-guarded edit for one pending entry', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 99, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'pending' }
+    );
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 99,
+          user_id: 7,
+          project_id: 11,
+          status: 'pending',
+          work_date: '2026-09-15',
+          start_time: '08:00:00',
+          end_time: '16:00:00',
+          updated_at: '2026-09-16T01:02:03.000Z',
+          worker_name: 'Jordan Lee',
+          project_name: 'Main Street',
+          in_locked_period: false,
+          in_finalized_payroll: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ value: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 44, name: 'Oak Ridge' }] });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_edit',
+      {
+        entry_ref: found.result.time_entries[0].entry_ref,
+        end_time: '16:30',
+        project_name: 'Oak Ridge',
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'edit_time_entry',
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'time_entry_edit',
+      method: 'patch',
+      endpoint: '/admin/entries/99/edit',
+      body: {
+        start_time: '08:00:00',
+        end_time: '16:30',
+        updated_at: '2026-09-16T01:02:03.000Z',
+        project_id: 44,
+      },
+      changes: [
+        { label: 'End', before: '16:00', after: '16:30' },
+        { label: 'Project', before: 'Main Street', after: 'Oak Ridge' },
+      ],
+    }));
+    expect(pool.query).toHaveBeenCalledTimes(4);
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('rejects invalid edit times before loading the entry', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 100, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_edit',
+      { entry_ref: found.result.time_entries[0].entry_ref, end_time: '25:90' }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'invalid_time' }));
+    expect(prepared.actions).toBeUndefined();
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not prepare a move into a locked destination date', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 101, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 101,
+          user_id: 7,
+          project_id: null,
+          status: 'pending',
+          work_date: '2026-09-15',
+          start_time: '08:00:00',
+          end_time: '16:00:00',
+          updated_at: '2026-09-16T01:02:03.000Z',
+          in_locked_period: false,
+          in_finalized_payroll: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ in_locked_period: true, in_finalized_payroll: false }] });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_edit',
+      { entry_ref: found.result.time_entries[0].entry_ref, work_date: '2026-09-16' }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'destination_date_not_editable' }));
+    expect(prepared.actions).toBeUndefined();
   });
 
   test('entry references cannot be reused by another signed-in user', async () => {

@@ -68,6 +68,23 @@ export function isAllowedAssistantAction(action) {
   if (action.kind === 'time_entry_restore' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/unreject$/.test(action.endpoint || '')) {
     return Object.keys(body).length === 0;
   }
+  if (action.kind === 'time_entry_edit' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/edit$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    const allowed = new Set(['start_time', 'end_time', 'updated_at', 'work_date', 'project_id']);
+    const validTime = value => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value);
+    const validDate = value => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    return keys.every(key => allowed.has(key)) &&
+      keys.includes('start_time') && keys.includes('end_time') && keys.includes('updated_at') &&
+      validTime(body.start_time) && validTime(body.end_time) &&
+      typeof body.updated_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.updated_at) &&
+      !Number.isNaN(Date.parse(body.updated_at)) &&
+      (!keys.includes('work_date') || validDate(body.work_date)) &&
+      (!keys.includes('project_id') || body.project_id === null || (Number.isInteger(body.project_id) && body.project_id > 0));
+  }
   return false;
 }
 
@@ -262,6 +279,16 @@ export default function AppAssistant() {
                       )}
                       {action.kind === 'time_entry_rejection' && typeof action.body?.note === 'string' && (
                         <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.body.note}</p>
+                      )}
+                      {action.changes?.length > 0 && (
+                        <dl className="app-assistant-changes">
+                          {action.changes.map((change, changeIndex) => (
+                            <div key={`${change.label}-${changeIndex}`}>
+                              <dt>{change.label}</dt>
+                              <dd><span>{change.before}</span><span className="app-assistant-change-to">to</span><strong>{change.after}</strong></dd>
+                            </div>
+                          ))}
+                        </dl>
                       )}
                       {action.result_message && (
                         <div className={`app-assistant-action-result ${action.status === 'failed' ? 'failed' : ''}`} role={action.status === 'failed' ? 'alert' : 'status'}>
