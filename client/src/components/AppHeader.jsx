@@ -27,6 +27,7 @@ import NotificationBell from './NotificationBell';
 import MessagesBell from './MessagesBell';
 import AccountMenu from './AccountMenu';
 import GuideDrawer from './GuideDrawer';
+import { AppAssistantLauncher } from './AppAssistant';
 
 export default function AppHeader({
   currentApp,
@@ -54,6 +55,7 @@ export default function AppHeader({
           {user?.full_name && (
             <span style={s.userName} className="header-username">{user.full_name}</span>
           )}
+          <AppAssistantLauncher />
           {features?.feature_chat !== false && <MessagesBell />}
           <NotificationBell />
           {rightExtras}

@@ -19,27 +19,42 @@ function isConfigured() {
 }
 
 /**
+ * Low-level Messages API call used by agentic features that need structured
+ * content blocks (notably tool_use / tool_result). Keeping it here means every
+ * Claude-backed feature shares the same auth, version, and timeout behavior.
+ */
+async function createMessage({ system, messages, tools, toolChoice, maxTokens = 1024, model = MODEL }) {
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages,
+  };
+  if (Array.isArray(tools) && tools.length) body.tools = tools;
+  if (toolChoice) body.tool_choice = toolChoice;
+
+  const { data } = await axios.post(API_URL, body, {
+    headers: {
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    timeout: 60000,
+  });
+  return data;
+}
+
+/**
  * One-shot text generation. Returns the concatenated text of the response.
  * Throws on transport/API errors (callers map to a 502).
  */
 async function generate({ system, prompt, maxTokens = 1024, model = MODEL }) {
-  const { data } = await axios.post(
-    API_URL,
-    {
-      model,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: 'user', content: prompt }],
-    },
-    {
-      headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      timeout: 60000,
-    },
-  );
+  const data = await createMessage({
+    system,
+    messages: [{ role: 'user', content: prompt }],
+    maxTokens,
+    model,
+  });
   return (data.content || [])
     .filter(b => b.type === 'text')
     .map(b => b.text)
@@ -88,4 +103,4 @@ async function generateVision({ system, prompt, image, maxTokens = 2048, model =
     .trim();
 }
 
-module.exports = { isConfigured, generate, generateVision, MODEL, VISION_MODEL };
+module.exports = { isConfigured, createMessage, generate, generateVision, MODEL, VISION_MODEL };

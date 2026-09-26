@@ -12,6 +12,7 @@
 
 const router = require('express').Router();
 const anthropic = require('../services/anthropic');
+const { MAX_MESSAGE, runAssistant } = require('../services/appAssistant');
 const pdfParse = require('pdf-parse');
 
 // The AI gate (config check, monthly quota, refund-on-failure, 503/429/502)
@@ -26,6 +27,21 @@ const MAX_PDF_BYTES = 15 * 1024 * 1024;
 
 router.get('/usage', async (req, res) => {
   res.json(await usageFor(req.user.company_id));
+});
+
+// --- Global app assistant -------------------------------------------------
+// Conversation history is supplied by the current browser tab and is never
+// persisted here. The service exposes only company-scoped, permission-aware
+// read tools plus reversible navigation; it has no mutation tools.
+router.post('/assistant', async (req, res) => {
+  const message = String((req.body && req.body.message) || '').trim();
+  if (message.length < 2) return res.status(400).json({ error: 'Type a question or request.' });
+  if (message.length > MAX_MESSAGE) return res.status(413).json({ error: `Keep requests under ${MAX_MESSAGE} characters.` });
+  await runAi(req, res, () => runAssistant(req, {
+    message,
+    history: req.body && req.body.history,
+    context: req.body && req.body.context,
+  }));
 });
 
 // --- Summarizer -----------------------------------------------------------

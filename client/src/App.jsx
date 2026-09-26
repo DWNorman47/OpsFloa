@@ -12,6 +12,7 @@ import { OfflineProvider } from './contexts/OfflineContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { clearCache } from './offlineDb';
 import { userCanSeeModule, pickLandingPath } from './modulePermissions';
+import AppAssistant from './components/AppAssistant';
 
 const Login             = lazy(() => import('./pages/Login'));
 const Register          = lazy(() => import('./pages/Register'));
@@ -285,6 +286,7 @@ export default function App() {
               <WelcomeModal />
               <TermsGate />
               <AppRoutes />
+              <AppAssistant />
               <InstallPrompt />
               <UpdatePrompt />
             </SettingsProvider>
