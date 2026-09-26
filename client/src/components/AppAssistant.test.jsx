@@ -96,6 +96,44 @@ describe('AppAssistant', () => {
     expect(await screen.findByText('Time entry approved.')).toBeInTheDocument();
   });
 
+  test('requires a click before calling the existing rejection endpoint', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        message: 'Please confirm this rejection.',
+        actions: [{
+          type: 'confirm_api',
+          kind: 'time_entry_rejection',
+          danger: true,
+          title: 'Reject time entry?',
+          summary: 'The worker will be notified with this reason.',
+          reason_label: 'Reason',
+          confirm_label: 'Reject entry',
+          cancel_label: 'Cancel',
+          success_message: 'Time entry rejected.',
+          details: [{ worker: 'Jordan Lee', date: '2026-09-14', time: '08:00:00-16:00:00', project: 'Main Street' }],
+          method: 'patch',
+          endpoint: '/admin/entries/91/reject',
+          body: { note: 'Incorrect project' },
+        }],
+      },
+    });
+    api.patch.mockResolvedValue({ data: { id: 91, status: 'rejected' } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: 'Reject Jordan time because the project is wrong' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Reject time entry?')).toBeInTheDocument();
+    expect(screen.getByText('Reason:')).toBeInTheDocument();
+    expect(screen.getByText('Incorrect project')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Reject entry' });
+    expect(confirm).toHaveClass('danger');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/admin/entries/91/reject', { note: 'Incorrect project' }));
+    expect(await screen.findByText('Time entry rejected.')).toBeInTheDocument();
+  });
+
   test('confirmation allowlist rejects arbitrary endpoints', () => {
     expect(isAllowedAssistantAction({
       type: 'confirm_api',
@@ -104,6 +142,21 @@ describe('AppAssistant', () => {
       endpoint: '/admin/companies/delete',
       body: {},
     })).toBe(false);
+  });
+
+  test('confirmation allowlist only accepts a reasoned single-entry rejection', () => {
+    const valid = {
+      type: 'confirm_api',
+      kind: 'time_entry_rejection',
+      method: 'patch',
+      endpoint: '/admin/entries/91/reject',
+      body: { note: 'Incorrect project' },
+    };
+    expect(isAllowedAssistantAction(valid)).toBe(true);
+    expect(isAllowedAssistantAction({ ...valid, body: { note: ' ' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { note: 'Incorrect project', id: 91 } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, kind: 'time_entry_approval' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, endpoint: '/admin/entries/91/unapprove' })).toBe(false);
   });
 
   test('provides the compact Spanish interface copy', () => {

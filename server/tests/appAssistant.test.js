@@ -31,7 +31,8 @@ describe('app assistant service', () => {
 
   test('system policy requires confirmation and keeps other writes unavailable', () => {
     expect(ASSISTANT_SYSTEM).toMatch(/confirmation card/i);
-    expect(ASSISTANT_SYSTEM).toMatch(/Never say an approval is complete/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/Never say an approval or rejection is complete/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/Rejection requires a written reason/i);
     expect(ASSISTANT_SYSTEM).toMatch(/All other writes remain unavailable/i);
   });
 
@@ -156,6 +157,90 @@ describe('app assistant service', () => {
       endpoint: '/admin/entries/91/approve',
     }));
     expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+
+  test('prepares but does not execute a scoped time-entry rejection with a reason', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 93,
+        work_date: '2026-09-15',
+        start_time: '07:30:00',
+        end_time: '15:30:00',
+        status: 'pending',
+        worker_name: 'Jordan Lee',
+        project_name: 'Main Street',
+      }],
+    });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'pending' }
+    );
+
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 93,
+        status: 'pending',
+        work_date: '2026-09-15',
+        start_time: '07:30:00',
+        end_time: '15:30:00',
+        worker_name: 'Jordan Lee',
+        project_name: 'Main Street',
+        in_locked_period: false,
+      }],
+    });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_rejection',
+      { entry_ref: found.result.time_entries[0].entry_ref, note: '  Incorrect project  ' }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'reject_time_entry',
+      count: 1,
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      type: 'confirm_api',
+      kind: 'time_entry_rejection',
+      danger: true,
+      method: 'patch',
+      endpoint: '/admin/entries/93/reject',
+      body: { note: 'Incorrect project' },
+    }));
+    expect(prepared.actions[0].details).toEqual([expect.objectContaining({
+      worker: 'Jordan Lee',
+      date: '2026-09-15',
+      time: '07:30:00-15:30:00',
+      project: 'Main Street',
+    })]);
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('requires a meaningful reason before preparing a rejection', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 94, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_rejection',
+      { entry_ref: found.result.time_entries[0].entry_ref, note: ' ' }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'rejection_reason_required' }));
+    expect(prepared.actions).toBeUndefined();
+    expect(pool.query).toHaveBeenCalledTimes(1);
   });
 
   test('entry references cannot be reused by another signed-in user', async () => {

@@ -45,17 +45,22 @@ export function openAppAssistant() {
 }
 
 export function isAllowedAssistantAction(action) {
-  if (!action || action.type !== 'confirm_api' || action.kind !== 'time_entry_approval') return false;
+  if (!action || action.type !== 'confirm_api') return false;
   const method = String(action.method || '').toLowerCase();
   const body = action.body && typeof action.body === 'object' && !Array.isArray(action.body) ? action.body : {};
-  if (method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/approve$/.test(action.endpoint || '')) {
+  if (action.kind === 'time_entry_approval' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/approve$/.test(action.endpoint || '')) {
     const keys = Object.keys(body);
     return keys.every(key => key === 'note') && (body.note == null || (typeof body.note === 'string' && body.note.length <= 500));
   }
-  if (method === 'post' && action.endpoint === '/admin/entries/bulk-approve') {
+  if (action.kind === 'time_entry_approval' && method === 'post' && action.endpoint === '/admin/entries/bulk-approve') {
     const keys = Object.keys(body);
     return keys.length === 1 && keys[0] === 'ids' && Array.isArray(body.ids) &&
       body.ids.length >= 1 && body.ids.length <= 20 && body.ids.every(id => Number.isInteger(id) && id > 0);
+  }
+  if (action.kind === 'time_entry_rejection' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/reject$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    return keys.length === 1 && keys[0] === 'note' && typeof body.note === 'string' &&
+      body.note.trim().length >= 2 && body.note.length <= 500;
   }
   return false;
 }
@@ -249,6 +254,9 @@ export default function AppAssistant() {
                           ))}
                         </ul>
                       )}
+                      {action.kind === 'time_entry_rejection' && typeof action.body?.note === 'string' && (
+                        <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.body.note}</p>
+                      )}
                       {action.result_message && (
                         <div className={`app-assistant-action-result ${action.status === 'failed' ? 'failed' : ''}`} role={action.status === 'failed' ? 'alert' : 'status'}>
                           {action.result_message}
@@ -258,7 +266,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className="app-assistant-confirm"
+                            className={`app-assistant-confirm${action.kind === 'time_entry_rejection' ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >
