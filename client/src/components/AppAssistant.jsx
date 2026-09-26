@@ -44,6 +44,22 @@ export function openAppAssistant() {
   window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT));
 }
 
+export function isAllowedAssistantAction(action) {
+  if (!action || action.type !== 'confirm_api' || action.kind !== 'time_entry_approval') return false;
+  const method = String(action.method || '').toLowerCase();
+  const body = action.body && typeof action.body === 'object' && !Array.isArray(action.body) ? action.body : {};
+  if (method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/approve$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    return keys.every(key => key === 'note') && (body.note == null || (typeof body.note === 'string' && body.note.length <= 500));
+  }
+  if (method === 'post' && action.endpoint === '/admin/entries/bulk-approve') {
+    const keys = Object.keys(body);
+    return keys.length === 1 && keys[0] === 'ids' && Array.isArray(body.ids) &&
+      body.ids.length >= 1 && body.ids.length <= 20 && body.ids.every(id => Number.isInteger(id) && id > 0);
+  }
+  return false;
+}
+
 export default function AppAssistant() {
   const { user } = useAuth();
   const location = useLocation();
@@ -58,6 +74,7 @@ export default function AppAssistant() {
   const endRef = useRef(null);
   const requestVersionRef = useRef(0);
   const pendingRef = useRef(false);
+  const pendingActionsRef = useRef(new Set());
 
   useEffect(() => {
     const show = () => setOpen(true);
@@ -86,6 +103,7 @@ export default function AppAssistant() {
   useEffect(() => {
     requestVersionRef.current += 1;
     pendingRef.current = false;
+    pendingActionsRef.current.clear();
     setOpen(false);
     setMessages([]);
     setDraft('');
@@ -96,6 +114,47 @@ export default function AppAssistant() {
 
   const go = action => {
     if (action?.type === 'navigate' && action.path) navigate(action.path);
+  };
+
+  const updateAction = (messageId, actionIndex, changes) => {
+    setMessages(previous => previous.map(item => item.id !== messageId ? item : {
+      ...item,
+      actions: item.actions.map((action, index) => index === actionIndex ? { ...action, ...changes } : action),
+    }));
+  };
+
+  const confirmAction = async (messageId, actionIndex, action) => {
+    if (action.status === 'running' || action.status === 'completed') return;
+    const pendingKey = `${messageId}:${actionIndex}`;
+    if (pendingActionsRef.current.has(pendingKey)) return;
+    if (!isAllowedAssistantAction(action)) {
+      updateAction(messageId, actionIndex, { status: 'failed', result_message: t.actionFailed });
+      return;
+    }
+    pendingActionsRef.current.add(pendingKey);
+    updateAction(messageId, actionIndex, { status: 'running', result_message: '' });
+    try {
+      const method = String(action.method).toLowerCase();
+      const response = method === 'patch'
+        ? await api.patch(action.endpoint, action.body || {})
+        : await api.post(action.endpoint, action.body);
+      let resultMessage = action.success_message || t.completed;
+      if (action.endpoint === '/admin/entries/bulk-approve' && Number.isFinite(Number(response?.data?.approved))) {
+        const approved = Number(response.data.approved);
+        const skipped = Number(response.data.skipped_locked) || 0;
+        resultMessage = t.approvedCount.replace('{n}', approved);
+        if (skipped) resultMessage += ` ${t.skippedLockedCount.replace('{n}', skipped)}`;
+      }
+      updateAction(messageId, actionIndex, { status: 'completed', result_message: resultMessage });
+      window.dispatchEvent(new CustomEvent('opsfloa:assistant-action-complete', { detail: { kind: action.kind } }));
+    } catch (err) {
+      updateAction(messageId, actionIndex, {
+        status: 'failed',
+        result_message: err?.response?.data?.error || t.actionFailed,
+      });
+    } finally {
+      pendingActionsRef.current.delete(pendingKey);
+    }
   };
 
   const send = async text => {
@@ -177,9 +236,46 @@ export default function AppAssistant() {
               {item.content}
               {item.actions?.length > 0 && (
                 <div className="app-assistant-actions">
-                  {item.actions.map(action => (
+                  {item.actions.map((action, actionIndex) => action.type === 'navigate' ? (
                     <button key={`${action.type}-${action.path}`} type="button" className="app-assistant-action" onClick={() => go(action)}>{action.label}</button>
-                  ))}
+                  ) : action.type === 'confirm_api' ? (
+                    <div key={`${action.type}-${action.kind}-${actionIndex}`} className="app-assistant-confirmation">
+                      <strong>{action.title}</strong>
+                      {action.summary && <p>{action.summary}</p>}
+                      {action.details?.length > 0 && (
+                        <ul>
+                          {action.details.map((detail, detailIndex) => (
+                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.time, detail.project].filter(Boolean).join(' | ')}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {action.result_message && (
+                        <div className={`app-assistant-action-result ${action.status === 'failed' ? 'failed' : ''}`} role={action.status === 'failed' ? 'alert' : 'status'}>
+                          {action.result_message}
+                        </div>
+                      )}
+                      {!['completed', 'canceled'].includes(action.status) && (
+                        <div className="app-assistant-confirm-buttons">
+                          <button
+                            type="button"
+                            className="app-assistant-confirm"
+                            disabled={action.status === 'running'}
+                            onClick={() => confirmAction(item.id, actionIndex, action)}
+                          >
+                            {action.status === 'running' ? t.working : (action.confirm_label || t.confirm)}
+                          </button>
+                          <button
+                            type="button"
+                            className="app-assistant-cancel"
+                            disabled={action.status === 'running'}
+                            onClick={() => updateAction(item.id, actionIndex, { status: 'canceled', result_message: t.canceled })}
+                          >
+                            {action.cancel_label || t.cancel}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : null)}
                 </div>
               )}
             </div>
