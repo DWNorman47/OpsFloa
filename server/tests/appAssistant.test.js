@@ -807,6 +807,107 @@ describe('app assistant service', () => {
     expect(prepared.actions[0].summary).toMatch(/Other shifts in the recurring series will remain scheduled/i);
   });
 
+  test('prepares an atomic monthly shift series and clamps month-end dates', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 12, worker_name: 'Nora Bennett' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 31, name: 'Mesa Drainage', job_number: 'M-17' }] })
+      .mockResolvedValueOnce({ rows: [{ has_overlap: false, outside_availability: false }] })
+      .mockResolvedValueOnce({ rows: [{ has_overlap: true, outside_availability: false }] })
+      .mockResolvedValueOnce({ rows: [{ has_overlap: false, outside_availability: true }] });
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'prepare_shift_series_creation',
+      {
+        worker_name: 'Nora Bennett',
+        project_name: 'Mesa Drainage',
+        start_date: '2027-01-31',
+        start_time: '08:00',
+        end_time: '16:30',
+        repeat: 'monthly',
+        occurrences: 3,
+        notes: 'Monthly inspection',
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'create_shift_series',
+      count: 3,
+      warning_count: 2,
+      first_date: '2027-01-31',
+      last_date: '2027-03-31',
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'shift_series_creation',
+      method: 'post',
+      endpoint: '/shifts/admin/series',
+      body: {
+        user_id: 12,
+        project_id: 31,
+        dates: ['2027-01-31', '2027-02-28', '2027-03-31'],
+        start_time: '08:00',
+        end_time: '16:30',
+        notes: 'Monthly inspection',
+      },
+    }));
+    expect(prepared.actions[0].details).toHaveLength(3);
+    expect(prepared.actions[0].details[1].description).toBe('Overlapping shift');
+    expect(prepared.actions[0].details[2].description).toBe('Outside availability');
+  });
+
+  test('prepares future-only cancellation for an entire recurring shift series', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [12] } };
+    const groupId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+    const shift = {
+      id: 44,
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      project_name: 'Mesa Drainage',
+      shift_date: '2026-10-10',
+      start_time: '08:00:00',
+      end_time: '16:00:00',
+      updated_at: '2026-09-26T18:00:00.000Z',
+      recurrence_group_id: groupId,
+    };
+    const upcoming = [
+      { ...shift, shift_date: '2026-10-10' },
+      { ...shift, shift_date: '2026-10-17' },
+      { ...shift, shift_date: '2026-10-24' },
+    ];
+    pool.query
+      .mockResolvedValueOnce({ rows: [shift] })
+      .mockResolvedValueOnce({ rows: [shift] })
+      .mockResolvedValueOnce({ rows: upcoming });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'find_shifts',
+      { from: '2026-10-01', to: '2026-10-31' }
+    );
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'prepare_shift_series_cancellation',
+      { shift_ref: found.result.shifts[0].shift_ref }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: true, action: 'cancel_shift_series', count: 3 }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'shift_series_cancellation',
+      danger: true,
+      method: 'delete',
+      endpoint: `/shifts/admin/series/${groupId}`,
+    }));
+    expect(prepared.actions[0].details).toHaveLength(3);
+    expect(prepared.actions[0].summary).toMatch(/Past shifts will be preserved/i);
+    expect(pool.query.mock.calls[1][0]).toMatch(/s\.user_id = ANY\(\$3::int\[\]\)/);
+    expect(pool.query.mock.calls[2][0]).toMatch(/s\.shift_date >= CURRENT_DATE/);
+  });
+
   test('reimbursement search enforces permission and bounded date windows before querying', async () => {
     const denied = await executeAssistantTool(req, new Set(), 'find_reimbursements', {});
     expect(denied.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));

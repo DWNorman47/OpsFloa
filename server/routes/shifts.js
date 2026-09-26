@@ -8,6 +8,11 @@ const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { logAudit } = require('../auditLog');
 const { weekRange } = require('../utils/weekBounds');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { isValidIsoDate } = require('../utils/payPeriods');
+const crypto = require('crypto');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHIFT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // node-pg returns a DATE column as a Date at local midnight — interpolating it raw yields
 // "Thu Jul 30 2026 00:00:00 GMT…" and .toString().substring(0,10) yields "Thu Jul 30" (no
@@ -89,6 +94,77 @@ router.post('/admin', requireAdmin, shiftWriteLimiter, async (req, res) => {
     createInboxItem(user_id, companyId, 'shift_assigned', 'New shift assigned', shiftBody, '/timeclock#schedule');
     res.status(201).json(shift);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /admin/shifts/series — atomically create one bounded recurring series.
+router.post('/admin/series', requireAdmin, shiftWriteLimiter, async (req, res) => {
+  const { user_id, project_id, start_time, end_time } = req.body;
+  const dates = Array.isArray(req.body.dates) ? req.body.dates : [];
+  if (!Number.isInteger(user_id) || user_id <= 0) return res.status(400).json({ error: 'Invalid worker' });
+  if (project_id !== null && project_id !== undefined && (!Number.isInteger(project_id) || project_id <= 0)) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
+  if (dates.length < 2 || dates.length > 12 || dates.some(date => !isValidIsoDate(date))) {
+    return res.status(400).json({ error: 'dates must contain 2 to 12 valid YYYY-MM-DD dates' });
+  }
+  if (new Set(dates).size !== dates.length || dates.some((date, index) => index > 0 && date <= dates[index - 1])) {
+    return res.status(400).json({ error: 'dates must be unique and chronological' });
+  }
+  if (!SHIFT_TIME_RE.test(start_time || '') || !SHIFT_TIME_RE.test(end_time || '') || start_time === end_time) {
+    return res.status(400).json({ error: 'Use distinct HH:MM start and end times' });
+  }
+  if (req.body.notes != null && typeof req.body.notes !== 'string') return res.status(400).json({ error: 'notes must be text' });
+  const notes = req.body.notes?.trim() || null;
+  if (notes && notes.length > 500) return res.status(400).json({ error: 'notes too long (max 500 characters)' });
+
+  const companyId = req.user.company_id;
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const worker = await client.query(
+      'SELECT id, full_name FROM users WHERE id = $1 AND company_id = $2 AND active = true',
+      [user_id, companyId]
+    );
+    if (worker.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Worker not found' });
+    }
+    if (!(await projectBelongsToCompany(client, project_id, companyId))) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid project' });
+    }
+
+    const groupId = crypto.randomUUID();
+    const inserted = await client.query(
+      `WITH inserted AS (
+         INSERT INTO shifts (company_id, user_id, project_id, shift_date, start_time, end_time, notes, recurrence_group_id)
+         SELECT $1, $2, $3, d, $5::time, $6::time, $7, $8::uuid
+           FROM unnest($4::date[]) AS d
+         RETURNING *
+       )
+       SELECT s.*, u.full_name AS worker_name, p.name AS project_name
+         FROM inserted s
+         JOIN users u ON u.id = s.user_id AND u.company_id = s.company_id
+         LEFT JOIN projects p ON p.id = s.project_id AND p.company_id = s.company_id
+        ORDER BY s.shift_date, s.start_time`,
+      [companyId, user_id, project_id || null, dates, start_time, end_time, notes, groupId]
+    );
+    await client.query('COMMIT');
+
+    logAudit(companyId, req.user.id, req.user.full_name, 'shift.series_created', 'shift', groupId, worker.rows[0].full_name,
+      { user_id, project_id: project_id || null, count: inserted.rows.length, first_date: dates[0], last_date: dates[dates.length - 1] });
+    const body = `${inserted.rows.length} recurring shifts · ${dates[0]}–${dates[dates.length - 1]}`;
+    sendPushToUser(user_id, { title: 'Recurring shifts assigned', body, url: '/timeclock' });
+    createInboxItem(user_id, companyId, 'shift_assigned', 'Recurring shifts assigned', body, '/timeclock#schedule');
+    res.status(201).json({ items: inserted.rows, count: inserted.rows.length, recurrence_group_id: groupId });
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'route error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client?.release();
+  }
 });
 
 // PATCH /admin/shifts/:id — edit a shift
@@ -188,6 +264,7 @@ router.patch('/:id/cant-make-it', requireAuth, shiftWriteLimiter, async (req, re
 router.delete('/admin/series/:groupId', requireAdmin, shiftWriteLimiter, async (req, res) => {
   const companyId = req.user.company_id;
   const { groupId } = req.params;
+  if (!UUID_RE.test(groupId)) return res.status(400).json({ error: 'Invalid recurrence group' });
   try {
     // Only delete today-and-future shifts so past records are preserved
     const result = await pool.query(

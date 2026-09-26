@@ -91,6 +91,7 @@ function validSplitSegments(segments) {
 
 const REIMBURSEMENT_ACTION_ENDPOINT = /^\/reimbursements\/admin\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHIFT_ACTION_ENDPOINT = /^\/shifts\/admin\/[1-9]\d{0,9}$/;
+const SHIFT_SERIES_ACTION_ENDPOINT = /^\/shifts\/admin\/series\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function validReimbursementActionBody(body, expectedStatus, reasonRequired) {
   const keys = Object.keys(body);
@@ -113,6 +114,18 @@ function validShiftActionBody(body, { includeWorker = false, includeVersion = fa
   if (actionTimeSeconds(body.start_time) === actionTimeSeconds(body.end_time)) return false;
   if (body.notes !== null && (typeof body.notes !== 'string' || body.notes.length > 500)) return false;
   return !includeVersion || validActionVersion(body.updated_at);
+}
+
+function validShiftSeriesActionBody(body) {
+  const required = ['user_id', 'project_id', 'dates', 'start_time', 'end_time', 'notes'];
+  const keys = Object.keys(body);
+  if (keys.length !== required.length || !keys.every(key => required.includes(key))) return false;
+  if (!Number.isInteger(body.user_id) || body.user_id <= 0) return false;
+  if (body.project_id !== null && (!Number.isInteger(body.project_id) || body.project_id <= 0)) return false;
+  if (!Array.isArray(body.dates) || body.dates.length < 2 || body.dates.length > 12 || !body.dates.every(validActionDate)) return false;
+  if (new Set(body.dates).size !== body.dates.length || body.dates.some((date, index) => index > 0 && date <= body.dates[index - 1])) return false;
+  if (!validActionTime(body.start_time) || !validActionTime(body.end_time) || actionTimeSeconds(body.start_time) === actionTimeSeconds(body.end_time)) return false;
+  return body.notes === null || (typeof body.notes === 'string' && body.notes.length <= 500);
 }
 
 export function isAllowedAssistantAction(action) {
@@ -184,10 +197,16 @@ export function isAllowedAssistantAction(action) {
   if (action.kind === 'shift_creation' && method === 'post' && action.endpoint === '/shifts/admin') {
     return validShiftActionBody(body, { includeWorker: true });
   }
+  if (action.kind === 'shift_series_creation' && method === 'post' && action.endpoint === '/shifts/admin/series') {
+    return validShiftSeriesActionBody(body);
+  }
   if (action.kind === 'shift_edit' && method === 'patch' && SHIFT_ACTION_ENDPOINT.test(action.endpoint || '')) {
     return validShiftActionBody(body, { includeVersion: true });
   }
   if (action.kind === 'shift_cancellation' && method === 'delete' && SHIFT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return Object.keys(body).length === 0;
+  }
+  if (action.kind === 'shift_series_cancellation' && method === 'delete' && SHIFT_SERIES_ACTION_ENDPOINT.test(action.endpoint || '')) {
     return Object.keys(body).length === 0;
   }
   return false;
@@ -423,7 +442,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation', 'reimbursement_rejection', 'reimbursement_unapproval', 'shift_cancellation'].includes(action.kind) ? ' danger' : ''}`}
+                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation', 'reimbursement_rejection', 'reimbursement_unapproval', 'shift_cancellation', 'shift_series_cancellation'].includes(action.kind) ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >

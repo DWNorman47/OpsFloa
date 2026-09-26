@@ -469,7 +469,7 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...restore, kind: 'reimbursement_unapproval' })).toBe(false);
   });
 
-  test('confirmation allowlist tightly scopes individual shift actions', () => {
+  test('confirmation allowlist tightly scopes individual and recurring shift actions', () => {
     const create = {
       type: 'confirm_api',
       kind: 'shift_creation',
@@ -504,10 +504,32 @@ describe('AppAssistant', () => {
       method: 'delete',
       endpoint: '/shifts/admin/42',
     };
+    const seriesCreation = {
+      type: 'confirm_api',
+      kind: 'shift_series_creation',
+      method: 'post',
+      endpoint: '/shifts/admin/series',
+      body: {
+        user_id: 12,
+        project_id: 31,
+        dates: ['2027-01-31', '2027-02-28', '2027-03-31'],
+        start_time: '08:00',
+        end_time: '16:30',
+        notes: 'Monthly inspection',
+      },
+    };
+    const seriesCancellation = {
+      type: 'confirm_api',
+      kind: 'shift_series_cancellation',
+      method: 'delete',
+      endpoint: '/shifts/admin/series/7c9e6679-7425-40de-944b-e07fc1f90ae7',
+    };
 
     expect(isAllowedAssistantAction(create)).toBe(true);
     expect(isAllowedAssistantAction(edit)).toBe(true);
     expect(isAllowedAssistantAction(cancellation)).toBe(true);
+    expect(isAllowedAssistantAction(seriesCreation)).toBe(true);
+    expect(isAllowedAssistantAction(seriesCancellation)).toBe(true);
     expect(isAllowedAssistantAction({ ...create, body: { ...create.body, recurrence_group_id: 'x' } })).toBe(false);
     expect(isAllowedAssistantAction({ ...create, body: { ...create.body, user_id: '12' } })).toBe(false);
     expect(isAllowedAssistantAction({ ...create, body: { ...create.body, shift_date: '2026-02-30' } })).toBe(false);
@@ -516,6 +538,12 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...edit, endpoint: '/shifts/admin/0' })).toBe(false);
     expect(isAllowedAssistantAction({ ...cancellation, body: { all: true } })).toBe(false);
     expect(isAllowedAssistantAction({ ...cancellation, endpoint: '/shifts/admin/series/abc' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...seriesCreation, body: { ...seriesCreation.body, dates: ['2027-01-31'] } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...seriesCreation, body: { ...seriesCreation.body, dates: ['2027-02-28', '2027-01-31'] } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...seriesCreation, body: { ...seriesCreation.body, dates: ['2027-01-31', '2027-01-31'] } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...seriesCreation, body: { ...seriesCreation.body, repeat: 'weekly' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...seriesCancellation, endpoint: '/shifts/admin/series/not-a-uuid' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...seriesCancellation, body: { include_past: true } })).toBe(false);
   });
 
   test('confirmation allowlist only accepts a reasoned single-entry rejection', () => {
