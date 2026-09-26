@@ -32,7 +32,8 @@ describe('app assistant service', () => {
   test('system policy requires confirmation and keeps other writes unavailable', () => {
     expect(ASSISTANT_SYSTEM).toMatch(/confirmation card/i);
     expect(ASSISTANT_SYSTEM).toMatch(/Never say a change is complete/i);
-    expect(ASSISTANT_SYSTEM).toMatch(/Rejection requires a written reason/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/require a written reason/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/allowance override must be explicitly requested/i);
     expect(ASSISTANT_SYSTEM).toMatch(/All other writes remain unavailable/i);
   });
 
@@ -161,6 +162,190 @@ describe('app assistant service', () => {
     expect(output.result.scope).toBe('assigned_workers');
     expect(pool.query.mock.calls[0][0]).toMatch(/r\.user_id = ANY\(\$4::int\[\]\)/);
     expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '2026-10-01', '2026-12-31', [12, 14], '%Nora%', 12]);
+  });
+
+  test('prepares a confirmed time-off approval with an explicit allowance override', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const requestRow = {
+      id: 55,
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      type: 'vacation',
+      start_date: '2026-10-05',
+      end_date: '2026-10-06',
+      hours: null,
+      status: 'pending',
+      in_locked_period: false,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [requestRow] })
+      .mockResolvedValueOnce({ rows: [requestRow] });
+
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'find_time_off_requests',
+      { from: '2026-10-01', to: '2026-10-31', status: 'pending' }
+    );
+    const reference = found.result.time_off_requests[0].time_off_ref;
+    expect(reference).toEqual(expect.any(String));
+    expect(found.result.time_off_requests[0].id).toBeUndefined();
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_off_approval',
+      { time_off_ref: reference, review_note: 'Coverage arranged', confirm_allowance_override: true }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'approve_time_off',
+      allowance_override: true,
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      type: 'confirm_api',
+      kind: 'time_off_approval',
+      danger: true,
+      endpoint: '/time-off/55/approve',
+      method: 'patch',
+      body: { review_note: 'Coverage arranged', confirm: true },
+    }));
+    expect(prepared.actions[0].details[0]).toEqual(expect.objectContaining({
+      worker: 'Nora Bennett',
+      date: '2026-10-05 - 2026-10-06',
+      type: 'Vacation',
+      time: 'Full day',
+    }));
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('requires a reason before preparing a time-off denial', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const requestRow = {
+      id: 56,
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      type: 'personal',
+      start_date: '2026-10-10',
+      end_date: '2026-10-10',
+      hours: '4.00',
+      status: 'pending',
+      in_locked_period: false,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [requestRow] })
+      .mockResolvedValueOnce({ rows: [requestRow] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'find_time_off_requests',
+      { from: '2026-10-01', to: '2026-10-31' }
+    );
+    const reference = found.result.time_off_requests[0].time_off_ref;
+
+    const invalid = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_off_denial',
+      { time_off_ref: reference, reason: ' ' }
+    );
+    expect(invalid.result).toEqual(expect.objectContaining({ ok: false, error: 'denial_reason_required' }));
+    expect(pool.query).toHaveBeenCalledTimes(1);
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_off_denial',
+      { time_off_ref: reference, reason: 'Coverage is unavailable' }
+    );
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'time_off_denial',
+      danger: true,
+      reason: 'Coverage is unavailable',
+      endpoint: '/time-off/56/deny',
+      body: { review_note: 'Coverage is unavailable' },
+    }));
+    expect(prepared.actions[0].details[0]).toEqual(expect.objectContaining({ type: 'Personal', time: '4 hours' }));
+  });
+
+  test('refuses a locked time-off revocation and prepares it after a fresh unlocked check', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const requestRow = {
+      id: 57,
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      type: 'sick',
+      start_date: '2026-09-18',
+      end_date: '2026-09-18',
+      hours: null,
+      status: 'approved',
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [requestRow] })
+      .mockResolvedValueOnce({ rows: [{ ...requestRow, in_locked_period: true }] })
+      .mockResolvedValueOnce({ rows: [{ ...requestRow, in_locked_period: false }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'find_time_off_requests',
+      { from: '2026-09-01', to: '2026-09-30', status: 'approved' }
+    );
+    const reference = found.result.time_off_requests[0].time_off_ref;
+
+    const locked = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_off_revocation',
+      { time_off_ref: reference, reason: 'Worker returned' }
+    );
+    expect(locked.result).toEqual(expect.objectContaining({ ok: false, error: 'time_off_not_revocable' }));
+    expect(locked.result.detail).toMatch(/locked pay period/i);
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_off_revocation',
+      { time_off_ref: reference, reason: 'Worker returned' }
+    );
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'time_off_revocation',
+      danger: true,
+      endpoint: '/time-off/57/revoke',
+      body: { reason: 'Worker returned' },
+    }));
+  });
+
+  test('time-off references cannot be reused by another signed-in user', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 58,
+        user_id: 12,
+        worker_name: 'Nora Bennett',
+        type: 'vacation',
+        start_date: '2026-10-20',
+        end_date: '2026-10-20',
+        status: 'pending',
+      }],
+    });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'find_time_off_requests',
+      { from: '2026-10-01', to: '2026-10-31' }
+    );
+    const otherAdmin = { ...adminReq, user: { ...adminReq.user, id: 99, full_name: 'Other Admin' } };
+    const prepared = await executeAssistantTool(
+      otherAdmin,
+      new Set(['approve_entries']),
+      'prepare_time_off_approval',
+      { time_off_ref: found.result.time_off_requests[0].time_off_ref }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'invalid_time_off_reference' }));
+    expect(pool.query).toHaveBeenCalledTimes(1);
   });
 
   test('workers can search their own reimbursements without exposing receipt or accounting identifiers', async () => {

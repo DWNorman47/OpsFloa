@@ -122,6 +122,22 @@ export function isAllowedAssistantAction(action) {
       (!keys.includes('work_date') || validDate(body.work_date)) &&
       (!keys.includes('project_id') || body.project_id === null || (Number.isInteger(body.project_id) && body.project_id > 0));
   }
+  if (action.kind === 'time_off_approval' && method === 'patch' && /^\/time-off\/[1-9]\d{0,9}\/approve$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    return keys.every(key => ['review_note', 'confirm'].includes(key)) &&
+      (!keys.includes('review_note') || (typeof body.review_note === 'string' && body.review_note.length <= 500)) &&
+      (!keys.includes('confirm') || body.confirm === true);
+  }
+  if (action.kind === 'time_off_denial' && method === 'patch' && /^\/time-off\/[1-9]\d{0,9}\/deny$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    return keys.length === 1 && keys[0] === 'review_note' && typeof body.review_note === 'string' &&
+      body.review_note.trim().length >= 2 && body.review_note.length <= 500;
+  }
+  if (action.kind === 'time_off_revocation' && method === 'patch' && /^\/time-off\/[1-9]\d{0,9}\/revoke$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    return keys.length === 1 && keys[0] === 'reason' && typeof body.reason === 'string' &&
+      body.reason.trim().length >= 2 && body.reason.length <= 500;
+  }
   return false;
 }
 
@@ -310,12 +326,15 @@ export default function AppAssistant() {
                       {action.details?.length > 0 && (
                         <ul>
                           {action.details.map((detail, detailIndex) => (
-                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.time, detail.project].filter(Boolean).join(' | ')}</li>
+                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.type, detail.time, detail.project].filter(Boolean).join(' | ')}</li>
                           ))}
                         </ul>
                       )}
                       {action.kind === 'time_entry_rejection' && typeof action.body?.note === 'string' && (
                         <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.body.note}</p>
+                      )}
+                      {['time_off_denial', 'time_off_revocation'].includes(action.kind) && typeof action.reason === 'string' && (
+                        <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.reason}</p>
                       )}
                       {action.changes?.length > 0 && (
                         <dl className="app-assistant-changes">
@@ -347,7 +366,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval'].includes(action.kind) ? ' danger' : ''}`}
+                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation'].includes(action.kind) ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >

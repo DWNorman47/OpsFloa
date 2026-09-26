@@ -134,6 +134,46 @@ describe('AppAssistant', () => {
     expect(await screen.findByText('Time entry rejected.')).toBeInTheDocument();
   });
 
+  test('shows the reason and requires a destructive click before denying time off', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        message: 'Please confirm this time-off denial.',
+        actions: [{
+          type: 'confirm_api',
+          kind: 'time_off_denial',
+          danger: true,
+          title: 'Deny time off?',
+          summary: 'The worker will be notified with this reason.',
+          reason_label: 'Reason',
+          reason: 'Coverage is unavailable',
+          confirm_label: 'Deny request',
+          cancel_label: 'Cancel',
+          success_message: 'Time-off request denied.',
+          details: [{ worker: 'Nora Bennett', date: '2026-10-10', type: 'Personal', time: '4 hours' }],
+          method: 'patch',
+          endpoint: '/time-off/56/deny',
+          body: { review_note: 'Coverage is unavailable' },
+        }],
+      },
+    });
+    api.patch.mockResolvedValue({ data: { id: 56, status: 'denied' } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: 'Deny Nora time off because coverage is unavailable' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Deny time off?')).toBeInTheDocument();
+    expect(screen.getByText('Nora Bennett | 2026-10-10 | Personal | 4 hours')).toBeInTheDocument();
+    expect(screen.getByText('Reason:')).toBeInTheDocument();
+    expect(screen.getByText('Coverage is unavailable')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Deny request' });
+    expect(confirm).toHaveClass('danger');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/time-off/56/deny', { review_note: 'Coverage is unavailable' }));
+    expect(await screen.findByText('Time-off request denied.')).toBeInTheDocument();
+  });
+
   test('requires a destructive confirmation before undoing an approval', async () => {
     api.post.mockResolvedValueOnce({
       data: {
@@ -268,6 +308,42 @@ describe('AppAssistant', () => {
       endpoint: '/admin/companies/delete',
       body: {},
     })).toBe(false);
+  });
+
+  test('confirmation allowlist tightly scopes time-off review actions', () => {
+    const approval = {
+      type: 'confirm_api',
+      kind: 'time_off_approval',
+      method: 'patch',
+      endpoint: '/time-off/55/approve',
+      body: { review_note: 'Coverage arranged', confirm: true },
+    };
+    const denial = {
+      type: 'confirm_api',
+      kind: 'time_off_denial',
+      method: 'patch',
+      endpoint: '/time-off/56/deny',
+      body: { review_note: 'Coverage is unavailable' },
+    };
+    const revocation = {
+      type: 'confirm_api',
+      kind: 'time_off_revocation',
+      method: 'patch',
+      endpoint: '/time-off/57/revoke',
+      body: { reason: 'Worker returned' },
+    };
+
+    expect(isAllowedAssistantAction(approval)).toBe(true);
+    expect(isAllowedAssistantAction({ ...approval, body: {} })).toBe(true);
+    expect(isAllowedAssistantAction({ ...approval, body: { confirm: false } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...approval, body: { ...approval.body, force: true } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...approval, endpoint: '/time-off/12345678901/approve' })).toBe(false);
+    expect(isAllowedAssistantAction(denial)).toBe(true);
+    expect(isAllowedAssistantAction({ ...denial, body: { review_note: ' ' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...denial, endpoint: '/time-off/56/approve' })).toBe(false);
+    expect(isAllowedAssistantAction(revocation)).toBe(true);
+    expect(isAllowedAssistantAction({ ...revocation, body: { reason: '' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...revocation, kind: 'time_off_denial' })).toBe(false);
   });
 
   test('confirmation allowlist only accepts a reasoned single-entry rejection', () => {
