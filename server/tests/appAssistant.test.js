@@ -117,6 +117,282 @@ describe('app assistant service', () => {
     expect(allowed.actions).toEqual([{ type: 'navigate', path: '/timeclock#wf-approvals', label: 'Open Approvals' }]);
   });
 
+  test('reports a clean payroll window as ready for preview and finalization', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const rules = JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'field-pay',
+        name: 'Field Payroll',
+        roles: [1],
+        schedule: { frequency: 'semimonthly', daysOfMonth: [15, 30], weekendShift: 'none' },
+      }],
+    });
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ subscription_status: 'trial', addon_advanced_payroll: false, addon_certified_payroll: false }] })
+      .mockResolvedValueOnce({ rows: [{ key: 'week_start', value: '1' }, { key: 'paycheck_rules', value: rules }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          approved_entries: 4,
+          approved_workers: 1,
+          pending_entries: 0,
+          pending_workers: 0,
+          rejected_entries: 0,
+          approved_paid_leave: 0,
+          open_clocks: 0,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ run_count: 0, check_count: 0 }] });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'view_worker_wages', 'manage_pay_periods']),
+      'get_payroll_readiness',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+
+    expect(output.result).toEqual(expect.objectContaining({
+      ok: true,
+      available: true,
+      scope: 'company',
+      readiness_basis: 'preflight_without_pay_calculation',
+      exact_register_required: true,
+      preview_ready: true,
+      finalization_ready: true,
+      blockers: [],
+      warnings: [],
+    }));
+    expect(output.result.target).toEqual(expect.objectContaining({
+      source: 'requested',
+      pay_window: { from: '2026-09-15', to: '2026-09-15' },
+      work_period: { from: '2026-09-01', to: '2026-09-15' },
+      ruleset: 'Field Payroll',
+      frequency: 'semimonthly',
+      scheduled_checks: 1,
+    }));
+    expect(output.result.counts).toEqual(expect.objectContaining({ payroll_workers: 1, approved_entries: 4 }));
+    expect(pool.query.mock.calls[3][0]).toContain('FROM users u');
+    expect(pool.query.mock.calls[3][1]).toEqual(['company-1', '2026-08-01', '2026-10-30']);
+    expect(pool.query.mock.calls[4][1]).toEqual(['company-1', '2026-09-01', '2026-09-15']);
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*(SELECT|WITH)/i.test(sql))).toBe(true);
+  });
+
+  test('blocks finalization when a worker already has payroll covering the period', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const rules = JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'field-pay',
+        name: 'Field Payroll',
+        roles: [1],
+        schedule: { frequency: 'semimonthly', daysOfMonth: [15, 30] },
+      }],
+    });
+    const worker = { id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ subscription_status: 'trial' }] })
+      .mockResolvedValueOnce({ rows: [{ key: 'paycheck_rules', value: rules }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [worker] })
+      .mockResolvedValueOnce({ rows: [worker] })
+      .mockResolvedValueOnce({ rows: [{ approved_entries: 2, approved_workers: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ run_count: 1, check_count: 1 }] });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'view_worker_wages', 'manage_pay_periods']),
+      'get_payroll_readiness',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+
+    expect(output.result.preview_ready).toBe(true);
+    expect(output.result.finalization_ready).toBe(false);
+    expect(output.result.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'already_finalized' })]));
+    expect(output.result.counts).toEqual(expect.objectContaining({
+      finalized_runs_covering_period: 1,
+      finalized_checks_covering_period: 1,
+    }));
+  });
+
+  test('defaults payroll readiness to the newest closed scheduled period', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const today = new Date();
+    const prior = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 10));
+    const year = prior.getUTCFullYear();
+    const month = String(prior.getUTCMonth() + 1).padStart(2, '0');
+    const workDate = `${year}-${month}-10`;
+    const payDate = `${year}-${month}-15`;
+    const periodStart = `${year}-${month}-01`;
+    const rules = JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'field-pay',
+        name: 'Field Payroll',
+        roles: [1],
+        schedule: { frequency: 'semimonthly', daysOfMonth: [15, 30], weekendShift: 'none' },
+      }],
+    });
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ subscription_status: 'exempt' }] })
+      .mockResolvedValueOnce({ rows: [{ key: 'week_start', value: '1' }, { key: 'paycheck_rules', value: rules }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ first: workDate, last: workDate }] })
+      .mockResolvedValueOnce({ rows: [{ role_id: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' }] })
+      .mockResolvedValueOnce({ rows: [{ approved_entries: 1, approved_workers: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ run_count: 0, check_count: 0 }] });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'view_worker_wages', 'manage_pay_periods']),
+      'get_payroll_readiness',
+      {}
+    );
+
+    expect(output.result.preview_ready).toBe(true);
+    expect(output.result.finalization_ready).toBe(true);
+    expect(output.result.target).toEqual(expect.objectContaining({
+      source: 'latest_closed_period',
+      pay_window: { from: payDate, to: payDate },
+      work_period: { from: periodStart, to: payDate },
+      ruleset: 'Field Payroll',
+    }));
+  });
+
+  test('separates payroll setup blockers from pending-time review warnings', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const rules = JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'field-pay',
+        name: 'Field Payroll',
+        roles: [1],
+        schedule: { frequency: 'semimonthly', daysOfMonth: [15, 30] },
+      }],
+    });
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ subscription_status: 'trial' }] })
+      .mockResolvedValueOnce({ rows: [{ key: 'paycheck_rules', value: rules }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: null, role_name: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: null, role_name: null }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          approved_entries: 1,
+          approved_workers: 1,
+          pending_entries: 2,
+          pending_workers: 1,
+          rejected_entries: 1,
+          approved_paid_leave: 0,
+          open_clocks: 1,
+        }],
+      });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'view_worker_wages', 'manage_pay_periods']),
+      'get_payroll_readiness',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+
+    expect(output.result.preview_ready).toBe(false);
+    expect(output.result.finalization_ready).toBe(false);
+    expect(output.result.blockers.map(item => item.code)).toEqual(expect.arrayContaining(['worker_setup_errors', 'no_payable_workers']));
+    expect(output.result.warnings.map(item => item.code)).toEqual(expect.arrayContaining(['pending_time', 'rejected_time', 'open_clocks']));
+    expect(output.result.setup_errors).toEqual([expect.objectContaining({ worker: 'Jordan Lee', reason: 'no_role' })]);
+    expect(pool.query).toHaveBeenCalledTimes(6);
+  });
+
+  test('reports when Advanced Payroll is unavailable without loading payroll data', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({
+      rows: [{ subscription_status: 'active', addon_advanced_payroll: false, addon_certified_payroll: false }],
+    });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'view_worker_wages']),
+      'get_payroll_readiness',
+      {}
+    );
+
+    expect(output.result).toEqual(expect.objectContaining({
+      ok: true,
+      available: false,
+      preview_ready: false,
+      finalization_ready: false,
+    }));
+    expect(output.result.blockers[0].code).toBe('advanced_payroll_required');
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  test('requires an exact ruleset for a custom range with multiple rulesets', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const rules = JSON.stringify({
+      version: 1,
+      rulesets: [
+        { id: 'weekly', name: 'Weekly', roles: [1], schedule: { frequency: 'weekly', payWeekday: 5 } },
+        { id: 'monthly', name: 'Monthly', roles: [2], schedule: { frequency: 'monthly', dayOfMonth: 30 } },
+      ],
+    });
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ subscription_status: 'exempt' }] })
+      .mockResolvedValueOnce({ rows: [{ key: 'paycheck_rules', value: rules }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'view_worker_wages', 'manage_pay_periods']),
+      'get_payroll_readiness',
+      { from: '2026-09-01', to: '2026-09-30' }
+    );
+
+    expect(output.result.preview_ready).toBe(false);
+    expect(output.result.blockers[0].code).toBe('ruleset_required');
+    expect(output.result.available_rulesets).toEqual(['Weekly', 'Monthly']);
+    expect(pool.query).toHaveBeenCalledTimes(3);
+  });
+
+  test('does not claim company-wide payroll readiness for a scoped manager', async () => {
+    const scopedReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [7] } };
+    const rules = JSON.stringify({
+      version: 1,
+      rulesets: [{
+        id: 'field-pay',
+        name: 'Field Payroll',
+        roles: [1],
+        schedule: { frequency: 'semimonthly', daysOfMonth: [15, 30] },
+      }],
+    });
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ subscription_status: 'trial' }] })
+      .mockResolvedValueOnce({ rows: [{ key: 'paycheck_rules', value: rules }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, full_name: 'Jordan Lee', role_id: 1, role_name: 'Operator' }] })
+      .mockResolvedValueOnce({ rows: [{ approved_entries: 2, approved_workers: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ run_count: 0, check_count: 0 }] });
+
+    const output = await executeAssistantTool(
+      scopedReq,
+      new Set(['view_reports', 'view_worker_wages', 'manage_pay_periods']),
+      'get_payroll_readiness',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+
+    expect(output.result.scope).toBe('assigned_workers');
+    expect(output.result.preview_ready).toBe(true);
+    expect(output.result.finalization_ready).toBeNull();
+    expect(output.result.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'limited_scope' })]));
+    const scopedSql = pool.query.mock.calls.map(call => call[0]).join('\n');
+    expect(scopedSql).toMatch(/pw\.id = ANY/);
+    expect(scopedSql).toMatch(/u\.id = ANY/);
+  });
+
   test('prepares but does not execute a scoped time-entry approval', async () => {
     const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
     pool.query.mockResolvedValueOnce({
