@@ -128,6 +128,35 @@ function validShiftSeriesActionBody(body) {
   return body.notes === null || (typeof body.notes === 'string' && body.notes.length <= 500);
 }
 
+function validNullableActionText(value, max) {
+  return value === null || (typeof value === 'string' && value.length <= max);
+}
+
+function validProjectCreationBody(body) {
+  const required = [
+    'name', 'client_id', 'job_number', 'address', 'start_date', 'end_date', 'status',
+    'description', 'wage_type', 'prevailing_wage_rate', 'geo_lat', 'geo_lng',
+    'geo_radius_ft', 'is_overhead',
+  ];
+  const keys = Object.keys(body);
+  if (keys.length !== required.length || !keys.every(key => required.includes(key))) return false;
+  if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 200) return false;
+  if (body.client_id !== null && (!Number.isInteger(body.client_id) || body.client_id <= 0)) return false;
+  if (!validNullableActionText(body.job_number, 120) || !validNullableActionText(body.address, 500) || !validNullableActionText(body.description, 2000)) return false;
+  if (body.start_date !== null && !validActionDate(body.start_date)) return false;
+  if (body.end_date !== null && !validActionDate(body.end_date)) return false;
+  if (body.start_date && body.end_date && body.end_date < body.start_date) return false;
+  if (!['planning', 'in_progress', 'on_hold', 'completed'].includes(body.status)) return false;
+  if (!['regular', 'prevailing'].includes(body.wage_type) || typeof body.is_overhead !== 'boolean') return false;
+  if (body.wage_type === 'regular' && body.prevailing_wage_rate !== null) return false;
+  if (body.wage_type === 'prevailing' && (typeof body.prevailing_wage_rate !== 'number' || !Number.isFinite(body.prevailing_wage_rate) || body.prevailing_wage_rate < 0 || body.prevailing_wage_rate > 10000)) return false;
+  const noGeofence = body.geo_lat === null && body.geo_lng === null && body.geo_radius_ft === null;
+  const validGeofence = typeof body.geo_lat === 'number' && Number.isFinite(body.geo_lat) && body.geo_lat >= -90 && body.geo_lat <= 90 &&
+    typeof body.geo_lng === 'number' && Number.isFinite(body.geo_lng) && body.geo_lng >= -180 && body.geo_lng <= 180 &&
+    Number.isInteger(body.geo_radius_ft) && body.geo_radius_ft >= 1 && body.geo_radius_ft <= 1000000;
+  return noGeofence || validGeofence;
+}
+
 export function isAllowedAssistantAction(action) {
   if (!action || action.type !== 'confirm_api') return false;
   const method = String(action.method || '').toLowerCase();
@@ -208,6 +237,9 @@ export function isAllowedAssistantAction(action) {
   }
   if (action.kind === 'shift_series_cancellation' && method === 'delete' && SHIFT_SERIES_ACTION_ENDPOINT.test(action.endpoint || '')) {
     return Object.keys(body).length === 0;
+  }
+  if (action.kind === 'project_creation' && method === 'post' && action.endpoint === '/admin/projects') {
+    return validProjectCreationBody(body);
   }
   return false;
 }

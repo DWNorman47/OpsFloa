@@ -546,6 +546,55 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...seriesCancellation, body: { include_past: true } })).toBe(false);
   });
 
+  test('confirmation allowlist tightly scopes project creation', () => {
+    const valid = {
+      type: 'confirm_api',
+      kind: 'project_creation',
+      method: 'post',
+      endpoint: '/admin/projects',
+      body: {
+        name: 'Mesa Drainage Phase 2',
+        client_id: 22,
+        job_number: 'M-204',
+        address: '1200 E Main St, Mesa, AZ',
+        start_date: '2026-10-05',
+        end_date: '2027-02-28',
+        status: 'planning',
+        description: 'Storm drain extension',
+        wage_type: 'prevailing',
+        prevailing_wage_rate: 48.75,
+        geo_lat: 33.4152,
+        geo_lng: -111.8315,
+        geo_radius_ft: 500,
+        is_overhead: false,
+      },
+    };
+
+    expect(isAllowedAssistantAction(valid)).toBe(true);
+    expect(isAllowedAssistantAction({ ...valid, endpoint: '/admin/projects/22' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, force: true } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, name: ' ' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, end_date: '2026-10-04' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, prevailing_wage_rate: null } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, wage_type: 'regular' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, geo_radius_ft: null } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, client_id: '22' } })).toBe(false);
+
+    const regularNoFence = {
+      ...valid,
+      body: {
+        ...valid.body,
+        client_id: null,
+        wage_type: 'regular',
+        prevailing_wage_rate: null,
+        geo_lat: null,
+        geo_lng: null,
+        geo_radius_ft: null,
+      },
+    };
+    expect(isAllowedAssistantAction(regularNoFence)).toBe(true);
+  });
+
   test('confirmation allowlist only accepts a reasoned single-entry rejection', () => {
     const valid = {
       type: 'confirm_api',

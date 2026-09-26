@@ -35,6 +35,7 @@ describe('app assistant service', () => {
     expect(ASSISTANT_SYSTEM).toMatch(/require a written reason/i);
     expect(ASSISTANT_SYSTEM).toMatch(/allowance override must be explicitly requested/i);
     expect(ASSISTANT_SYSTEM).toMatch(/Shift confirmations must surface overlap or availability warnings/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/Project creation requires an explicit name/i);
     expect(ASSISTANT_SYSTEM).toMatch(/All other writes remain unavailable/i);
   });
 
@@ -927,6 +928,129 @@ describe('app assistant service', () => {
     await executeAssistantTool(req, new Set(['view_projects']), 'find_projects', { search: 'Main' });
     expect(pool.query.mock.calls[0][0]).toMatch(/visible_to_user_ids/);
     expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '%Main%', 7, 8]);
+  });
+
+  test('prepares a validated project creation with an exact active client', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 22, name: 'Copper State Utilities' }] });
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_projects']),
+      'prepare_project_creation',
+      {
+        name: 'Mesa Drainage Phase 2',
+        client_name: 'Copper State Utilities',
+        job_number: 'M-204',
+        address: '1200 E Main St, Mesa, AZ',
+        start_date: '2026-10-05',
+        end_date: '2027-02-28',
+        status: 'planning',
+        description: 'Storm drain extension',
+        wage_type: 'prevailing',
+        prevailing_wage_rate: 48.75,
+        geo_lat: 33.4152,
+        geo_lng: -111.8315,
+        geo_radius_ft: 500,
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'create_project',
+      project_name: 'Mesa Drainage Phase 2',
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'project_creation',
+      method: 'post',
+      endpoint: '/admin/projects',
+      body: {
+        name: 'Mesa Drainage Phase 2',
+        client_id: 22,
+        job_number: 'M-204',
+        address: '1200 E Main St, Mesa, AZ',
+        start_date: '2026-10-05',
+        end_date: '2027-02-28',
+        status: 'planning',
+        description: 'Storm drain extension',
+        wage_type: 'prevailing',
+        prevailing_wage_rate: 48.75,
+        geo_lat: 33.4152,
+        geo_lng: -111.8315,
+        geo_radius_ft: 500,
+        is_overhead: false,
+      },
+    }));
+    expect(prepared.actions[0].summary).toMatch(/QuickBooks customer/i);
+    expect(pool.query.mock.calls[0][1]).toEqual(['company-1', 'Mesa Drainage Phase 2']);
+    expect(pool.query.mock.calls[1][1]).toEqual(['company-1', 'Copper State Utilities']);
+  });
+
+  test('project creation requires both admin role and project-management permission', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const workerDenied = await executeAssistantTool(
+      req,
+      new Set(['manage_projects']),
+      'prepare_project_creation',
+      { name: 'Unauthorized Project' }
+    );
+    const permissionDenied = await executeAssistantTool(
+      adminReq,
+      new Set(['view_projects']),
+      'prepare_project_creation',
+      { name: 'Unauthorized Project' }
+    );
+
+    expect(workerDenied.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));
+    expect(permissionDenied.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('project creation rejects invalid dates and partial geofences before querying', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const invalidDates = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_projects']),
+      'prepare_project_creation',
+      { name: 'Bad Dates', start_date: '2026-10-10', end_date: '2026-10-09' }
+    );
+    const partialGeofence = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_projects']),
+      'prepare_project_creation',
+      { name: 'Partial Fence', geo_lat: 33.4, geo_lng: -111.8 }
+    );
+
+    expect(invalidDates.result.error).toBe('invalid_project_date_range');
+    expect(partialGeofence.result.error).toBe('incomplete_geofence');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('project creation detects active and archived duplicate names', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ name: 'Mesa Drainage', active: true }] })
+      .mockResolvedValueOnce({ rows: [{ name: 'Old Yard', active: false }] });
+
+    const active = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_projects']),
+      'prepare_project_creation',
+      { name: 'Mesa Drainage' }
+    );
+    const archived = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_projects']),
+      'prepare_project_creation',
+      { name: 'Old Yard' }
+    );
+
+    expect(active.result.error).toBe('project_already_exists');
+    expect(archived.result).toEqual(expect.objectContaining({ error: 'archived_project_name_exists' }));
+    expect(archived.result.detail).toMatch(/Restore it instead/i);
   });
 
   test('navigation is permission-aware and produces a bounded client action', async () => {
