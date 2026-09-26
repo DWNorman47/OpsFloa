@@ -31,8 +31,9 @@ router.get('/usage', async (req, res) => {
 
 // --- Global app assistant -------------------------------------------------
 // Conversation history is supplied by the current browser tab and is never
-// persisted here. The service exposes only company-scoped, permission-aware
-// read tools plus reversible navigation; it has no mutation tools.
+// persisted here. The service exposes company-scoped, permission-aware reads,
+// reversible navigation, and narrowly allowlisted actions that the browser must
+// show for explicit confirmation before calling an existing protected route.
 router.post('/assistant', async (req, res) => {
   const message = String((req.body && req.body.message) || '').trim();
   if (message.length < 2) return res.status(400).json({ error: 'Type a question or request.' });

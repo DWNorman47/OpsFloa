@@ -102,6 +102,137 @@ describe('app assistant service', () => {
     expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '2026-09-01', '2026-09-14', [12, 14], 12]);
   });
 
+  test('workers can search only their own time-off requests', async () => {
+    pool.query.mockResolvedValue({
+      rows: [{
+        id: 91,
+        worker_name: 'Jordan Lee',
+        type: 'vacation',
+        start_date: '2026-10-05',
+        end_date: '2026-10-06',
+        hours: null,
+        note: 'Family trip',
+        status: 'pending',
+      }],
+    });
+
+    const output = await executeAssistantTool(
+      req,
+      new Set(),
+      'find_time_off_requests',
+      { from: '2026-10-01', to: '2026-10-31', status: 'pending', type: 'vacation', limit: 5 }
+    );
+
+    expect(output.result).toEqual(expect.objectContaining({ ok: true, scope: 'self', count: 1 }));
+    expect(output.result.time_off_requests[0]).toEqual(expect.objectContaining({
+      worker_name: 'Jordan Lee',
+      start_date: '2026-10-05',
+      end_date: '2026-10-06',
+      status: 'pending',
+    }));
+    expect(output.result.time_off_requests[0].id).toBeUndefined();
+    expect(pool.query.mock.calls[0][0]).toMatch(/r\.user_id = \$4/);
+    expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '2026-10-01', '2026-10-31', 7, 'pending', 'vacation', 5]);
+  });
+
+  test('workers cannot use a name filter to inspect another worker time off', async () => {
+    const output = await executeAssistantTool(
+      req,
+      new Set(),
+      'find_time_off_requests',
+      { worker_name: 'Nora' }
+    );
+
+    expect(output.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('delegated time-off reviewers stay inside worker scope', async () => {
+    const scopedReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [12, 14] } };
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const output = await executeAssistantTool(
+      scopedReq,
+      new Set(['approve_entries']),
+      'find_time_off_requests',
+      { from: '2026-10-01', to: '2026-12-31', worker_name: 'Nora' }
+    );
+
+    expect(output.result.scope).toBe('assigned_workers');
+    expect(pool.query.mock.calls[0][0]).toMatch(/r\.user_id = ANY\(\$4::int\[\]\)/);
+    expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '2026-10-01', '2026-12-31', [12, 14], '%Nora%', 12]);
+  });
+
+  test('workers can search their own reimbursements without exposing receipt or accounting identifiers', async () => {
+    pool.query.mockResolvedValue({
+      rows: [{
+        id: 'private-id',
+        worker_name: 'Jordan Lee',
+        expense_date: '2026-09-18',
+        amount: '84.25',
+        description: 'Fuel for excavator',
+        category: 'Fuel',
+        project_name: 'Mesa Drainage',
+        status: 'pending',
+        receipt_url: 'https://private.example/receipt',
+        qbo_purchase_id: '123',
+      }],
+    });
+
+    const output = await executeAssistantTool(
+      req,
+      new Set(['view_own_reimbursements']),
+      'find_reimbursements',
+      { from: '2026-09-01', to: '2026-09-30', status: 'pending', search: 'fuel' }
+    );
+
+    expect(output.result).toEqual(expect.objectContaining({ ok: true, scope: 'self', count: 1 }));
+    expect(output.result.reimbursements[0]).toEqual(expect.objectContaining({
+      worker_name: 'Jordan Lee',
+      expense_date: '2026-09-18',
+      amount: 84.25,
+      description: 'Fuel for excavator',
+      status: 'pending',
+    }));
+    expect(output.result.reimbursements[0].id).toBeUndefined();
+    expect(output.result.reimbursements[0].receipt_url).toBeUndefined();
+    expect(output.result.reimbursements[0].qbo_purchase_id).toBeUndefined();
+    expect(pool.query.mock.calls[0][0]).toMatch(/r\.user_id = \$4/);
+    expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '2026-09-01', '2026-09-30', 7, 'pending', '%fuel%', 12]);
+  });
+
+  test('delegated reimbursement managers stay inside worker scope', async () => {
+    const scopedReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [12, 14] } };
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const output = await executeAssistantTool(
+      scopedReq,
+      new Set(['manage_reimbursements']),
+      'find_reimbursements',
+      { from: '2026-09-01', to: '2026-09-30', status: 'approved', worker_name: 'Nora', search: 'hotel' }
+    );
+
+    expect(output.result.scope).toBe('assigned_workers');
+    expect(pool.query.mock.calls[0][0]).toMatch(/r\.user_id = ANY\(\$4::int\[\]\)/);
+    expect(pool.query.mock.calls[0][1]).toEqual([
+      'company-1', '2026-09-01', '2026-09-30', [12, 14], 'approved', '%Nora%', '%hotel%', 12,
+    ]);
+  });
+
+  test('reimbursement search enforces permission and bounded date windows before querying', async () => {
+    const denied = await executeAssistantTool(req, new Set(), 'find_reimbursements', {});
+    expect(denied.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));
+
+    const invalid = await executeAssistantTool(
+      req,
+      new Set(['view_own_reimbursements']),
+      'find_reimbursements',
+      { from: '2025-01-01', to: '2026-09-30' }
+    );
+    expect(invalid.result).toEqual(expect.objectContaining({ ok: false, error: 'date_range_too_large' }));
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
   test('project searches preserve worker visibility restrictions', async () => {
     pool.query.mockResolvedValue({ rows: [] });
     await executeAssistantTool(req, new Set(['view_projects']), 'find_projects', { search: 'Main' });
