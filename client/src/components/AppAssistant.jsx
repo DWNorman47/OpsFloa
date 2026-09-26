@@ -62,6 +62,12 @@ export function isAllowedAssistantAction(action) {
     return keys.length === 1 && keys[0] === 'note' && typeof body.note === 'string' &&
       body.note.trim().length >= 2 && body.note.length <= 500;
   }
+  if (action.kind === 'time_entry_unapproval' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/unapprove$/.test(action.endpoint || '')) {
+    return Object.keys(body).length === 0;
+  }
+  if (action.kind === 'time_entry_restore' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/unreject$/.test(action.endpoint || '')) {
+    return Object.keys(body).length === 0;
+  }
   return false;
 }
 
@@ -266,7 +272,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className={`app-assistant-confirm${action.kind === 'time_entry_rejection' ? ' danger' : ''}`}
+                            className={`app-assistant-confirm${['time_entry_rejection', 'time_entry_unapproval'].includes(action.kind) ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >

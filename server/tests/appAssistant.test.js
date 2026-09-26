@@ -31,7 +31,7 @@ describe('app assistant service', () => {
 
   test('system policy requires confirmation and keeps other writes unavailable', () => {
     expect(ASSISTANT_SYSTEM).toMatch(/confirmation card/i);
-    expect(ASSISTANT_SYSTEM).toMatch(/Never say an approval or rejection is complete/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/Never say a change is complete/i);
     expect(ASSISTANT_SYSTEM).toMatch(/Rejection requires a written reason/i);
     expect(ASSISTANT_SYSTEM).toMatch(/All other writes remain unavailable/i);
   });
@@ -241,6 +241,148 @@ describe('app assistant service', () => {
     expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'rejection_reason_required' }));
     expect(prepared.actions).toBeUndefined();
     expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  test('prepares a confirmed approval reversal without changing the entry', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({
+      rows: [{ id: 95, status: 'approved', worker_name: 'Jordan Lee' }],
+    });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'approved' }
+    );
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 95,
+        status: 'approved',
+        work_date: '2026-09-15',
+        start_time: '07:30:00',
+        end_time: '15:30:00',
+        worker_name: 'Jordan Lee',
+        project_name: 'Main Street',
+        in_locked_period: false,
+        in_finalized_payroll: false,
+      }],
+    });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_unapproval',
+      { entry_ref: found.result.time_entries[0].entry_ref }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'unapprove_time_entry',
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'time_entry_unapproval',
+      danger: true,
+      method: 'patch',
+      endpoint: '/admin/entries/95/unapprove',
+      body: {},
+    }));
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('refuses to prepare approval for late time covered by finalized payroll', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 98, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'pending' }
+    );
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 98,
+        status: 'pending',
+        end_ts: '2026-09-15T23:00:00.000Z',
+        in_locked_period: false,
+        in_finalized_payroll: true,
+      }],
+    });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_approval',
+      { entry_refs: [found.result.time_entries[0].entry_ref] }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'entry_not_approvable' }));
+    expect(prepared.result.detail).toMatch(/finalized payroll/i);
+    expect(prepared.actions).toBeUndefined();
+  });
+
+  test('refuses to prepare an approval reversal covered by finalized payroll', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 96, status: 'approved' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'approved' }
+    );
+    pool.query.mockResolvedValueOnce({
+      rows: [{ id: 96, status: 'approved', in_locked_period: false, in_finalized_payroll: true }],
+    });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_unapproval',
+      { entry_ref: found.result.time_entries[0].entry_ref }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'entry_not_unapprovable' }));
+    expect(prepared.result.detail).toMatch(/finalized payroll/i);
+    expect(prepared.actions).toBeUndefined();
+  });
+
+  test('prepares a confirmed restore for one rejected entry', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 97, status: 'rejected' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'rejected' }
+    );
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 97,
+        status: 'rejected',
+        work_date: '2026-09-15',
+        start_time: '07:30:00',
+        end_time: '15:30:00',
+        worker_name: 'Jordan Lee',
+        project_name: 'Main Street',
+        in_locked_period: false,
+        in_finalized_payroll: false,
+      }],
+    });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_restore',
+      { entry_ref: found.result.time_entries[0].entry_ref }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'restore_time_entry',
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'time_entry_restore',
+      method: 'patch',
+      endpoint: '/admin/entries/97/unreject',
+      body: {},
+    }));
   });
 
   test('entry references cannot be reused by another signed-in user', async () => {

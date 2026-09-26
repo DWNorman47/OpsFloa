@@ -134,6 +134,41 @@ describe('AppAssistant', () => {
     expect(await screen.findByText('Time entry rejected.')).toBeInTheDocument();
   });
 
+  test('requires a destructive confirmation before undoing an approval', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        message: 'Please confirm the approval reversal.',
+        actions: [{
+          type: 'confirm_api',
+          kind: 'time_entry_unapproval',
+          danger: true,
+          title: 'Undo approval?',
+          summary: 'The entry will return to pending and any linked QuickBooks time activity may be removed.',
+          confirm_label: 'Undo approval',
+          cancel_label: 'Cancel',
+          success_message: 'Approval undone.',
+          details: [{ worker: 'Jordan Lee', date: '2026-09-14', time: '08:00:00-16:00:00', project: 'Main Street' }],
+          method: 'patch',
+          endpoint: '/admin/entries/91/unapprove',
+          body: {},
+        }],
+      },
+    });
+    api.patch.mockResolvedValue({ data: { id: 91, status: 'pending' } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: 'Undo Jordan approval' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Undo approval?')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Undo approval' });
+    expect(confirm).toHaveClass('danger');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/admin/entries/91/unapprove', {}));
+    expect(await screen.findByText('Approval undone.')).toBeInTheDocument();
+  });
+
   test('confirmation allowlist rejects arbitrary endpoints', () => {
     expect(isAllowedAssistantAction({
       type: 'confirm_api',
@@ -157,6 +192,28 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...valid, body: { note: 'Incorrect project', id: 91 } })).toBe(false);
     expect(isAllowedAssistantAction({ ...valid, kind: 'time_entry_approval' })).toBe(false);
     expect(isAllowedAssistantAction({ ...valid, endpoint: '/admin/entries/91/unapprove' })).toBe(false);
+  });
+
+  test('confirmation allowlist tightly scopes approval reversals and rejected-entry restores', () => {
+    const unapprove = {
+      type: 'confirm_api',
+      kind: 'time_entry_unapproval',
+      method: 'patch',
+      endpoint: '/admin/entries/91/unapprove',
+      body: {},
+    };
+    const restore = {
+      type: 'confirm_api',
+      kind: 'time_entry_restore',
+      method: 'patch',
+      endpoint: '/admin/entries/92/unreject',
+      body: {},
+    };
+    expect(isAllowedAssistantAction(unapprove)).toBe(true);
+    expect(isAllowedAssistantAction(restore)).toBe(true);
+    expect(isAllowedAssistantAction({ ...unapprove, body: { force: true } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...restore, endpoint: '/admin/entries/92/reject' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...restore, kind: 'time_entry_unapproval' })).toBe(false);
   });
 
   test('provides the compact Spanish interface copy', () => {
