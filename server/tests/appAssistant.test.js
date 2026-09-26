@@ -404,6 +404,224 @@ describe('app assistant service', () => {
     ]);
   });
 
+  test('prepares reimbursement approval with a version guard and preserves the existing note', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [12] } };
+    const reimbursement = {
+      id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      amount: '84.25',
+      description: 'Fuel for excavator',
+      category: 'Fuel',
+      expense_date: '2026-09-18',
+      project_name: 'Mesa Drainage',
+      status: 'pending',
+      admin_notes: 'Receipt reviewed',
+      updated_at: '2026-09-19T01:02:03.000Z',
+      qbo_purchase_id: null,
+      qbo_bill_id: null,
+      in_locked_period: false,
+      in_finalized_payroll: false,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [reimbursement] })
+      .mockResolvedValueOnce({ rows: [reimbursement] });
+
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'find_reimbursements',
+      { from: '2026-09-01', to: '2026-09-30', status: 'pending' }
+    );
+    const reference = found.result.reimbursements[0].reimbursement_ref;
+    expect(reference).toEqual(expect.any(String));
+    expect(found.result.reimbursements[0].id).toBeUndefined();
+    expect(found.result.reimbursements[0].qbo_purchase_id).toBeUndefined();
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_approval',
+      { reimbursement_ref: reference }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: true, confirmation_required: true, action: 'approve_reimbursement' }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      type: 'confirm_api',
+      kind: 'reimbursement_approval',
+      method: 'patch',
+      endpoint: `/reimbursements/admin/${reimbursement.id}`,
+      body: {
+        status: 'approved',
+        admin_notes: 'Receipt reviewed',
+        updated_at: '2026-09-19T01:02:03.000Z',
+      },
+    }));
+    expect(prepared.actions[0].summary).toMatch(/QuickBooks/i);
+    expect(prepared.actions[0].details[0]).toEqual(expect.objectContaining({
+      worker: 'Nora Bennett',
+      date: '2026-09-18',
+      amount: 'Amount: 84.25',
+      category: 'Fuel',
+      project: 'Mesa Drainage',
+    }));
+    expect(pool.query.mock.calls[1][0]).toMatch(/r\.user_id = ANY\(\$3::int\[\]\)/);
+    expect(pool.query.mock.calls[1][1]).toEqual(['company-1', reimbursement.id, [12]]);
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('requires a reason before preparing reimbursement rejection', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const reimbursement = {
+      id: '7c9e6679-7425-40de-944b-e07fc1f90ae8',
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      amount: '20.00',
+      description: 'Parking',
+      expense_date: '2026-09-20',
+      status: 'pending',
+      updated_at: '2026-09-20T18:00:00.000Z',
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [reimbursement] })
+      .mockResolvedValueOnce({ rows: [reimbursement] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'find_reimbursements',
+      { from: '2026-09-01', to: '2026-09-30' }
+    );
+    const reference = found.result.reimbursements[0].reimbursement_ref;
+
+    const invalid = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_rejection',
+      { reimbursement_ref: reference, reason: ' ' }
+    );
+    expect(invalid.result).toEqual(expect.objectContaining({ ok: false, error: 'rejection_reason_required' }));
+    expect(pool.query).toHaveBeenCalledTimes(1);
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_rejection',
+      { reimbursement_ref: reference, reason: 'Receipt is unreadable' }
+    );
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'reimbursement_rejection',
+      danger: true,
+      reason: 'Receipt is unreadable',
+      body: {
+        status: 'rejected',
+        admin_notes: 'Receipt is unreadable',
+        updated_at: '2026-09-20T18:00:00.000Z',
+      },
+    }));
+  });
+
+  test('restores a rejected reimbursement while preserving its note', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const reimbursement = {
+      id: '7c9e6679-7425-40de-944b-e07fc1f90ae9',
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      amount: '46.50',
+      description: 'Supplies',
+      expense_date: '2026-09-21',
+      status: 'rejected',
+      admin_notes: 'Needs itemized receipt',
+      updated_at: '2026-09-21T18:00:00.000Z',
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [reimbursement] })
+      .mockResolvedValueOnce({ rows: [reimbursement] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'find_reimbursements',
+      { from: '2026-09-01', to: '2026-09-30', status: 'rejected' }
+    );
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_restore',
+      { reimbursement_ref: found.result.reimbursements[0].reimbursement_ref }
+    );
+
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'reimbursement_restore',
+      body: {
+        status: 'pending',
+        admin_notes: 'Needs itemized receipt',
+        updated_at: '2026-09-21T18:00:00.000Z',
+      },
+    }));
+  });
+
+  test('blocks settled reimbursement reversals and prepares an eligible approval reversal', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const reimbursement = {
+      id: '7c9e6679-7425-40de-944b-e07fc1f90aea',
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      amount: '125.00',
+      description: 'Hotel',
+      expense_date: '2026-09-22',
+      status: 'approved',
+      updated_at: '2026-09-22T18:00:00.000Z',
+      qbo_purchase_id: null,
+      qbo_bill_id: null,
+      in_locked_period: false,
+      in_finalized_payroll: false,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [reimbursement] })
+      .mockResolvedValueOnce({ rows: [{ ...reimbursement, qbo_purchase_id: 'QB-1' }] })
+      .mockResolvedValueOnce({ rows: [{ ...reimbursement, in_finalized_payroll: true }] })
+      .mockResolvedValueOnce({ rows: [reimbursement] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'find_reimbursements',
+      { from: '2026-09-01', to: '2026-09-30', status: 'approved' }
+    );
+    const reference = found.result.reimbursements[0].reimbursement_ref;
+
+    const inQuickBooks = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_unapproval',
+      { reimbursement_ref: reference, reason: 'Incorrect amount' }
+    );
+    expect(inQuickBooks.result).toEqual(expect.objectContaining({ ok: false, error: 'reimbursement_in_quickbooks' }));
+
+    const settled = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_unapproval',
+      { reimbursement_ref: reference, reason: 'Incorrect amount' }
+    );
+    expect(settled.result).toEqual(expect.objectContaining({ ok: false, error: 'reimbursement_settled' }));
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['manage_reimbursements']),
+      'prepare_reimbursement_unapproval',
+      { reimbursement_ref: reference, reason: 'Incorrect amount' }
+    );
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'reimbursement_unapproval',
+      danger: true,
+      reason: 'Incorrect amount',
+      body: {
+        status: 'pending',
+        admin_notes: 'Incorrect amount',
+        updated_at: '2026-09-22T18:00:00.000Z',
+      },
+    }));
+  });
+
   test('reimbursement search enforces permission and bounded date windows before querying', async () => {
     const denied = await executeAssistantTool(req, new Set(), 'find_reimbursements', {});
     expect(denied.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));

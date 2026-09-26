@@ -78,6 +78,18 @@ function validSplitSegments(segments) {
   return previousEnd > firstStart && previousEnd - firstStart <= 24 * 60 * 60;
 }
 
+const REIMBURSEMENT_ACTION_ENDPOINT = /^\/reimbursements\/admin\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validReimbursementActionBody(body, expectedStatus, reasonRequired) {
+  const keys = Object.keys(body);
+  if (keys.length !== 3 || !keys.every(key => ['status', 'admin_notes', 'updated_at'].includes(key))) return false;
+  if (body.status !== expectedStatus) return false;
+  if (body.admin_notes !== null && (typeof body.admin_notes !== 'string' || body.admin_notes.length > 1000)) return false;
+  if (reasonRequired && (typeof body.admin_notes !== 'string' || body.admin_notes.trim().length < 2)) return false;
+  return typeof body.updated_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.updated_at) &&
+    !Number.isNaN(Date.parse(body.updated_at));
+}
+
 export function isAllowedAssistantAction(action) {
   if (!action || action.type !== 'confirm_api') return false;
   const method = String(action.method || '').toLowerCase();
@@ -137,6 +149,18 @@ export function isAllowedAssistantAction(action) {
     const keys = Object.keys(body);
     return keys.length === 1 && keys[0] === 'reason' && typeof body.reason === 'string' &&
       body.reason.trim().length >= 2 && body.reason.length <= 500;
+  }
+  if (action.kind === 'reimbursement_approval' && method === 'patch' && REIMBURSEMENT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return validReimbursementActionBody(body, 'approved', false);
+  }
+  if (action.kind === 'reimbursement_rejection' && method === 'patch' && REIMBURSEMENT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return validReimbursementActionBody(body, 'rejected', true);
+  }
+  if (action.kind === 'reimbursement_restore' && method === 'patch' && REIMBURSEMENT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return validReimbursementActionBody(body, 'pending', false);
+  }
+  if (action.kind === 'reimbursement_unapproval' && method === 'patch' && REIMBURSEMENT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return validReimbursementActionBody(body, 'pending', true);
   }
   return false;
 }
@@ -326,7 +350,7 @@ export default function AppAssistant() {
                       {action.details?.length > 0 && (
                         <ul>
                           {action.details.map((detail, detailIndex) => (
-                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.type, detail.time, detail.project].filter(Boolean).join(' | ')}</li>
+                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.type, detail.time, detail.amount, detail.category, detail.project, detail.description].filter(Boolean).join(' | ')}</li>
                           ))}
                         </ul>
                       )}
@@ -334,6 +358,9 @@ export default function AppAssistant() {
                         <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.body.note}</p>
                       )}
                       {['time_off_denial', 'time_off_revocation'].includes(action.kind) && typeof action.reason === 'string' && (
+                        <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.reason}</p>
+                      )}
+                      {['reimbursement_rejection', 'reimbursement_unapproval'].includes(action.kind) && typeof action.reason === 'string' && (
                         <p className="app-assistant-reason"><strong>{action.reason_label || 'Reason'}:</strong> {action.reason}</p>
                       )}
                       {action.changes?.length > 0 && (
@@ -366,7 +393,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation'].includes(action.kind) ? ' danger' : ''}`}
+                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation', 'reimbursement_rejection', 'reimbursement_unapproval'].includes(action.kind) ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >

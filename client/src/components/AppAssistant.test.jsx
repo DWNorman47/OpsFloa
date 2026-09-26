@@ -174,6 +174,54 @@ describe('AppAssistant', () => {
     expect(await screen.findByText('Time-off request denied.')).toBeInTheDocument();
   });
 
+  test('shows expense details and requires a destructive click before rejecting reimbursement', async () => {
+    const reimbursementId = '7c9e6679-7425-40de-944b-e07fc1f90ae8';
+    const body = {
+      status: 'rejected',
+      admin_notes: 'Receipt is unreadable',
+      updated_at: '2026-09-20T18:00:00.000Z',
+    };
+    api.post.mockResolvedValueOnce({
+      data: {
+        message: 'Please confirm this reimbursement rejection.',
+        actions: [{
+          type: 'confirm_api',
+          kind: 'reimbursement_rejection',
+          danger: true,
+          title: 'Reject reimbursement?',
+          summary: 'The reason will be visible to the worker.',
+          reason_label: 'Reason',
+          reason: 'Receipt is unreadable',
+          confirm_label: 'Reject reimbursement',
+          cancel_label: 'Cancel',
+          success_message: 'Reimbursement rejected.',
+          details: [{
+            worker: 'Nora Bennett', date: '2026-09-20', amount: 'Amount: 20.00',
+            category: 'Parking', project: 'Mesa Drainage', description: 'Garage parking',
+          }],
+          method: 'patch',
+          endpoint: `/reimbursements/admin/${reimbursementId}`,
+          body,
+        }],
+      },
+    });
+    api.patch.mockResolvedValue({ data: { id: reimbursementId, status: 'rejected' } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: 'Reject Nora expense because the receipt is unreadable' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Reject reimbursement?')).toBeInTheDocument();
+    expect(screen.getByText('Nora Bennett | 2026-09-20 | Amount: 20.00 | Parking | Mesa Drainage | Garage parking')).toBeInTheDocument();
+    expect(screen.getByText('Receipt is unreadable')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Reject reimbursement' });
+    expect(confirm).toHaveClass('danger');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/reimbursements/admin/${reimbursementId}`, body));
+    expect(await screen.findByText('Reimbursement rejected.')).toBeInTheDocument();
+  });
+
   test('requires a destructive confirmation before undoing an approval', async () => {
     api.post.mockResolvedValueOnce({
       data: {
@@ -344,6 +392,42 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction(revocation)).toBe(true);
     expect(isAllowedAssistantAction({ ...revocation, body: { reason: '' } })).toBe(false);
     expect(isAllowedAssistantAction({ ...revocation, kind: 'time_off_denial' })).toBe(false);
+  });
+
+  test('confirmation allowlist tightly scopes reimbursement review actions', () => {
+    const endpoint = '/reimbursements/admin/7c9e6679-7425-40de-944b-e07fc1f90ae7';
+    const baseBody = {
+      admin_notes: 'Reviewed',
+      updated_at: '2026-09-20T18:00:00.000Z',
+    };
+    const approval = {
+      type: 'confirm_api', kind: 'reimbursement_approval', method: 'patch', endpoint,
+      body: { ...baseBody, status: 'approved' },
+    };
+    const rejection = {
+      type: 'confirm_api', kind: 'reimbursement_rejection', method: 'patch', endpoint,
+      body: { ...baseBody, status: 'rejected' },
+    };
+    const restore = {
+      type: 'confirm_api', kind: 'reimbursement_restore', method: 'patch', endpoint,
+      body: { ...baseBody, status: 'pending', admin_notes: null },
+    };
+    const unapproval = {
+      type: 'confirm_api', kind: 'reimbursement_unapproval', method: 'patch', endpoint,
+      body: { ...baseBody, status: 'pending', admin_notes: 'Incorrect amount' },
+    };
+
+    expect(isAllowedAssistantAction(approval)).toBe(true);
+    expect(isAllowedAssistantAction(rejection)).toBe(true);
+    expect(isAllowedAssistantAction(restore)).toBe(true);
+    expect(isAllowedAssistantAction(unapproval)).toBe(true);
+    expect(isAllowedAssistantAction({ ...approval, body: { ...approval.body, status: 'pending' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...rejection, body: { ...rejection.body, admin_notes: ' ' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...unapproval, body: { ...unapproval.body, admin_notes: null } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...approval, body: { ...approval.body, force: true } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...approval, endpoint: '/reimbursements/admin/not-a-uuid' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...approval, body: { ...approval.body, updated_at: '2026-09-20' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...restore, kind: 'reimbursement_unapproval' })).toBe(false);
   });
 
   test('confirmation allowlist only accepts a reasoned single-entry rejection', () => {
