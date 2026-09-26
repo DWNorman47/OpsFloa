@@ -54,6 +54,17 @@ function actionTimeSeconds(value) {
   return (hours * 3600) + (minutes * 60) + seconds;
 }
 
+function validActionDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validActionVersion(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+    !Number.isNaN(Date.parse(value));
+}
+
 function validSplitSegments(segments) {
   if (!Array.isArray(segments) || segments.length < 2 || segments.length > 10) return false;
   let firstStart = null;
@@ -79,6 +90,7 @@ function validSplitSegments(segments) {
 }
 
 const REIMBURSEMENT_ACTION_ENDPOINT = /^\/reimbursements\/admin\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHIFT_ACTION_ENDPOINT = /^\/shifts\/admin\/[1-9]\d{0,9}$/;
 
 function validReimbursementActionBody(body, expectedStatus, reasonRequired) {
   const keys = Object.keys(body);
@@ -86,8 +98,21 @@ function validReimbursementActionBody(body, expectedStatus, reasonRequired) {
   if (body.status !== expectedStatus) return false;
   if (body.admin_notes !== null && (typeof body.admin_notes !== 'string' || body.admin_notes.length > 1000)) return false;
   if (reasonRequired && (typeof body.admin_notes !== 'string' || body.admin_notes.trim().length < 2)) return false;
-  return typeof body.updated_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.updated_at) &&
-    !Number.isNaN(Date.parse(body.updated_at));
+  return validActionVersion(body.updated_at);
+}
+
+function validShiftActionBody(body, { includeWorker = false, includeVersion = false } = {}) {
+  const required = ['project_id', 'shift_date', 'start_time', 'end_time', 'notes'];
+  if (includeWorker) required.push('user_id');
+  if (includeVersion) required.push('updated_at');
+  const keys = Object.keys(body);
+  if (keys.length !== required.length || !keys.every(key => required.includes(key))) return false;
+  if (includeWorker && (!Number.isInteger(body.user_id) || body.user_id <= 0)) return false;
+  if (body.project_id !== null && (!Number.isInteger(body.project_id) || body.project_id <= 0)) return false;
+  if (!validActionDate(body.shift_date) || !validActionTime(body.start_time) || !validActionTime(body.end_time)) return false;
+  if (actionTimeSeconds(body.start_time) === actionTimeSeconds(body.end_time)) return false;
+  if (body.notes !== null && (typeof body.notes !== 'string' || body.notes.length > 500)) return false;
+  return !includeVersion || validActionVersion(body.updated_at);
 }
 
 export function isAllowedAssistantAction(action) {
@@ -121,17 +146,11 @@ export function isAllowedAssistantAction(action) {
   if (action.kind === 'time_entry_edit' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/edit$/.test(action.endpoint || '')) {
     const keys = Object.keys(body);
     const allowed = new Set(['start_time', 'end_time', 'updated_at', 'work_date', 'project_id']);
-    const validDate = value => {
-      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-      const parsed = new Date(`${value}T00:00:00Z`);
-      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-    };
     return keys.every(key => allowed.has(key)) &&
       keys.includes('start_time') && keys.includes('end_time') && keys.includes('updated_at') &&
       validActionTime(body.start_time) && validActionTime(body.end_time) &&
-      typeof body.updated_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.updated_at) &&
-      !Number.isNaN(Date.parse(body.updated_at)) &&
-      (!keys.includes('work_date') || validDate(body.work_date)) &&
+      validActionVersion(body.updated_at) &&
+      (!keys.includes('work_date') || validActionDate(body.work_date)) &&
       (!keys.includes('project_id') || body.project_id === null || (Number.isInteger(body.project_id) && body.project_id > 0));
   }
   if (action.kind === 'time_off_approval' && method === 'patch' && /^\/time-off\/[1-9]\d{0,9}\/approve$/.test(action.endpoint || '')) {
@@ -161,6 +180,15 @@ export function isAllowedAssistantAction(action) {
   }
   if (action.kind === 'reimbursement_unapproval' && method === 'patch' && REIMBURSEMENT_ACTION_ENDPOINT.test(action.endpoint || '')) {
     return validReimbursementActionBody(body, 'pending', true);
+  }
+  if (action.kind === 'shift_creation' && method === 'post' && action.endpoint === '/shifts/admin') {
+    return validShiftActionBody(body, { includeWorker: true });
+  }
+  if (action.kind === 'shift_edit' && method === 'patch' && SHIFT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return validShiftActionBody(body, { includeVersion: true });
+  }
+  if (action.kind === 'shift_cancellation' && method === 'delete' && SHIFT_ACTION_ENDPOINT.test(action.endpoint || '')) {
+    return Object.keys(body).length === 0;
   }
   return false;
 }
@@ -242,7 +270,9 @@ export default function AppAssistant() {
       const method = String(action.method).toLowerCase();
       const response = method === 'patch'
         ? await api.patch(action.endpoint, action.body || {})
-        : await api.post(action.endpoint, action.body);
+        : method === 'delete'
+          ? await api.delete(action.endpoint)
+          : await api.post(action.endpoint, action.body);
       let resultMessage = action.success_message || t.completed;
       if (action.endpoint === '/admin/entries/bulk-approve' && Number.isFinite(Number(response?.data?.approved))) {
         const approved = Number(response.data.approved);
@@ -350,7 +380,7 @@ export default function AppAssistant() {
                       {action.details?.length > 0 && (
                         <ul>
                           {action.details.map((detail, detailIndex) => (
-                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.type, detail.time, detail.amount, detail.category, detail.project, detail.description].filter(Boolean).join(' | ')}</li>
+                            <li key={`${detail.worker}-${detail.date}-${detailIndex}`}>{[detail.worker, detail.date, detail.type, detail.time, detail.amount, detail.category, detail.project, detail.description, detail.notes].filter(Boolean).join(' | ')}</li>
                           ))}
                         </ul>
                       )}
@@ -393,7 +423,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation', 'reimbursement_rejection', 'reimbursement_unapproval'].includes(action.kind) ? ' danger' : ''}`}
+                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval', 'time_off_denial', 'time_off_revocation', 'reimbursement_rejection', 'reimbursement_unapproval', 'shift_cancellation'].includes(action.kind) ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >

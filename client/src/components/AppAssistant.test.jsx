@@ -6,7 +6,7 @@ import api from '../api';
 import AppAssistant, { AppAssistantLauncher, ASSISTANT_OPEN_EVENT, isAllowedAssistantAction } from './AppAssistant';
 import { assistantStrings } from './appAssistantStrings';
 
-vi.mock('../api', () => ({ default: { post: vi.fn(), patch: vi.fn() } }));
+vi.mock('../api', () => ({ default: { post: vi.fn(), patch: vi.fn(), delete: vi.fn() } }));
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 7, role: 'admin', language: 'English' } }),
 }));
@@ -29,6 +29,7 @@ describe('AppAssistant', () => {
   beforeEach(() => {
     api.post.mockReset();
     api.patch.mockReset();
+    api.delete.mockReset();
   });
 
   test('opens globally, sends current-page context, and follows a safe navigation action', async () => {
@@ -220,6 +221,44 @@ describe('AppAssistant', () => {
     fireEvent.click(confirm);
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/reimbursements/admin/${reimbursementId}`, body));
     expect(await screen.findByText('Reimbursement rejected.')).toBeInTheDocument();
+  });
+
+  test('requires a destructive click before cancelling one scheduled shift', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        message: 'Please confirm this shift cancellation.',
+        actions: [{
+          type: 'confirm_api',
+          kind: 'shift_cancellation',
+          danger: true,
+          title: 'Cancel shift?',
+          summary: 'This individual shift will be deleted and the worker will be notified.',
+          confirm_label: 'Cancel shift',
+          cancel_label: 'Back',
+          success_message: 'Shift cancelled.',
+          details: [{
+            worker: 'Nora Bennett', date: '2026-10-03', time: '08:00-16:00',
+            project: 'Mesa Drainage', notes: 'Bring PPE',
+          }],
+          method: 'delete',
+          endpoint: '/shifts/admin/43',
+        }],
+      },
+    });
+    api.delete.mockResolvedValue({ data: { deleted: true } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: "Cancel Nora's Saturday shift" } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Cancel shift?')).toBeInTheDocument();
+    expect(screen.getByText('Nora Bennett | 2026-10-03 | 08:00-16:00 | Mesa Drainage | Bring PPE')).toBeInTheDocument();
+    expect(api.delete).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Cancel shift' });
+    expect(confirm).toHaveClass('danger');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/shifts/admin/43'));
+    expect(await screen.findByText('Shift cancelled.')).toBeInTheDocument();
   });
 
   test('requires a destructive confirmation before undoing an approval', async () => {
@@ -428,6 +467,55 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...approval, endpoint: '/reimbursements/admin/not-a-uuid' })).toBe(false);
     expect(isAllowedAssistantAction({ ...approval, body: { ...approval.body, updated_at: '2026-09-20' } })).toBe(false);
     expect(isAllowedAssistantAction({ ...restore, kind: 'reimbursement_unapproval' })).toBe(false);
+  });
+
+  test('confirmation allowlist tightly scopes individual shift actions', () => {
+    const create = {
+      type: 'confirm_api',
+      kind: 'shift_creation',
+      method: 'post',
+      endpoint: '/shifts/admin',
+      body: {
+        user_id: 12,
+        project_id: 31,
+        shift_date: '2026-10-02',
+        start_time: '08:00',
+        end_time: '16:30',
+        notes: 'Bring PPE',
+      },
+    };
+    const edit = {
+      type: 'confirm_api',
+      kind: 'shift_edit',
+      method: 'patch',
+      endpoint: '/shifts/admin/42',
+      body: {
+        project_id: null,
+        shift_date: '2026-10-03',
+        start_time: '22:00',
+        end_time: '06:00',
+        notes: null,
+        updated_at: '2026-09-26T18:00:00.000Z',
+      },
+    };
+    const cancellation = {
+      type: 'confirm_api',
+      kind: 'shift_cancellation',
+      method: 'delete',
+      endpoint: '/shifts/admin/42',
+    };
+
+    expect(isAllowedAssistantAction(create)).toBe(true);
+    expect(isAllowedAssistantAction(edit)).toBe(true);
+    expect(isAllowedAssistantAction(cancellation)).toBe(true);
+    expect(isAllowedAssistantAction({ ...create, body: { ...create.body, recurrence_group_id: 'x' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...create, body: { ...create.body, user_id: '12' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...create, body: { ...create.body, shift_date: '2026-02-30' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...create, body: { ...create.body, end_time: '08:00' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...edit, body: { ...edit.body, updated_at: 'yesterday' } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...edit, endpoint: '/shifts/admin/0' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...cancellation, body: { all: true } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...cancellation, endpoint: '/shifts/admin/series/abc' })).toBe(false);
   });
 
   test('confirmation allowlist only accepts a reasoned single-entry rejection', () => {

@@ -34,6 +34,7 @@ describe('app assistant service', () => {
     expect(ASSISTANT_SYSTEM).toMatch(/Never say a change is complete/i);
     expect(ASSISTANT_SYSTEM).toMatch(/require a written reason/i);
     expect(ASSISTANT_SYSTEM).toMatch(/allowance override must be explicitly requested/i);
+    expect(ASSISTANT_SYSTEM).toMatch(/Shift confirmations must surface overlap or availability warnings/i);
     expect(ASSISTANT_SYSTEM).toMatch(/All other writes remain unavailable/i);
   });
 
@@ -622,6 +623,190 @@ describe('app assistant service', () => {
     }));
   });
 
+  test('finds only a delegated administrators assigned shifts and returns opaque references', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [12, 14] } };
+    pool.query.mockResolvedValue({
+      rows: [{
+        id: 41,
+        worker_name: 'Nora Bennett',
+        shift_date: '2026-10-02',
+        start_time: '08:00:00',
+        end_time: '16:30:00',
+        notes: 'Bring PPE',
+        project_name: 'Mesa Drainage',
+        job_number: 'M-17',
+        recurrence_group_id: null,
+        updated_at: '2026-09-26T18:00:00.000Z',
+      }],
+    });
+
+    const output = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'find_shifts',
+      { from: '2026-10-01', to: '2026-10-07', worker_name: 'Nora', limit: 5 }
+    );
+
+    expect(output.result).toEqual(expect.objectContaining({ ok: true, scope: 'assigned_workers', count: 1 }));
+    expect(output.result.shifts[0]).toEqual(expect.objectContaining({
+      worker_name: 'Nora Bennett',
+      shift_date: '2026-10-02',
+      start_time: '08:00',
+      end_time: '16:30',
+      shift_ref: expect.any(String),
+    }));
+    expect(output.result.shifts[0].id).toBeUndefined();
+    expect(output.result.shifts[0].updated_at).toBeUndefined();
+    expect(pool.query.mock.calls[0][0]).toMatch(/s\.user_id = ANY\(\$4::int\[\]\)/);
+    expect(pool.query.mock.calls[0][1]).toEqual(['company-1', '2026-10-01', '2026-10-07', [12, 14], '%Nora%', 5]);
+  });
+
+  test('prepares one shift creation with overlap and availability checks', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin', worker_access_ids: [12] } };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 12, worker_name: 'Nora Bennett' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 31, name: 'Mesa Drainage', job_number: 'M-17' }] })
+      .mockResolvedValueOnce({ rows: [{ has_overlap: true, outside_availability: false }] });
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'prepare_shift_creation',
+      {
+        worker_name: 'Nora Bennett',
+        project_name: 'M-17',
+        shift_date: '2026-10-02',
+        start_time: '08:00',
+        end_time: '16:30',
+        notes: 'Bring PPE',
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'create_shift',
+      warnings: { hasOverlap: true, outsideAvailability: false },
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'shift_creation',
+      method: 'post',
+      endpoint: '/shifts/admin',
+      body: {
+        user_id: 12,
+        project_id: 31,
+        shift_date: '2026-10-02',
+        start_time: '08:00',
+        end_time: '16:30',
+        notes: 'Bring PPE',
+      },
+    }));
+    expect(prepared.actions[0].summary).toMatch(/overlapping shift/i);
+    expect(pool.query.mock.calls[0][0]).toMatch(/u\.id = ANY\(\$3::int\[\]\)/);
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('prepares a concurrency-guarded shift edit with exact changed values', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const shift = {
+      id: 42,
+      user_id: 12,
+      project_id: 31,
+      worker_name: 'Nora Bennett',
+      project_name: 'Mesa Drainage',
+      shift_date: '2026-10-02',
+      start_time: '08:00:00',
+      end_time: '16:30:00',
+      notes: 'Bring PPE',
+      updated_at: '2026-09-26T18:00:00.000Z',
+      recurrence_group_id: null,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [shift] })
+      .mockResolvedValueOnce({ rows: [shift] })
+      .mockResolvedValueOnce({ rows: [{ id: 32, name: 'Canal Crossing', job_number: 'C-04' }] })
+      .mockResolvedValueOnce({ rows: [{ has_overlap: false, outside_availability: true }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'find_shifts',
+      { from: '2026-10-01', to: '2026-10-07' }
+    );
+
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'prepare_shift_edit',
+      {
+        shift_ref: found.result.shifts[0].shift_ref,
+        project_name: 'C-04',
+        start_time: '09:00',
+        notes: '',
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: true, action: 'edit_shift' }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'shift_edit',
+      method: 'patch',
+      endpoint: '/shifts/admin/42',
+      body: {
+        project_id: 32,
+        shift_date: '2026-10-02',
+        start_time: '09:00',
+        end_time: '16:30',
+        notes: null,
+        updated_at: '2026-09-26T18:00:00.000Z',
+      },
+    }));
+    expect(prepared.actions[0].changes).toEqual(expect.arrayContaining([
+      { label: 'Start', from: '08:00', to: '09:00' },
+      { label: 'Project', from: 'Mesa Drainage', to: 'Canal Crossing' },
+      { label: 'Notes', from: 'Bring PPE', to: '-' },
+    ]));
+    expect(prepared.actions[0].summary).toMatch(/outside the worker's stated availability/i);
+  });
+
+  test('prepares destructive cancellation for only one shift in a recurring series', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const shift = {
+      id: 43,
+      user_id: 12,
+      worker_name: 'Nora Bennett',
+      project_name: 'Mesa Drainage',
+      shift_date: '2026-10-03',
+      start_time: '08:00:00',
+      end_time: '16:00:00',
+      updated_at: '2026-09-26T18:00:00.000Z',
+      recurrence_group_id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [shift] })
+      .mockResolvedValueOnce({ rows: [shift] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'find_shifts',
+      { from: '2026-10-01', to: '2026-10-07' }
+    );
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(),
+      'prepare_shift_cancellation',
+      { shift_ref: found.result.shifts[0].shift_ref }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: true, action: 'cancel_shift', recurring: true }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'shift_cancellation',
+      danger: true,
+      method: 'delete',
+      endpoint: '/shifts/admin/43',
+    }));
+    expect(prepared.actions[0].body).toBeUndefined();
+    expect(prepared.actions[0].summary).toMatch(/Other shifts in the recurring series will remain scheduled/i);
+  });
+
   test('reimbursement search enforces permission and bounded date windows before querying', async () => {
     const denied = await executeAssistantTool(req, new Set(), 'find_reimbursements', {});
     expect(denied.result).toEqual(expect.objectContaining({ ok: false, error: 'permission_denied' }));
@@ -646,9 +831,14 @@ describe('app assistant service', () => {
   test('navigation is permission-aware and produces a bounded client action', async () => {
     const denied = await executeAssistantTool(req, new Set(), 'open_page', { page: 'approvals' });
     expect(denied.result.error).toBe('permission_denied');
+    const scheduleDenied = await executeAssistantTool(req, new Set(), 'open_page', { page: 'schedule' });
+    expect(scheduleDenied.result.error).toBe('permission_denied');
 
     const allowed = await executeAssistantTool(req, new Set(['approve_entries']), 'open_page', { page: 'approvals' });
     expect(allowed.actions).toEqual([{ type: 'navigate', path: '/timeclock#wf-approvals', label: 'Open Approvals' }]);
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    const schedule = await executeAssistantTool(adminReq, new Set(), 'open_page', { page: 'schedule' });
+    expect(schedule.actions).toEqual([{ type: 'navigate', path: '/timeclock#wf-manage', label: 'Open Schedule' }]);
   });
 
   test('reports a clean payroll window as ready for preview and finalization', async () => {
