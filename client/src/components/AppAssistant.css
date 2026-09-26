@@ -150,6 +150,26 @@
 .app-assistant-changes dd { display: flex; min-width: 0; margin: 0; gap: 6px; align-items: baseline; flex-wrap: wrap; color: #475569; font-size: 12px; }
 .app-assistant-changes dd strong { color: #172033; }
 .app-assistant-change-to { color: #94a3b8; font-size: 11px; }
+.app-assistant-split-segments {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.app-assistant-split-segments li {
+  display: grid;
+  grid-template-columns: 70px 86px minmax(0, 1fr);
+  gap: 7px;
+  align-items: baseline;
+  margin: 0;
+  padding: 6px 7px;
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+  background: #ffffff;
+}
+.app-assistant-split-segments strong { color: #172033; }
+.app-assistant-split-segments span { min-width: 0; overflow-wrap: anywhere; color: #475569; }
 .app-assistant-confirm-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .app-assistant-confirm,
 .app-assistant-cancel {

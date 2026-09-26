@@ -217,6 +217,49 @@ describe('AppAssistant', () => {
     expect(await screen.findByText('Time entry updated.')).toBeInTheDocument();
   });
 
+  test('shows every segment and requires destructive confirmation before splitting', async () => {
+    const splitAction = {
+      type: 'confirm_api',
+      kind: 'time_entry_split',
+      danger: true,
+      title: 'Split time entry?',
+      summary: 'The original entry will be replaced by the pending segments shown.',
+      confirm_label: 'Split entry',
+      cancel_label: 'Cancel',
+      success_message: 'Time entry split.',
+      details: [{ worker: 'Jordan Lee', date: '2026-09-14', time: '08:00:00-16:00:00', project: 'Main Street' }],
+      split_segments: [
+        { label: 'Segment 1', time: '08:00-12:00', project: 'Main Street' },
+        { label: 'Segment 2', time: '12:00-16:00', project: 'Oak Ridge' },
+      ],
+      method: 'post',
+      endpoint: '/admin/entries/91/split',
+      body: {
+        segments: [
+          { start_time: '08:00', end_time: '12:00', project_id: 11 },
+          { start_time: '12:00', end_time: '16:00', project_id: 44 },
+        ],
+      },
+    };
+    api.post
+      .mockResolvedValueOnce({ data: { message: 'Please confirm this split.', actions: [splitAction] } })
+      .mockResolvedValueOnce({ data: { created: [{ id: 201 }, { id: 202 }] } });
+    renderAssistant();
+    act(() => window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT)));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask OpsFloa...' }), { target: { value: 'Split Jordan at noon and move the second part to Oak Ridge' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Split time entry?')).toBeInTheDocument();
+    expect(screen.getByText('Segment 1')).toBeInTheDocument();
+    expect(screen.getByText('Oak Ridge')).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalledWith('/admin/entries/91/split', splitAction.body);
+    const confirm = screen.getByRole('button', { name: 'Split entry' });
+    expect(confirm).toHaveClass('danger');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/admin/entries/91/split', splitAction.body));
+    expect(await screen.findByText('Time entry split.')).toBeInTheDocument();
+  });
+
   test('confirmation allowlist rejects arbitrary endpoints', () => {
     expect(isAllowedAssistantAction({
       type: 'confirm_api',
@@ -285,6 +328,36 @@ describe('AppAssistant', () => {
     expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, updated_at: '2026-09-16' } })).toBe(false);
     expect(isAllowedAssistantAction({ ...valid, body: { ...valid.body, overtime_hours_override: 2 } })).toBe(false);
     expect(isAllowedAssistantAction({ ...valid, endpoint: '/admin/entries/91/times' })).toBe(false);
+  });
+
+  test('confirmation allowlist only accepts bounded contiguous split segments', () => {
+    const valid = {
+      type: 'confirm_api',
+      kind: 'time_entry_split',
+      method: 'post',
+      endpoint: '/admin/entries/91/split',
+      body: {
+        segments: [
+          { start_time: '22:00:00', end_time: '00:30', project_id: null },
+          { start_time: '00:30', end_time: '02:00:00', project_id: 44 },
+        ],
+      },
+    };
+    expect(isAllowedAssistantAction(valid)).toBe(true);
+    expect(isAllowedAssistantAction({
+      ...valid,
+      body: { segments: valid.body.segments.map((segment, index) => index === 1 ? { ...segment, start_time: '00:45' } : segment) },
+    })).toBe(false);
+    expect(isAllowedAssistantAction({
+      ...valid,
+      body: { segments: valid.body.segments.map((segment, index) => index === 0 ? { ...segment, force: true } : segment) },
+    })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { segments: [valid.body.segments[0]] } })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, endpoint: '/admin/entries/91/edit' })).toBe(false);
+    expect(isAllowedAssistantAction({ ...valid, body: { segments: [
+      { start_time: '08:00', end_time: '08:00', project_id: null },
+      { start_time: '08:00', end_time: '09:00', project_id: null },
+    ] } })).toBe(false);
   });
 
   test('provides the compact Spanish interface copy', () => {

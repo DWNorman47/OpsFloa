@@ -44,6 +44,40 @@ export function openAppAssistant() {
   window.dispatchEvent(new CustomEvent(ASSISTANT_OPEN_EVENT));
 }
 
+function validActionTime(value) {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value);
+}
+
+function actionTimeSeconds(value) {
+  if (!validActionTime(value)) return null;
+  const [hours, minutes, seconds = 0] = value.split(':').map(Number);
+  return (hours * 3600) + (minutes * 60) + seconds;
+}
+
+function validSplitSegments(segments) {
+  if (!Array.isArray(segments) || segments.length < 2 || segments.length > 10) return false;
+  let firstStart = null;
+  let previousEnd = null;
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return false;
+    const keys = Object.keys(segment);
+    if (keys.length !== 3 || !keys.every(key => ['start_time', 'end_time', 'project_id'].includes(key))) return false;
+    const startOfDay = actionTimeSeconds(segment.start_time);
+    const endOfDay = actionTimeSeconds(segment.end_time);
+    if (startOfDay == null || endOfDay == null) return false;
+    if (segment.project_id !== null && (!Number.isInteger(segment.project_id) || segment.project_id <= 0)) return false;
+    if (index > 0 && startOfDay !== previousEnd % (24 * 60 * 60)) return false;
+
+    const effectiveStart = previousEnd == null ? startOfDay : previousEnd;
+    let effectiveEnd = (Math.floor(effectiveStart / (24 * 60 * 60)) * 24 * 60 * 60) + endOfDay;
+    if (effectiveEnd <= effectiveStart) effectiveEnd += 24 * 60 * 60;
+    if (firstStart == null) firstStart = effectiveStart;
+    previousEnd = effectiveEnd;
+  }
+  return previousEnd > firstStart && previousEnd - firstStart <= 24 * 60 * 60;
+}
+
 export function isAllowedAssistantAction(action) {
   if (!action || action.type !== 'confirm_api') return false;
   const method = String(action.method || '').toLowerCase();
@@ -68,10 +102,13 @@ export function isAllowedAssistantAction(action) {
   if (action.kind === 'time_entry_restore' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/unreject$/.test(action.endpoint || '')) {
     return Object.keys(body).length === 0;
   }
+  if (action.kind === 'time_entry_split' && method === 'post' && /^\/admin\/entries\/[1-9]\d*\/split$/.test(action.endpoint || '')) {
+    const keys = Object.keys(body);
+    return keys.length === 1 && keys[0] === 'segments' && validSplitSegments(body.segments);
+  }
   if (action.kind === 'time_entry_edit' && method === 'patch' && /^\/admin\/entries\/[1-9]\d*\/edit$/.test(action.endpoint || '')) {
     const keys = Object.keys(body);
     const allowed = new Set(['start_time', 'end_time', 'updated_at', 'work_date', 'project_id']);
-    const validTime = value => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value);
     const validDate = value => {
       if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
       const parsed = new Date(`${value}T00:00:00Z`);
@@ -79,7 +116,7 @@ export function isAllowedAssistantAction(action) {
     };
     return keys.every(key => allowed.has(key)) &&
       keys.includes('start_time') && keys.includes('end_time') && keys.includes('updated_at') &&
-      validTime(body.start_time) && validTime(body.end_time) &&
+      validActionTime(body.start_time) && validActionTime(body.end_time) &&
       typeof body.updated_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.updated_at) &&
       !Number.isNaN(Date.parse(body.updated_at)) &&
       (!keys.includes('work_date') || validDate(body.work_date)) &&
@@ -290,6 +327,17 @@ export default function AppAssistant() {
                           ))}
                         </dl>
                       )}
+                      {action.split_segments?.length > 0 && (
+                        <ol className="app-assistant-split-segments">
+                          {action.split_segments.map((segment, segmentIndex) => (
+                            <li key={`${segment.label}-${segmentIndex}`}>
+                              <strong>{segment.label}</strong>
+                              <span>{segment.time}</span>
+                              <span>{segment.project}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
                       {action.result_message && (
                         <div className={`app-assistant-action-result ${action.status === 'failed' ? 'failed' : ''}`} role={action.status === 'failed' ? 'alert' : 'status'}>
                           {action.result_message}
@@ -299,7 +347,7 @@ export default function AppAssistant() {
                         <div className="app-assistant-confirm-buttons">
                           <button
                             type="button"
-                            className={`app-assistant-confirm${['time_entry_rejection', 'time_entry_unapproval'].includes(action.kind) ? ' danger' : ''}`}
+                            className={`app-assistant-confirm${action.danger === true || ['time_entry_rejection', 'time_entry_unapproval'].includes(action.kind) ? ' danger' : ''}`}
                             disabled={action.status === 'running'}
                             onClick={() => confirmAction(item.id, actionIndex, action)}
                           >

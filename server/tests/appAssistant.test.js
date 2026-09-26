@@ -517,6 +517,218 @@ describe('app assistant service', () => {
     expect(prepared.actions).toBeUndefined();
   });
 
+  test('prepares contiguous split segments with an exact project assignment', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 102, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'pending' }
+    );
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 102,
+          user_id: 7,
+          project_id: 11,
+          status: 'pending',
+          work_date: '2026-09-15',
+          start_time: '08:00:30',
+          end_time: '16:00:45',
+          worker_name: 'Jordan Lee',
+          project_name: 'Main Street',
+          in_locked_period: false,
+          in_finalized_payroll: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ value: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 44, name: 'Oak Ridge', job_number: '2407' }] });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_split',
+      {
+        entry_ref: found.result.time_entries[0].entry_ref,
+        split_times: ['12:00'],
+        segment_projects: [{ segment: 2, project_name: '2407' }],
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({
+      ok: true,
+      confirmation_required: true,
+      action: 'split_time_entry',
+      count: 2,
+    }));
+    expect(prepared.actions[0]).toEqual(expect.objectContaining({
+      kind: 'time_entry_split',
+      danger: true,
+      method: 'post',
+      endpoint: '/admin/entries/102/split',
+      body: {
+        segments: [
+          { start_time: '08:00:30', end_time: '12:00', project_id: 11 },
+          { start_time: '12:00', end_time: '16:00:45', project_id: 44 },
+        ],
+      },
+      split_segments: [
+        { label: 'Segment 1', time: '08:00:30-12:00', project: 'Main Street' },
+        { label: 'Segment 2', time: '12:00-16:00:45', project: 'Oak Ridge' },
+      ],
+    }));
+    expect(pool.query).toHaveBeenCalledTimes(4);
+    expect(pool.query.mock.calls.every(([sql]) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
+  test('prepares chronological segments for an overnight entry', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 103, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15', status: 'pending' }
+    );
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 103,
+          user_id: 7,
+          project_id: null,
+          status: 'pending',
+          work_date: '2026-09-15',
+          start_time: '22:00:00',
+          end_time: '02:00:00',
+          worker_name: 'Jordan Lee',
+          project_name: null,
+          in_locked_period: false,
+          in_finalized_payroll: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_split',
+      { entry_ref: found.result.time_entries[0].entry_ref, split_times: ['23:30', '00:30'] }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: true, count: 3 }));
+    expect(prepared.actions[0].body.segments).toEqual([
+      { start_time: '22:00:00', end_time: '23:30', project_id: null },
+      { start_time: '23:30', end_time: '00:30', project_id: null },
+      { start_time: '00:30', end_time: '02:00:00', project_id: null },
+    ]);
+  });
+
+  test('rejects split boundaries that are out of chronological order', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 104, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 104,
+          status: 'pending',
+          start_time: '08:00:00',
+          end_time: '16:00:00',
+          in_locked_period: false,
+          in_finalized_payroll: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_split',
+      { entry_ref: found.result.time_entries[0].entry_ref, split_times: ['13:00', '11:00'] }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'invalid_split_boundaries' }));
+    expect(prepared.actions).toBeUndefined();
+  });
+
+  test('does not prepare a split for an entry covered by finalized payroll', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 105, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 105,
+        status: 'pending',
+        start_time: '08:00:00',
+        end_time: '16:00:00',
+        in_locked_period: false,
+        in_finalized_payroll: true,
+      }],
+    });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_split',
+      { entry_ref: found.result.time_entries[0].entry_ref, split_times: ['12:00'] }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'entry_not_splittable' }));
+    expect(prepared.result.detail).toMatch(/finalized payroll/i);
+    expect(prepared.actions).toBeUndefined();
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not guess when a split segment project is ambiguous', async () => {
+    const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 106, status: 'pending' }] });
+    const found = await executeAssistantTool(
+      adminReq,
+      new Set(['view_reports', 'approve_entries']),
+      'find_time_entries',
+      { from: '2026-09-15', to: '2026-09-15' }
+    );
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 106,
+          project_id: null,
+          status: 'pending',
+          start_time: '08:00:00',
+          end_time: '16:00:00',
+          in_locked_period: false,
+          in_finalized_payroll: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 44, name: 'Oak Ridge', job_number: '2407' },
+          { id: 45, name: '2407', job_number: '2410' },
+        ],
+      });
+    const prepared = await executeAssistantTool(
+      adminReq,
+      new Set(['approve_entries']),
+      'prepare_time_entry_split',
+      {
+        entry_ref: found.result.time_entries[0].entry_ref,
+        split_times: ['12:00'],
+        segment_projects: [{ segment: 2, project_name: '2407' }],
+      }
+    );
+
+    expect(prepared.result).toEqual(expect.objectContaining({ ok: false, error: 'project_ambiguous' }));
+    expect(prepared.actions).toBeUndefined();
+  });
+
   test('entry references cannot be reused by another signed-in user', async () => {
     const adminReq = { ...req, user: { ...req.user, role: 'admin' } };
     pool.query.mockResolvedValueOnce({ rows: [{ id: 92, status: 'pending' }] });
